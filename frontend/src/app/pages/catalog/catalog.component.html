@@ -1,0 +1,178 @@
+<!-- path: src/app/pages/catalog/catalog.component.html -->
+
+<div class="catalog-layout" [class.dark-theme]="isDarkMode">
+
+  <!-- ==================== HEADER ==================== -->
+  <header class="catalog-header">
+    <div class="header-inner">
+
+      <div class="brand-area">
+        <a routerLink="/" class="back-link">&larr; Назад</a>
+        <div class="separator"></div>
+        <div class="logo-text">
+          <span class="logo-icon">🧬</span>
+          Віртуальна Лабораторія
+        </div>
+      </div>
+
+      <div class="controls-area">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input
+            type="text"
+            placeholder="Пошук сценаріїв..."
+            [value]="searchQuery"
+            (input)="onSearch($event)"
+          />
+        </div>
+
+        <button class="theme-toggle" (click)="toggleTheme()" title="Змінити тему">
+          {{ isDarkMode ? '☀️' : '🌙' }}
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ==================== MAIN CONTENT ==================== -->
+  <main class="catalog-content">
+    <div class="content-inner">
+
+      <!-- Category filters -->
+      <div class="filters-bar">
+        <button
+          *ngFor="let cat of categories"
+          class="filter-chip"
+          [class.active]="selectedCategory === cat.id"
+          (click)="selectCategory(cat.id)"
+        >
+          <span class="chip-icon" *ngIf="cat.icon">{{ cat.icon }}</span>
+          {{ cat.label }}
+        </button>
+      </div>
+
+      <!-- Status bar -->
+      <div class="status-bar">
+        <span class="result-count">
+          Знайдено: <strong>{{ displayedScenarios.length }}</strong>
+        </span>
+      </div>
+
+      <!-- Loading state -->
+      <div class="loading-state" *ngIf="isLoading">
+        <div class="spinner"></div>
+        <p>Завантаження каталогу...</p>
+      </div>
+
+      <!-- Error state -->
+      <div class="error-state" *ngIf="errorMessage && !isLoading">
+        <span class="error-icon">⚠️</span>
+        <p>{{ errorMessage }}</p>
+        <button class="retry-btn" (click)="reloadCatalog()">
+          Спробувати ще раз
+        </button>
+      </div>
+
+      <!-- Empty state -->
+      <div class="empty-state" *ngIf="!isLoading && !errorMessage && displayedScenarios.length === 0">
+        <span class="empty-icon">🔍</span>
+        <p>Сценаріїв не знайдено</p>
+      </div>
+
+      <!-- Scenarios grid -->
+      <div class="scenarios-grid" *ngIf="!isLoading && displayedScenarios.length > 0">
+        <div
+          *ngFor="let scenario of displayedScenarios"
+          class="scenario-card"
+          (click)="openModal(scenario)"
+        >
+          <div class="card-preview">
+            <span class="badge-webgl">WebGL</span>
+            <span class="badge-unavailable" *ngIf="!hasScenarioUrl(scenario)">
+              Незабаром
+            </span>
+            <img
+              [src]="scenario.imageUrl"
+              [alt]="scenario.title"
+              loading="lazy"
+              (error)="handleImageError($event)"
+            />
+            <div class="hover-overlay">
+              <span class="play-icon">▶</span>
+            </div>
+          </div>
+
+          <div class="card-info">
+            <div class="meta-row">
+              <span class="category-tag">{{ scenario.categoryLabel }}</span>
+              <span class="version-tag" *ngIf="scenario.version">
+                v{{ scenario.version }}
+              </span>
+            </div>
+            <h3 class="card-title">{{ scenario.title }}</h3>
+            <p class="card-desc">{{ scenario.description }}</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ==================== MODAL ==================== -->
+  <div
+    class="modal-overlay"
+    [class.open]="isModalOpen"
+    (click)="onOverlayClick($event)"
+  >
+    <div class="modal-window" *ngIf="activeScenario" (click)="$event.stopPropagation()">
+
+      <!-- Left: image -->
+      <div class="modal-image-side">
+        <img
+          [src]="activeScenario.imageUrl"
+          [alt]="activeScenario.title"
+          (error)="handleImageError($event)"
+        />
+      </div>
+
+      <!-- Right: info -->
+      <div class="modal-info-side">
+        <button class="close-btn" (click)="closeModal()">&times;</button>
+
+        <div class="modal-scroll">
+          <span class="modal-category">{{ activeScenario.categoryLabel }}</span>
+          <h2 class="modal-title">{{ activeScenario.title }}</h2>
+
+          <div class="modal-meta" *ngIf="activeScenario.author || activeScenario.version">
+            <span *ngIf="activeScenario.author">
+              👤 {{ activeScenario.author }}
+            </span>
+            <span *ngIf="activeScenario.version">
+              📦 v{{ activeScenario.version }}
+            </span>
+          </div>
+
+          <p class="modal-description">{{ activeScenario.fullDescription }}</p>
+        </div>
+
+        <div class="modal-footer">
+          <button
+            class="launch-btn"
+            [class.disabled]="!hasScenarioUrl(activeScenario)"
+            [disabled]="!hasScenarioUrl(activeScenario)"
+            (click)="launchScenario()"
+          >
+            <ng-container *ngIf="hasScenarioUrl(activeScenario)">
+              🚀 Запустити симуляцію
+            </ng-container>
+            <ng-container *ngIf="!hasScenarioUrl(activeScenario)">
+              🔒 Сценарій ще не доступний
+            </ng-container>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>

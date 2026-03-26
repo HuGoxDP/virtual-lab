@@ -1,0 +1,57 @@
+# docker-compose.yml
+# Запуск:      docker compose up --build -d
+# Остановка:   docker compose down
+# Сброс БД:    docker compose down -v
+# Логи:        docker compose logs -f
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: virtual_lab
+      POSTGRES_USER: lab_user
+      POSTGRES_PASSWORD: lab_secret_123
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"       # убери в проде
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab_user -d virtual_lab"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Backend API (Express) ───────────────────────────
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: virtual_lab
+      DB_USER: lab_user
+      DB_PASSWORD: lab_secret_123
+      PORT: 3000
+    ports:
+      - "3000:3000"       # убери в проде
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Nginx + Frontend ────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+volumes:
+  pg_data:

@@ -42,3 +42,5 @@ Thumbs.db
 
 # Optional
 coverage/
+/frontend/.angular/
+/frontend/node_modules/

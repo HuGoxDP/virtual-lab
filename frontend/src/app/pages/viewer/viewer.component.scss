@@ -1,0 +1,213 @@
+// path: src/app/pages/viewer/viewer.component.scss
+
+:host {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  --accent: #6C5CE7;
+  --accent-light: #a29bfe;
+}
+
+.viewer-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #060612;
+}
+
+// ==================== CANVAS ====================
+
+.webgl-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+// ==================== BACK BUTTON ====================
+
+.back-btn {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+  }
+
+  .back-arrow {
+    font-size: 16px;
+  }
+}
+
+// ==================== TITLE BADGE ====================
+
+.title-badge {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  padding: 6px 16px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
+  animation: fadeIn 0.5s ease;
+}
+
+// ==================== OVERLAYS ====================
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 6, 18, 0.92);
+  backdrop-filter: blur(4px);
+  animation: fadeIn 0.3s ease;
+}
+
+// ==================== LOADING ====================
+
+.loader-content {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.9);
+  max-width: 320px;
+  width: 100%;
+  padding: 0 24px;
+}
+
+.loader-ring {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 24px;
+
+  svg {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+  }
+
+  .track {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.08);
+    stroke-width: 5;
+  }
+
+  .progress {
+    fill: none;
+    stroke: var(--accent-light);
+    stroke-width: 5;
+    stroke-linecap: round;
+    stroke-dasharray: 264; // 2πr ≈ 264 for r=42
+    stroke-dashoffset: 264;
+    transition: stroke-dashoffset 0.3s ease;
+  }
+
+  .loader-percent {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-weight: 700;
+    color: white;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.loader-label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0 0 20px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-light));
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+}
+
+// ==================== ERROR ====================
+
+.error-content {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.9);
+  max-width: 400px;
+  padding: 0 24px;
+
+  .error-icon {
+    font-size: 48px;
+    display: block;
+    margin-bottom: 16px;
+  }
+
+  h3 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 8px;
+  }
+
+  p {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.6);
+    line-height: 1.6;
+    margin: 0 0 24px;
+  }
+
+  .retry-btn {
+    padding: 10px 24px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.2s;
+
+    &:hover {
+      opacity: 0.85;
+    }
+  }
+}
+
+// ==================== ANIMATIONS ====================
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

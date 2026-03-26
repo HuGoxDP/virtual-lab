@@ -1,0 +1,54 @@
+<!-- path: src/app/pages/viewer/viewer.component.html -->
+
+<div class="viewer-container">
+
+  <!-- Back button (always visible) -->
+  <button class="back-btn" (click)="goBack()">
+    <span class="back-arrow">&larr;</span>
+    <span class="back-text">Каталог</span>
+  </button>
+
+  <!-- Scenario title badge -->
+  <div class="title-badge" *ngIf="scenarioTitle && state === 'running'">
+    {{ scenarioTitle }}
+  </div>
+
+  <!-- WebGL canvas — always in DOM for engine init -->
+  <canvas #webglCanvas class="webgl-canvas"></canvas>
+
+  <!-- Loading overlay -->
+  <div class="overlay loading-overlay" *ngIf="isLoading">
+    <div class="loader-content">
+      <div class="loader-ring">
+        <svg viewBox="0 0 100 100">
+          <circle class="track" cx="50" cy="50" r="42" />
+          <circle
+            class="progress"
+            cx="50" cy="50" r="42"
+            [style.stroke-dashoffset]="264 - (264 * progressPercent / 100)"
+          />
+        </svg>
+        <span class="loader-percent">{{ progressPercent }}%</span>
+      </div>
+
+      <p class="loader-label">{{ progressLabel }}</p>
+
+      <div class="progress-bar">
+        <div class="progress-fill" [style.width.%]="progressPercent"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Error overlay -->
+  <div class="overlay error-overlay" *ngIf="state === 'error'">
+    <div class="error-content">
+      <span class="error-icon">⚠️</span>
+      <h3>Помилка завантаження</h3>
+      <p>{{ errorMessage }}</p>
+      <button class="retry-btn" (click)="goBack()">
+        &larr; Повернутись до каталогу
+      </button>
+    </div>
+  </div>
+
+</div>
