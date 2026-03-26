@@ -6,6 +6,8 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 COPY frontend/package.json frontend/package-lock.json ./
+# WebEngineTS-0.1.0.tgz должен лежать в папке frontend/
+COPY frontend/WebEngineTS-0.1.0.tgz ./
 RUN npm ci
 
 COPY frontend/ .
