@@ -128,10 +128,10 @@ app.post('/api/catalog', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       INSERT INTO scenarios
-        (id, title, description, full_description, category, category_label,
-         image_url, scenario_url, version, author)
+      (id, title, description, full_description, category, category_label,
+       image_url, scenario_url, version, author)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-      RETURNING id
+        RETURNING id
     `, [
       id, title,
       description || '', fullDescription || '',
@@ -146,6 +146,64 @@ app.post('/api/catalog', async (req, res) => {
       return res.status(409).json({ error: `Сценарій з id "${id}" вже існує` });
     }
     console.error('[API] POST /api/catalog error:', err.message);
+    res.status(500).json({ error: 'Помилка сервера' });
+  }
+});
+
+// ── PUT /api/catalog/:id ─────────────────────────────
+// Обновить существующий сценарий (любые поля)
+app.put('/api/catalog/:id', async (req, res) => {
+  const { id } = req.params;
+  const {
+    title, description, fullDescription,
+    category, categoryLabel, imageUrl, scenarioUrl,
+    version, author, isPublished,
+  } = req.body;
+
+  // Собираем только те поля, которые пришли в запросе
+  const fields = [];
+  const values = [];
+  let paramIndex = 1;
+
+  const addField = (column, value) => {
+    if (value !== undefined) {
+      fields.push(`${column} = $${paramIndex++}`);
+      values.push(value);
+    }
+  };
+
+  addField('title', title);
+  addField('description', description);
+  addField('full_description', fullDescription);
+  addField('category', category);
+  addField('category_label', categoryLabel);
+  addField('image_url', imageUrl);
+  addField('scenario_url', scenarioUrl);
+  addField('version', version);
+  addField('author', author);
+  addField('is_published', isPublished);
+
+  if (fields.length === 0) {
+    return res.status(400).json({ error: 'Не вказано жодного поля для оновлення' });
+  }
+
+  // Автоматически обновляем updated_at
+  fields.push(`updated_at = NOW()`);
+
+  try {
+    values.push(id); // последний параметр — WHERE id = $N
+    const { rowCount } = await pool.query(
+      `UPDATE scenarios SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
+      values
+    );
+
+    if (rowCount === 0) {
+      return res.status(404).json({ error: 'Сценарій не знайдено' });
+    }
+
+    res.json({ message: 'Сценарій оновлено', id });
+  } catch (err) {
+    console.error('[API] PUT /api/catalog/:id error:', err.message);
     res.status(500).json({ error: 'Помилка сервера' });
   }
 });
