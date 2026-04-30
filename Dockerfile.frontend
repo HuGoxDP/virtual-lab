@@ -8,7 +8,12 @@ WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
 # WebEngineTS-0.1.0.tgz должен лежать в папке frontend/
 COPY frontend/WebEngineTS-0.1.0.tgz ./
-RUN npm ci
+
+# Use `npm install` rather than `npm ci`: package-lock.json is generated on
+# Windows where @napi-rs/nice resolves to a native MSVC binary, but on Alpine
+# it falls back to @napi-rs/wasm-runtime, which adds @emnapi/* peer deps that
+# the Windows-side lockfile cannot record. `npm install` accepts that drift.
+RUN npm install --no-audit --no-fund --prefer-offline
 
 COPY frontend/ .
 RUN npm run build

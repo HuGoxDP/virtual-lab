@@ -64,7 +64,7 @@ VALUES
     'test',
     'Test',
     '',
-    'https://drive.google.com/file/d/1-wqMBqbPwYh1RfSwWZK8ZOPXa7_2LTCn/view?usp=sharing',
+    'https://drive.google.com/file/d/1dG6W3r2FmFXeYjsuxG3jcdhinrTabt48/view?usp=drive_link',
     '1.0.0',
     'HuGox'
   ),  (
@@ -75,7 +75,7 @@ VALUES
     'test',
     'Test',
     '',
-    'https://drive.google.com/file/d/1-wqMBqbPwYh1RfSwWZK8ZOPXa7_2LTCn/view?usp=sharing',
+    'https://drive.google.com/file/d/1QqL9YQhGwLEVFXTC3cmcZAQ3kTcAC3bh/view?usp=sharing',
     '1.0.0',
     'HuGox'
   )

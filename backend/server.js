@@ -51,6 +51,109 @@ function toGoogleDriveDirectUrl(url) {
   return url;
 }
 
+function decodeHtmlEntities(value) {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function normalizeEscapedUrl(value) {
+  return decodeHtmlEntities(value)
+    .replace(/\\u003d/g, '=')
+    .replace(/\\u0026/g, '&')
+    .replace(/\\\//g, '/');
+}
+
+function extractDriveConfirmUrl(html, baseUrl) {
+  const formMatch = html.match(/<form[^>]*id=["']download-form["'][^>]*action=["']([^"']+)["'][^>]*>/i);
+  if (formMatch?.[1]) {
+    try {
+      const actionUrl = new URL(normalizeEscapedUrl(formMatch[1]), baseUrl);
+      const inputPattern = /<input[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["'][^>]*>/gi;
+      let inputMatch;
+
+      while ((inputMatch = inputPattern.exec(html)) !== null) {
+        const key = inputMatch[1];
+        const value = decodeHtmlEntities(inputMatch[2]);
+        actionUrl.searchParams.set(key, value);
+      }
+
+      if (actionUrl.searchParams.has('confirm')) {
+        return actionUrl.toString();
+      }
+    } catch {
+      // Fall through to pattern-based extraction.
+    }
+  }
+
+  const patterns = [
+    /href=["']([^"']*confirm[^"']*)["']/i,
+    /action=["']([^"']*\/uc\?[^"']*)["']/i,
+    /"(https?:\\\/\\\/[^"\\]*(?:confirm|export\\u003ddownload)[^"\\]*)"/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (!match?.[1]) continue;
+
+    try {
+      const candidate = normalizeEscapedUrl(match[1]);
+      return new URL(candidate, baseUrl).toString();
+    } catch {
+      // Try next pattern.
+    }
+  }
+
+  return null;
+}
+
+function extractDriveConfirmToken(html) {
+  const patterns = [
+    /[?&]confirm=([a-zA-Z0-9_-]+)/i,
+    /name=["']confirm["']\s+value=["']([^"']+)["']/i,
+    /"confirm"\s*:\s*"([^"]+)"/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+function buildConfirmedUrl(directUrl, token) {
+  const url = new URL(directUrl);
+  url.searchParams.set('confirm', token);
+  return url.toString();
+}
+
+async function streamUpstreamToClient(res, upstream, fallbackContentType = 'application/octet-stream') {
+  const contentType = upstream.headers.get('content-type') || fallbackContentType;
+  res.setHeader('Content-Type', contentType);
+
+  const cl = upstream.headers.get('content-length');
+  if (cl) res.setHeader('Content-Length', cl);
+
+  const reader = upstream.body?.getReader();
+  if (!reader) {
+    res.end();
+    return;
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      res.end();
+      return;
+    }
+    res.write(Buffer.from(value));
+  }
+}
+
 // ══════════════════════════════════════════════════════
 // ROUTES
 // ══════════════════════════════════════════════════════
@@ -294,11 +397,12 @@ app.get('/api/proxy-download', async (req, res) => {
       // Большой файл — Google требует подтверждения.
       // Извлекаем confirm-токен и повторяем запрос.
       const html = await upstream.text();
-      const confirmMatch = html.match(/confirm=([a-zA-Z0-9_-]+)/);
+      const confirmUrlFromHtml = extractDriveConfirmUrl(html, directUrl);
+      const confirmToken = extractDriveConfirmToken(html);
+      const confirmUrl = confirmUrlFromHtml || (confirmToken ? buildConfirmedUrl(directUrl, confirmToken) : null);
 
-      if (confirmMatch) {
-        const confirmUrl = `${directUrl}&confirm=${confirmMatch[1]}`;
-        console.log(`[PROXY] Large file, confirming: ${confirmUrl}`);
+      if (confirmUrl) {
+        console.log(`[PROXY] Large file confirmation via ${confirmUrlFromHtml ? 'url' : 'token'}: ${confirmUrl}`);
 
         const confirmed = await fetch(confirmUrl, {
           redirect: 'follow',
@@ -306,48 +410,25 @@ app.get('/api/proxy-download', async (req, res) => {
         });
 
         if (!confirmed.ok) {
+          console.error(`[PROXY] Confirmed fetch returned ${confirmed.status}`);
           return res.status(502).json({ error: 'Не вдалося завантажити великий файл' });
         }
 
-        // Стримим подтверждённый ответ
-        res.setHeader('Content-Type', 'application/zip');
-        const cl = confirmed.headers.get('content-length');
-        if (cl) res.setHeader('Content-Length', cl);
-
-        const reader = confirmed.body.getReader();
-        const pump = async () => {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) { res.end(); return; }
-            res.write(Buffer.from(value));
-          }
-        };
-        return pump().catch(err => {
+        return streamUpstreamToClient(res, confirmed, 'application/zip').catch(err => {
           console.error('[PROXY] Stream error:', err.message);
           if (!res.headersSent) res.status(500).json({ error: 'Stream error' });
         });
       }
 
       // Не нашли confirm-токен — возможно файл не публичный
+      console.error('[PROXY] Google Drive warning page did not contain confirm token/url');
       return res.status(403).json({
         error: 'Файл на Google Drive не є публічним або потребує авторизації',
       });
     }
 
     // Обычный файл — стримим напрямую
-    res.setHeader('Content-Type', contentType || 'application/octet-stream');
-    const cl = upstream.headers.get('content-length');
-    if (cl) res.setHeader('Content-Length', cl);
-
-    const reader = upstream.body.getReader();
-    const pump = async () => {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) { res.end(); return; }
-        res.write(Buffer.from(value));
-      }
-    };
-    pump().catch(err => {
+    return streamUpstreamToClient(res, upstream).catch(err => {
       console.error('[PROXY] Stream error:', err.message);
       if (!res.headersSent) res.status(500).json({ error: 'Stream error' });
     });
