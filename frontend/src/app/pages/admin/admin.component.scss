@@ -1,0 +1,281 @@
+// path: src/app/pages/admin/admin.component.scss
+
+$bg: #12121f;
+$panel: #1b1b2c;
+$panel-alt: #23233a;
+$border: #2f2f4a;
+$text: #e6e6f0;
+$muted: #9ca3af;
+$accent: #6366f1;
+$danger: #ef4444;
+$ok: #22c55e;
+
+// Hover / emphasis variants, written out rather than derived: sass's
+// lighten() is deprecated and no other stylesheet here uses colour functions.
+$panel-hover: #2c2c49;
+$accent-hover: #7b7ef4;
+$danger-light: #f37070;
+$ok-light: #4ade80;
+
+:host {
+  display: block;
+  min-height: 100vh;
+  background: $bg;
+  color: $text;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.admin-layout {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+
+  h1 {
+    margin: 4px 0 0;
+    font-size: 22px;
+  }
+}
+
+.back-link {
+  color: $muted;
+  text-decoration: none;
+  font-size: 14px;
+
+  &:hover { color: $text; }
+}
+
+.header-actions { display: flex; gap: 8px; }
+
+// ── Buttons ──────────────────────────────────────────
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid $border;
+  border-radius: 8px;
+  background: $panel-alt;
+  color: $text;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+
+  &:hover:not(:disabled) { background: $panel-hover; }
+  &:disabled { opacity: .5; cursor: not-allowed; }
+}
+
+.btn-primary {
+  background: $accent;
+  border-color: $accent;
+
+  &:hover:not(:disabled) { background: $accent-hover; }
+}
+
+.btn-ghost { background: transparent; }
+
+.btn-small { padding: 5px 10px; font-size: 13px; }
+
+.btn-danger {
+  border-color: rgba($danger, .5);
+  color: $danger-light;
+
+  &:hover:not(:disabled) { background: rgba($danger, .15); }
+}
+
+// ── Token gate ───────────────────────────────────────
+.token-gate {
+  max-width: 440px;
+  margin: 48px auto;
+  padding: 28px;
+  background: $panel;
+  border: 1px solid $border;
+  border-radius: 14px;
+
+  h2 { margin: 0 0 8px; font-size: 18px; }
+
+  form { display: flex; gap: 8px; margin-top: 16px; }
+  input { flex: 1; }
+}
+
+.hint {
+  margin: 0;
+  color: $muted;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+// ── Inputs ───────────────────────────────────────────
+input, textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid $border;
+  border-radius: 8px;
+  background: $bg;
+  color: $text;
+  font-size: 14px;
+  font-family: inherit;
+
+  &:focus { outline: 2px solid rgba($accent, .6); outline-offset: -1px; }
+  &:disabled { opacity: .55; }
+}
+
+textarea { resize: vertical; }
+
+// ── Banners ──────────────────────────────────────────
+.banner {
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  white-space: pre-line;
+}
+
+.banner-error { background: rgba($danger, .14); border: 1px solid rgba($danger, .4); }
+.banner-ok    { background: rgba($ok, .12);    border: 1px solid rgba($ok, .35); }
+
+.error-text { color: $danger-light; font-size: 14px; }
+.muted { color: $muted; }
+
+.toolbar { margin-bottom: 16px; }
+
+// ── Editor ───────────────────────────────────────────
+.editor {
+  padding: 20px;
+  margin-bottom: 24px;
+  background: $panel;
+  border: 1px solid $border;
+  border-radius: 14px;
+
+  h2 { margin: 0 0 16px; font-size: 17px; }
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    color: $muted;
+  }
+
+  em { color: $danger; font-style: normal; }
+  .span-2 { grid-column: 1 / -1; }
+}
+
+.editor-actions { display: flex; gap: 8px; margin-top: 18px; }
+
+// ── Table ────────────────────────────────────────────
+.scenario-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: $panel;
+  border: 1px solid $border;
+  border-radius: 14px;
+  overflow: hidden;
+  font-size: 14px;
+
+  th, td {
+    padding: 12px 14px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid $border;
+  }
+
+  th {
+    background: $panel-alt;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: $muted;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+}
+
+.row-busy { opacity: .55; }
+
+.row-id, .hash {
+  display: block;
+  margin-top: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: $muted;
+  word-break: break-all;
+}
+
+.sub { display: block; margin-top: 3px; font-size: 12px; color: $muted; }
+
+.tag {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba($ok, .16);
+  color: $ok-light;
+  font-size: 11px;
+}
+
+.tag-warn { background: rgba(#f59e0b, .16); color: #fbbf24; }
+
+.pill {
+  padding: 5px 12px;
+  border: 1px solid $border;
+  border-radius: 999px;
+  background: transparent;
+  color: $muted;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:disabled { opacity: .5; cursor: not-allowed; }
+}
+
+.pill-on { background: rgba($ok, .16); border-color: rgba($ok, .4); color: $ok-light; }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.upload-progress {
+  position: relative;
+  min-width: 140px;
+  height: 24px;
+  border: 1px solid $border;
+  border-radius: 8px;
+  overflow: hidden;
+  background: $bg;
+
+  span {
+    position: relative;
+    display: block;
+    line-height: 22px;
+    text-align: center;
+    font-size: 12px;
+  }
+}
+
+.upload-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba($accent, .55);
+  transition: width .12s linear;
+}
+
+@media (max-width: 860px) {
+  .scenario-table { display: block; overflow-x: auto; }
+}

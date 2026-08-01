@@ -1,0 +1,6 @@
+# Build context for backend/Dockerfile (context: ./backend).
+node_modules
+npm-debug.log*
+*.log
+.env
+.env.*

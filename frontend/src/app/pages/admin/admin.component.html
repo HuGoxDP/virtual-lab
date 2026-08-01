@@ -1,0 +1,220 @@
+<!-- path: src/app/pages/admin/admin.component.html -->
+
+<div class="admin-layout">
+
+  <header class="admin-header">
+    <div class="brand">
+      <a routerLink="/catalog" class="back-link">&larr; Каталог</a>
+      <h1>Керування сценаріями</h1>
+    </div>
+
+    @if (isAuthenticated()) {
+      <div class="header-actions">
+        <button class="btn" (click)="reload()" [disabled]="isLoading()">Оновити</button>
+        <button class="btn btn-ghost" (click)="signOut()">Вийти</button>
+      </div>
+    }
+  </header>
+
+  <!-- ==================== LOGIN ==================== -->
+  @if (!isAuthenticated()) {
+    <section class="token-gate">
+      <h2>Адміністративний токен</h2>
+      <p class="hint">
+        Значення <code>ADMIN_TOKEN</code> із <code>.env</code>. Зберігається лише
+        на час вкладки браузера.
+      </p>
+      <form (submit)="$event.preventDefault(); submitToken()">
+        <input
+          type="password"
+          autocomplete="off"
+          placeholder="Bearer-токен"
+          [value]="tokenInput()"
+          (input)="onTokenInput($event)"
+        />
+        <button class="btn btn-primary" type="submit">Увійти</button>
+      </form>
+      @if (errorMessage()) {
+        <p class="error-text">{{ errorMessage() }}</p>
+      }
+    </section>
+  } @else {
+
+    <!-- ==================== MESSAGES ==================== -->
+    @if (errorMessage()) {
+      <div class="banner banner-error">{{ errorMessage() }}</div>
+    }
+    @if (notice()) {
+      <div class="banner banner-ok">{{ notice() }}</div>
+    }
+
+    <!-- ==================== FORM ==================== -->
+    <section class="toolbar">
+      <button class="btn btn-primary" (click)="startCreate()">+ Новий сценарій</button>
+    </section>
+
+    @if (draft(); as form) {
+      <section class="editor">
+        <h2>{{ editingId() ? 'Редагування: ' + editingId() : 'Новий сценарій' }}</h2>
+
+        <div class="field-grid">
+          <label>
+            <span>id <em>*</em></span>
+            <input
+              [value]="form.id"
+              [disabled]="!!editingId()"
+              placeholder="solar-system"
+              (input)="updateDraft('id', $event)"
+            />
+          </label>
+
+          <label>
+            <span>Назва <em>*</em></span>
+            <input [value]="form.title" (input)="updateDraft('title', $event)" />
+          </label>
+
+          <label>
+            <span>Категорія <em>*</em></span>
+            <input [value]="form.category" placeholder="astronomy" (input)="updateDraft('category', $event)" />
+          </label>
+
+          <label>
+            <span>Підпис категорії <em>*</em></span>
+            <input [value]="form.categoryLabel" placeholder="Астрономія" (input)="updateDraft('categoryLabel', $event)" />
+          </label>
+
+          <label>
+            <span>Версія</span>
+            <input [value]="form.version" (input)="updateDraft('version', $event)" />
+          </label>
+
+          <label>
+            <span>Автор</span>
+            <input [value]="form.author" (input)="updateDraft('author', $event)" />
+          </label>
+
+          <label class="span-2">
+            <span>Зображення (URL)</span>
+            <input [value]="form.imageUrl" (input)="updateDraft('imageUrl', $event)" />
+          </label>
+
+          <label class="span-2">
+            <span>Короткий опис</span>
+            <textarea rows="2" [value]="form.description" (input)="updateDraft('description', $event)"></textarea>
+          </label>
+
+          <label class="span-2">
+            <span>Повний опис</span>
+            <textarea rows="4" [value]="form.fullDescription" (input)="updateDraft('fullDescription', $event)"></textarea>
+          </label>
+        </div>
+
+        <div class="editor-actions">
+          <button class="btn btn-primary" (click)="saveDraft()">Зберегти</button>
+          <button class="btn btn-ghost" (click)="cancelEdit()">Скасувати</button>
+        </div>
+      </section>
+    }
+
+    <!-- ==================== LIST ==================== -->
+    @if (isLoading()) {
+      <p class="muted">Завантаження...</p>
+    } @else if (scenarios().length === 0) {
+      <p class="muted">Сценаріїв немає.</p>
+    } @else {
+      <table class="scenario-table">
+        <thead>
+          <tr>
+            <th>Сценарій</th>
+            <th>Категорія</th>
+            <th>Архів</th>
+            <th>Маніфест</th>
+            <th>Стан</th>
+            <th>Дії</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (scenario of scenarios(); track scenario.id) {
+            <tr [class.row-busy]="busy(scenario.id)">
+              <td>
+                <strong>{{ scenario.title || '—' }}</strong>
+                <code class="row-id">{{ scenario.id }}</code>
+              </td>
+
+              <td>
+                {{ scenario.categoryLabel }}
+                <code class="row-id">{{ scenario.category }}</code>
+              </td>
+
+              <td>
+                @if (scenario.archiveSha256) {
+                  <code class="hash" [title]="scenario.archiveSha256">{{ shortHash(scenario.archiveSha256) }}</code>
+                  <span class="sub">{{ formatBytes(scenario.archiveBytes) }}</span>
+                } @else {
+                  <span class="sub">немає</span>
+                }
+                <span class="tag" [class.tag-warn]="scenario.storageKind !== 'local'">
+                  {{ scenario.storageKind }}
+                </span>
+              </td>
+
+              <td>
+                @if (scenario.manifestId) {
+                  <code class="row-id">{{ scenario.manifestId }}</code>
+                  <span class="sub">v{{ scenario.manifestVersion }}</span>
+                } @else {
+                  <span class="sub">—</span>
+                }
+              </td>
+
+              <td>
+                <button
+                  class="pill"
+                  [class.pill-on]="scenario.isPublished"
+                  [disabled]="busy(scenario.id)"
+                  (click)="togglePublished(scenario)"
+                >
+                  {{ scenario.isPublished ? 'Опубліковано' : 'Приховано' }}
+                </button>
+              </td>
+
+              <td class="actions">
+                @if (progressOf(scenario.id) !== null) {
+                  <div class="upload-progress">
+                    <div class="upload-fill" [style.width.%]="progressOf(scenario.id)"></div>
+                    <span>{{ progressOf(scenario.id) }}%</span>
+                  </div>
+                } @else {
+                  <label class="btn btn-small">
+                    Архів…
+                    <input
+                      type="file"
+                      accept=".zip,application/zip"
+                      hidden
+                      [disabled]="busy(scenario.id)"
+                      (change)="onArchiveSelected(scenario, $event)"
+                    />
+                  </label>
+
+                  @if (scenario.storageKind !== 'local' && scenario.scenarioUrl) {
+                    <button class="btn btn-small" [disabled]="busy(scenario.id)" (click)="importFromSource(scenario)">
+                      Імпорт
+                    </button>
+                  }
+
+                  <button class="btn btn-small" [disabled]="busy(scenario.id)" (click)="startEdit(scenario)">
+                    Змінити
+                  </button>
+                  <button class="btn btn-small btn-danger" [disabled]="busy(scenario.id)" (click)="remove(scenario)">
+                    Видалити
+                  </button>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  }
+
+</div>

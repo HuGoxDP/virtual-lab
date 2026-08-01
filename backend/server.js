@@ -1,12 +1,33 @@
 // backend/server.js
 
+const crypto = require('node:crypto');
+const { Readable, Transform } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
+
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+const multer = require('multer');
 const { Pool } = require('pg');
 
+const { runMigrations } = require('./migrations');
+const storage = require('./storage');
+const { validateScenarioArchive } = require('./archive-validation');
+
 const app = express();
-app.use(cors());
+
+// Everything reaches the API same-origin through nginx, so CORS stays off
+// unless an origin is named explicitly. A wildcard would expose the admin
+// write endpoints to any page on the internet.
+if (process.env.CORS_ORIGIN) {
+  app.use(cors({ origin: process.env.CORS_ORIGIN }));
+}
+
 app.use(express.json());
+
+// nginx sits in front and sets X-Forwarded-For; without this the rate limiter
+// would bucket every client under the proxy's address.
+app.set('trust proxy', 1);
 
 // ── Подключение к PostgreSQL ─────────────────────────
 const pool = new Pool({
@@ -14,12 +35,56 @@ const pool = new Pool({
   port:     process.env.DB_PORT     || 5432,
   database: process.env.DB_NAME     || 'virtual_lab',
   user:     process.env.DB_USER     || 'lab_user',
-  password: process.env.DB_PASSWORD || 'lab_secret_123',
+  password: process.env.DB_PASSWORD,
+});
+
+// An idle client can emit 'error' (database restart, dropped connection).
+// Without a listener that is an unhandled error event and takes the process
+// down; pg discards the broken client on its own.
+pool.on('error', err => {
+  console.error('[DB] Idle client error:', err.message);
 });
 
 pool.query('SELECT NOW()')
   .then(() => console.log('[DB] Connected to PostgreSQL'))
   .catch(err => console.error('[DB] Connection failed:', err.message));
+
+// ══════════════════════════════════════════════════════
+// AUTH
+// ══════════════════════════════════════════════════════
+
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+
+if (!ADMIN_TOKEN) {
+  console.warn('[AUTH] ADMIN_TOKEN is not set — catalog writes are disabled');
+}
+
+function tokensMatch(provided, expected) {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  // timingSafeEqual throws on length mismatch, so compare lengths separately.
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Guards catalog mutation. Reads only: public. Writes: `Authorization: Bearer <ADMIN_TOKEN>`.
+ */
+function requireAdmin(req, res, next) {
+  if (!ADMIN_TOKEN) {
+    return res.status(503).json({ error: 'Адміністративний доступ не налаштовано' });
+  }
+
+  const header = req.get('authorization') || '';
+  if (!header.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Потрібна авторизація' });
+  }
+
+  if (!tokensMatch(header.slice(7), ADMIN_TOKEN)) {
+    return res.status(403).json({ error: 'Невірний токен' });
+  }
+
+  next();
+}
 
 // ══════════════════════════════════════════════════════
 // HELPERS
@@ -131,27 +196,187 @@ function buildConfirmedUrl(directUrl, token) {
   return url.toString();
 }
 
+// ══════════════════════════════════════════════════════
+// PROXY INTERNALS
+// ══════════════════════════════════════════════════════
+
+const ALLOWED_PROXY_HOSTS = [
+  'drive.google.com',
+  'docs.google.com',
+  // Drive redirects every actual download here. The old code used
+  // redirect: 'follow', so this hop was never checked and the allowlist did
+  // nothing on a real request; with per-hop validation it has to be listed.
+  'drive.usercontent.google.com',
+  'storage.googleapis.com',
+];
+
+/**
+ * The Drive proxy is legacy: it scrapes Google's HTML confirmation page.
+ * It stays available for one release while scenarios are imported into local
+ * storage, then this can be set to false and the Drive code deleted.
+ */
+const LEGACY_DRIVE_PROXY = process.env.LEGACY_DRIVE_PROXY !== 'false';
+
+const MAX_REDIRECTS = 5;
+/** Applies to response headers only — the body may legitimately stream for minutes. */
+const HEADERS_TIMEOUT_MS = 30_000;
+const MAX_ARCHIVE_BYTES = Number(process.env.MAX_ARCHIVE_BYTES || 2 * 1024 * 1024 * 1024);
+
+const BINARY_CONTENT_TYPES = [
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/octet-stream',
+  'binary/octet-stream',
+];
+
+class ProxyError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function assertAllowedHost(url) {
+  let hostname;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    throw new ProxyError(400, 'Невалідний URL');
+  }
+
+  if (!ALLOWED_PROXY_HOSTS.includes(hostname)) {
+    throw new ProxyError(403, `Домен "${hostname}" не дозволено`);
+  }
+}
+
+/**
+ * Fetches `url`, following redirects **manually** so the allowlist is re-checked
+ * on every hop. `redirect: 'follow'` would let an allowlisted host bounce the
+ * request anywhere.
+ *
+ * The timeout covers the response headers, not the body: aborting a multi-minute
+ * archive download mid-stream would be worse than no timeout at all.
+ */
+async function fetchAllowlisted(url) {
+  let current = url;
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    assertAllowedHost(current);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), HEADERS_TIMEOUT_MS);
+
+    let response;
+    try {
+      response = await fetch(current, {
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: { 'User-Agent': 'VirtualLab-Proxy/1.0' },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      await response.body?.cancel().catch(() => {});
+
+      if (!location) {
+        throw new ProxyError(502, 'Редірект без заголовка Location');
+      }
+      current = new URL(location, current).toString();
+      continue;
+    }
+
+    if (!response.ok) {
+      throw new ProxyError(502, `Джерело повернуло помилку: ${response.status}`);
+    }
+
+    return { response, url: current };
+  }
+
+  throw new ProxyError(502, 'Забагато редіректів');
+}
+
+/** Fails the stream once the response exceeds the cap, instead of relaying it whole. */
+function createSizeLimiter(maxBytes) {
+  let total = 0;
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        callback(new ProxyError(502, `Архів перевищує ліміт ${maxBytes} байт`));
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+}
+
+/**
+ * Resolves an external archive link to a live response carrying the ZIP.
+ *
+ * Handles Drive's sharing-link conversion and its large-file confirmation page,
+ * and refuses anything whose final content type is not an archive. Shared by the
+ * download proxy and by the "import into local storage" endpoint so the two can
+ * never drift apart.
+ */
+async function fetchArchiveFromDrive(sourceUrl) {
+  const directUrl = toGoogleDriveDirectUrl(sourceUrl);
+  const first = await fetchAllowlisted(directUrl);
+  let upstream = first.response;
+
+  // Для больших файлов Google показывает страницу подтверждения.
+  const contentType = upstream.headers.get('content-type') || '';
+
+  if (contentType.includes('text/html')) {
+    const html = await upstream.text();
+    const confirmUrlFromHtml = extractDriveConfirmUrl(html, first.url);
+    const confirmToken = extractDriveConfirmToken(html);
+    const confirmUrl = confirmUrlFromHtml
+      || (confirmToken ? buildConfirmedUrl(directUrl, confirmToken) : null);
+
+    if (!confirmUrl) {
+      throw new ProxyError(403, 'Файл на Google Drive не є публічним або потребує авторизації');
+    }
+
+    console.log(`[PROXY] Large file confirmation via ${confirmUrlFromHtml ? 'url' : 'token'}`);
+    upstream = (await fetchAllowlisted(confirmUrl)).response;
+  }
+
+  // Whatever we relay must be an archive — never HTML, never a login page.
+  const finalType = (upstream.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (finalType && !BINARY_CONTENT_TYPES.includes(finalType)) {
+    await upstream.body?.cancel().catch(() => {});
+    throw new ProxyError(502, `Неочікуваний тип вмісту: ${finalType}`);
+  }
+
+  return upstream;
+}
+
 async function streamUpstreamToClient(res, upstream, fallbackContentType = 'application/octet-stream') {
   const contentType = upstream.headers.get('content-type') || fallbackContentType;
+  const declaredLength = Number(upstream.headers.get('content-length') || 0);
+
+  if (declaredLength > MAX_ARCHIVE_BYTES) {
+    throw new ProxyError(502, `Архів перевищує ліміт ${MAX_ARCHIVE_BYTES} байт`);
+  }
+
   res.setHeader('Content-Type', contentType);
+  if (declaredLength) res.setHeader('Content-Length', String(declaredLength));
 
-  const cl = upstream.headers.get('content-length');
-  if (cl) res.setHeader('Content-Length', cl);
-
-  const reader = upstream.body?.getReader();
-  if (!reader) {
+  if (!upstream.body) {
     res.end();
     return;
   }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      res.end();
-      return;
-    }
-    res.write(Buffer.from(value));
-  }
+  // pipeline (not a manual read/write loop) so backpressure is respected —
+  // otherwise a slow client makes the server buffer the whole archive in memory.
+  await pipeline(
+    Readable.fromWeb(upstream.body),
+    createSizeLimiter(MAX_ARCHIVE_BYTES),
+    res
+  );
 }
 
 // ══════════════════════════════════════════════════════
@@ -159,33 +384,112 @@ async function streamUpstreamToClient(res, upstream, fallbackContentType = 'appl
 // ══════════════════════════════════════════════════════
 
 // ── GET /api/catalog ─────────────────────────────────
+const CATALOG_DEFAULT_LIMIT = 24;
+const CATALOG_MAX_LIMIT = 100;
+
+function parseLimit(raw) {
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value) || value <= 0) return CATALOG_DEFAULT_LIMIT;
+  return Math.min(value, CATALOG_MAX_LIMIT);
+}
+
+function parseOffset(raw) {
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
 app.get('/api/catalog', async (req, res) => {
+  const limit = parseLimit(req.query.limit);
+  const offset = parseOffset(req.query.offset);
+  const category = req.query.category && req.query.category !== 'all' ? String(req.query.category) : null;
+  const query = req.query.q ? String(req.query.q).trim() : '';
+  const pattern = query ? `%${query}%` : null;
+
+  // Filtering runs here rather than in the browser: with pagination, a
+  // client-side filter would only ever search the page it happens to hold.
+  const where = `
+    WHERE is_published = true
+      AND ($1::text IS NULL OR category = $1)
+      AND ($2::text IS NULL OR title ILIKE $2 OR description ILIKE $2)
+  `;
+
+  try {
+    // Categories describe the whole published catalog, not the filtered page —
+    // otherwise chips would vanish as soon as one was selected.
+    const [scenarios, total, categories] = await Promise.all([
+      pool.query(`
+        SELECT
+          id,
+          title,
+          description,
+          full_description   AS "fullDescription",
+          category,
+          category_label     AS "categoryLabel",
+          image_url          AS "imageUrl",
+          scenario_url       AS "scenarioUrl",
+          version,
+          author,
+          upload_date        AS "uploadDate"
+        FROM scenarios
+        ${where}
+        ORDER BY created_at DESC
+        LIMIT $3 OFFSET $4
+      `, [category, pattern, limit, offset]),
+      pool.query(`SELECT COUNT(*)::int AS count FROM scenarios ${where}`, [category, pattern]),
+      pool.query(`
+        SELECT DISTINCT
+          category,
+          category_label AS "categoryLabel"
+        FROM scenarios
+        WHERE is_published = true
+        ORDER BY category_label
+      `),
+    ]);
+
+    res.json({
+      version: '1',
+      scenarios: scenarios.rows,
+      categories: categories.rows,
+      total: total.rows[0].count,
+      limit,
+      offset,
+    });
+  } catch (err) {
+    console.error('[API] GET /api/catalog error:', err.message);
+    res.status(500).json({ error: 'Не вдалося завантажити каталог' });
+  }
+});
+
+// ── GET /api/admin/scenarios ─────────────────────────
+// Everything the catalog hides: unpublished rows, storage state, archive
+// metadata. `is_published` was previously only reachable through raw SQL.
+app.get('/api/admin/scenarios', requireAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT
-        id,
-        title,
-        description,
+        id, title, description,
         full_description   AS "fullDescription",
         category,
         category_label     AS "categoryLabel",
         image_url          AS "imageUrl",
         scenario_url       AS "scenarioUrl",
-        version,
-        author,
-        upload_date        AS "uploadDate"
+        version, author,
+        upload_date        AS "uploadDate",
+        is_published       AS "isPublished",
+        storage_kind       AS "storageKind",
+        archive_sha256     AS "archiveSha256",
+        archive_bytes      AS "archiveBytes",
+        manifest_id        AS "manifestId",
+        manifest_version   AS "manifestVersion",
+        updated_at         AS "updatedAt"
       FROM scenarios
-      WHERE is_published = true
       ORDER BY created_at DESC
     `);
 
-    res.json({
-      version: '1',
-      scenarios: rows,
-    });
+    res.json({ scenarios: rows });
   } catch (err) {
-    console.error('[API] GET /api/catalog error:', err.message);
-    res.status(500).json({ error: 'Не вдалося завантажити каталог' });
+    console.error('[API] GET /api/admin/scenarios error:', err.message);
+    res.status(500).json({ error: 'Помилка сервера' });
   }
 });
 
@@ -215,7 +519,7 @@ app.get('/api/catalog/:id', async (req, res) => {
 });
 
 // ── POST /api/catalog ────────────────────────────────
-app.post('/api/catalog', async (req, res) => {
+app.post('/api/catalog', requireAdmin, async (req, res) => {
   const {
     id, title, description, fullDescription,
     category, categoryLabel, imageUrl, scenarioUrl,
@@ -255,7 +559,7 @@ app.post('/api/catalog', async (req, res) => {
 
 // ── PUT /api/catalog/:id ─────────────────────────────
 // Обновить существующий сценарий (любые поля)
-app.put('/api/catalog/:id', async (req, res) => {
+app.put('/api/catalog/:id', requireAdmin, async (req, res) => {
   const { id } = req.params;
   const {
     title, description, fullDescription,
@@ -312,7 +616,7 @@ app.put('/api/catalog/:id', async (req, res) => {
 });
 
 // ── DELETE /api/catalog/:id ──────────────────────────
-app.delete('/api/catalog/:id', async (req, res) => {
+app.delete('/api/catalog/:id', requireAdmin, async (req, res) => {
   try {
     const { rowCount } = await pool.query(
       'DELETE FROM scenarios WHERE id = $1',
@@ -334,108 +638,193 @@ app.delete('/api/catalog/:id', async (req, res) => {
 // PROXY — скачивание ZIP с Google Drive (обход CORS)
 // ══════════════════════════════════════════════════════
 
+const proxyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number(process.env.PROXY_RATE_LIMIT || 60),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Забагато запитів на завантаження. Спробуйте пізніше.' },
+});
+
 /**
- * GET /api/proxy-download?url=https://drive.google.com/file/d/.../view
+ * GET /api/proxy-download?id=<scenario id>
  *
- * Фронтенд не может скачать файл с Google Drive напрямую
- * из-за CORS-ограничений. Этот endpoint:
- * 1. Принимает Google Drive sharing URL
- * 2. Преобразует в прямую ссылку на скачивание
- * 3. Скачивает файл на сервере
- * 4. Отдаёт клиенту как stream (с прогрессом)
+ * Фронтенд не может скачать файл с Google Drive напрямую из-за CORS.
+ *
+ * The archive URL is looked up in `scenarios` — it is never taken from the
+ * request. Accepting a client-supplied URL turned this endpoint into an open
+ * relay for any object on the allowlisted hosts.
  */
-app.get('/api/proxy-download', async (req, res) => {
-  const originalUrl = req.query.url;
-
-  if (!originalUrl) {
-    return res.status(400).json({ error: 'Параметр "url" обов\'язковий' });
+app.get('/api/proxy-download', proxyLimiter, async (req, res) => {
+  if (!LEGACY_DRIVE_PROXY) {
+    return res.status(410).json({
+      error: 'Проксі вимкнено. Усі архіви обслуговуються з локального сховища.',
+    });
   }
 
-  // Безопасность: разрешаем только определённые домены
-  const allowedDomains = [
-    'drive.google.com',
-    'docs.google.com',
-    'storage.googleapis.com',
-  ];
+  const { id } = req.query;
 
-  try {
-    const parsedUrl = new URL(originalUrl);
-    if (!allowedDomains.includes(parsedUrl.hostname)) {
-      return res.status(403).json({
-        error: `Домен "${parsedUrl.hostname}" не дозволено. Дозволені: ${allowedDomains.join(', ')}`,
-      });
-    }
-  } catch {
-    return res.status(400).json({ error: 'Невалідний URL' });
+  if (!id || typeof id !== 'string') {
+    return res.status(400).json({ error: 'Параметр "id" обов\'язковий' });
   }
 
-  // Преобразуем Google Drive sharing link → direct download
-  const directUrl = toGoogleDriveDirectUrl(originalUrl);
-  console.log(`[PROXY] ${originalUrl} → ${directUrl}`);
+  let originalUrl;
+  try {
+    const { rows } = await pool.query(
+      'SELECT scenario_url FROM scenarios WHERE id = $1 AND is_published = true',
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Сценарій не знайдено' });
+    }
+
+    originalUrl = rows[0].scenario_url;
+    if (!originalUrl) {
+      return res.status(404).json({ error: 'Для цього сценарію не вказано архів' });
+    }
+  } catch (err) {
+    console.error('[PROXY] Lookup error:', err.message);
+    return res.status(500).json({ error: 'Помилка сервера' });
+  }
+
+  console.log(`[PROXY] ${id} → ${originalUrl}`);
 
   try {
-    // Fetch с поддержкой редиректов (Google Drive делает несколько)
-    const upstream = await fetch(directUrl, {
-      redirect: 'follow',
-      headers: {
-        'User-Agent': 'VirtualLab-Proxy/1.0',
-      },
-    });
-
-    if (!upstream.ok) {
-      console.error(`[PROXY] Upstream returned ${upstream.status}`);
-      return res.status(502).json({
-        error: `Google Drive повернув помилку: ${upstream.status}`,
-      });
-    }
-
-    // Для больших файлов Google показывает страницу подтверждения.
-    // Проверяем Content-Type — если HTML, значит нужно подтверждение.
-    const contentType = upstream.headers.get('content-type') || '';
-
-    if (contentType.includes('text/html')) {
-      // Большой файл — Google требует подтверждения.
-      // Извлекаем confirm-токен и повторяем запрос.
-      const html = await upstream.text();
-      const confirmUrlFromHtml = extractDriveConfirmUrl(html, directUrl);
-      const confirmToken = extractDriveConfirmToken(html);
-      const confirmUrl = confirmUrlFromHtml || (confirmToken ? buildConfirmedUrl(directUrl, confirmToken) : null);
-
-      if (confirmUrl) {
-        console.log(`[PROXY] Large file confirmation via ${confirmUrlFromHtml ? 'url' : 'token'}: ${confirmUrl}`);
-
-        const confirmed = await fetch(confirmUrl, {
-          redirect: 'follow',
-          headers: { 'User-Agent': 'VirtualLab-Proxy/1.0' },
-        });
-
-        if (!confirmed.ok) {
-          console.error(`[PROXY] Confirmed fetch returned ${confirmed.status}`);
-          return res.status(502).json({ error: 'Не вдалося завантажити великий файл' });
-        }
-
-        return streamUpstreamToClient(res, confirmed, 'application/zip').catch(err => {
-          console.error('[PROXY] Stream error:', err.message);
-          if (!res.headersSent) res.status(500).json({ error: 'Stream error' });
-        });
-      }
-
-      // Не нашли confirm-токен — возможно файл не публичный
-      console.error('[PROXY] Google Drive warning page did not contain confirm token/url');
-      return res.status(403).json({
-        error: 'Файл на Google Drive не є публічним або потребує авторизації',
-      });
-    }
-
-    // Обычный файл — стримим напрямую
-    return streamUpstreamToClient(res, upstream).catch(err => {
-      console.error('[PROXY] Stream error:', err.message);
-      if (!res.headersSent) res.status(500).json({ error: 'Stream error' });
-    });
+    const upstream = await fetchArchiveFromDrive(originalUrl);
+    await streamUpstreamToClient(res, upstream, 'application/zip');
 
   } catch (err) {
-    console.error('[PROXY] Fetch error:', err.message);
-    res.status(502).json({ error: `Помилка проксі: ${err.message}` });
+    const status = err instanceof ProxyError ? err.status : 502;
+    console.error(`[PROXY] ${err.message}`);
+
+    if (res.headersSent) {
+      // Already streaming — the only honest signal left is an abrupt end.
+      res.destroy(err);
+      return;
+    }
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════
+// ARCHIVES — content-addressed storage
+// ══════════════════════════════════════════════════════
+
+const upload = multer({
+  dest: storage.TMP_DIR,
+  limits: { fileSize: MAX_ARCHIVE_BYTES, files: 1 },
+});
+
+async function scenarioExists(id) {
+  const { rowCount } = await pool.query('SELECT 1 FROM scenarios WHERE id = $1', [id]);
+  return rowCount > 0;
+}
+
+/** Points a scenario at a stored object and records its integrity metadata. */
+async function attachArchive(id, { sha256, bytes, url }, manifest) {
+  await pool.query(`
+    UPDATE scenarios
+       SET scenario_url     = $1,
+           archive_sha256   = $2,
+           archive_bytes    = $3,
+           manifest_id      = $4,
+           manifest_version = $5,
+           storage_kind     = 'local',
+           updated_at       = NOW()
+     WHERE id = $6
+  `, [url, sha256, bytes, manifest?.id ?? null, manifest?.version ?? null, id]);
+}
+
+/**
+ * POST /api/scenarios/:id/archive   (admin, multipart field "archive")
+ *
+ * Stores the upload as /scenarios/<sha256>.zip and repoints the scenario at it.
+ * Identical content uploaded twice reuses the same object.
+ */
+app.post('/api/scenarios/:id/archive', requireAdmin, upload.single('archive'), async (req, res) => {
+  const { id } = req.params;
+  const tmpFile = req.file?.path;
+
+  // commitArchive either renames the temp file into the store or deletes it;
+  // every other exit path — including the early 404 — must clean up itself.
+  let consumed = false;
+
+  try {
+    if (!tmpFile) {
+      return res.status(400).json({ error: 'Очікується файл у полі "archive"' });
+    }
+
+    if (!(await scenarioExists(id))) {
+      return res.status(404).json({ error: 'Сценарій не знайдено' });
+    }
+
+    // Validate before committing — a broken archive must never enter the store.
+    const { manifest, warnings } = await validateScenarioArchive(tmpFile, id);
+
+    const result = await storage.commitArchive(tmpFile);
+    consumed = true;
+    await attachArchive(id, result, manifest);
+
+    console.log(`[ARCHIVE] ${id} → ${result.url} (${result.bytes} bytes${result.deduplicated ? ', dedup' : ''})`);
+    res.status(201).json({ id, ...result, manifestId: manifest.id, warnings });
+  } catch (err) {
+    const status = err.status || 500;
+    if (status === 500) console.error('[ARCHIVE] Upload error:', err.message);
+    res.status(status).json({ error: err.message });
+  } finally {
+    if (!consumed) await storage.discardTemp(tmpFile);
+  }
+});
+
+/**
+ * POST /api/scenarios/:id/archive/import   (admin)
+ *
+ * Pulls the scenario's current external archive into local storage. This is the
+ * migration path off Google Drive: it reuses the proxy's allowlist, redirect
+ * checks and confirm-page handling, so nothing new is exposed.
+ */
+app.post('/api/scenarios/:id/archive/import', requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  let tmpFile;
+  let consumed = false;
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT scenario_url, storage_kind FROM scenarios WHERE id = $1',
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Сценарій не знайдено' });
+    }
+
+    const { scenario_url: sourceUrl, storage_kind: storageKind } = rows[0];
+
+    if (storageKind === 'local') {
+      return res.status(409).json({ error: 'Архів вже у локальному сховищі' });
+    }
+    if (!sourceUrl) {
+      return res.status(400).json({ error: 'Для цього сценарію не вказано посилання' });
+    }
+
+    const upstream = await fetchArchiveFromDrive(sourceUrl);
+    tmpFile = await storage.writeTempFromStream(Readable.fromWeb(upstream.body));
+
+    const { manifest, warnings } = await validateScenarioArchive(tmpFile, id);
+
+    const result = await storage.commitArchive(tmpFile);
+    consumed = true;
+    await attachArchive(id, result, manifest);
+
+    console.log(`[ARCHIVE] imported ${id} → ${result.url} (${result.bytes} bytes)`);
+    res.status(201).json({ id, source: sourceUrl, ...result, manifestId: manifest.id, warnings });
+  } catch (err) {
+    const status = err.status || 502;
+    console.error(`[ARCHIVE] Import failed for ${id}: ${err.message}`);
+    res.status(status).json({ error: err.message });
+  } finally {
+    if (!consumed) await storage.discardTemp(tmpFile);
   }
 });
 
@@ -451,6 +840,60 @@ app.get('/api/health', async (req, res) => {
 
 // ── Start ────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`[API] Server running on port ${PORT}`);
-});
+
+// Migrations and storage directories must exist before the first request:
+// a half-migrated schema serving traffic is worse than a restart loop.
+async function bootstrap() {
+  await storage.ensureStorageDirs();
+  await runMigrations(pool);
+  await storage.cleanStaleTemp();
+
+  return app.listen(PORT, () => {
+    console.log(`[API] Server running on port ${PORT}`);
+  });
+}
+
+let server;
+
+bootstrap()
+  .then(instance => { server = instance; })
+  .catch(err => {
+    console.error('[API] Startup failed:', err.message);
+    process.exit(1);
+  });
+
+// ── Graceful shutdown ────────────────────────────────
+// `docker compose down` sends SIGTERM; without this the process is killed
+// outright and in-flight archive streams are cut mid-transfer.
+let shuttingDown = false;
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[API] ${signal} received, shutting down`);
+
+  const force = setTimeout(() => {
+    console.error('[API] Forced exit after timeout');
+    process.exit(1);
+  }, 10_000);
+  force.unref();
+
+  if (!server) {
+    // Signalled while still bootstrapping.
+    pool.end().catch(() => {}).finally(() => process.exit(0));
+    return;
+  }
+
+  server.close(async () => {
+    try {
+      await pool.end();
+    } catch (err) {
+      console.error('[DB] Pool shutdown error:', err.message);
+    }
+    clearTimeout(force);
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

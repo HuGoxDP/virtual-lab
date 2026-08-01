@@ -1,6 +1,6 @@
 <!-- path: src/app/pages/catalog/catalog.component.html -->
 
-<div class="catalog-layout" [class.dark-theme]="isDarkMode">
+<div class="catalog-layout" [class.dark-theme]="isDarkMode()">
 
   <!-- ==================== HEADER ==================== -->
   <header class="catalog-header">
@@ -17,17 +17,23 @@
 
       <div class="controls-area">
         <div class="search-wrapper">
-          <span class="search-icon">🔍</span>
+          <span class="search-icon" aria-hidden="true">🔍</span>
           <input
-            type="text"
+            type="search"
+            aria-label="Пошук сценаріїв"
             placeholder="Пошук сценаріїв..."
-            [value]="searchQuery"
+            [value]="searchQuery()"
             (input)="onSearch($event)"
           />
         </div>
 
-        <button class="theme-toggle" (click)="toggleTheme()" title="Змінити тему">
-          {{ isDarkMode ? '☀️' : '🌙' }}
+        <button
+          class="theme-toggle"
+          (click)="toggleTheme()"
+          [attr.aria-label]="isDarkMode() ? 'Увімкнути світлу тему' : 'Увімкнути темну тему'"
+          title="Змінити тему"
+        >
+          {{ isDarkMode() ? '☀️' : '🌙' }}
         </button>
       </div>
 
@@ -39,81 +45,101 @@
     <div class="content-inner">
 
       <!-- Category filters -->
-      <div class="filters-bar">
-        <button
-          *ngFor="let cat of categories"
-          class="filter-chip"
-          [class.active]="selectedCategory === cat.id"
-          (click)="selectCategory(cat.id)"
-        >
-          <span class="chip-icon" *ngIf="cat.icon">{{ cat.icon }}</span>
-          {{ cat.label }}
-        </button>
+      <div class="filters-bar" role="group" aria-label="Фільтр за категорією">
+        @for (cat of categories(); track cat.id) {
+          <button
+            class="filter-chip"
+            [class.active]="selectedCategory() === cat.id"
+            [attr.aria-pressed]="selectedCategory() === cat.id"
+            (click)="selectCategory(cat.id)"
+          >
+            @if (cat.icon) {
+              <span class="chip-icon" aria-hidden="true">{{ cat.icon }}</span>
+            }
+            {{ cat.label }}
+          </button>
+        }
       </div>
 
       <!-- Status bar -->
-      <div class="status-bar">
+      <div class="status-bar" aria-live="polite">
         <span class="result-count">
-          Знайдено: <strong>{{ displayedScenarios.length }}</strong>
+          Знайдено: <strong>{{ total() }}</strong>
         </span>
       </div>
 
-      <!-- Loading state -->
-      <div class="loading-state" *ngIf="isLoading">
-        <div class="spinner"></div>
-        <p>Завантаження каталогу...</p>
-      </div>
-
       <!-- Error state -->
-      <div class="error-state" *ngIf="errorMessage && !isLoading">
-        <span class="error-icon">⚠️</span>
-        <p>{{ errorMessage }}</p>
-        <button class="retry-btn" (click)="reloadCatalog()">
-          Спробувати ще раз
-        </button>
-      </div>
+      @if (errorMessage() && !isLoading()) {
+        <div class="error-state">
+          <span class="error-icon" aria-hidden="true">⚠️</span>
+          <p>{{ errorMessage() }}</p>
+          <button class="retry-btn" (click)="reload()">
+            Спробувати ще раз
+          </button>
+        </div>
+      }
 
       <!-- Empty state -->
-      <div class="empty-state" *ngIf="!isLoading && !errorMessage && displayedScenarios.length === 0">
-        <span class="empty-icon">🔍</span>
-        <p>Сценаріїв не знайдено</p>
-      </div>
+      @if (!isLoading() && !errorMessage() && scenarios().length === 0) {
+        <div class="empty-state">
+          <span class="empty-icon" aria-hidden="true">🔍</span>
+          <p>Сценаріїв не знайдено</p>
+        </div>
+      }
 
       <!-- Scenarios grid -->
-      <div class="scenarios-grid" *ngIf="!isLoading && displayedScenarios.length > 0">
-        <div
-          *ngFor="let scenario of displayedScenarios"
-          class="scenario-card"
-          (click)="openModal(scenario)"
-        >
-          <div class="card-preview">
-            <span class="badge-webgl">WebGL</span>
-            <span class="badge-unavailable" *ngIf="!hasScenarioUrl(scenario)">
-              Незабаром
-            </span>
-            <img
-              [src]="scenario.imageUrl"
-              [alt]="scenario.title"
-              loading="lazy"
-              (error)="handleImageError($event)"
-            />
-            <div class="hover-overlay">
-              <span class="play-icon">▶</span>
-            </div>
-          </div>
+      @if (scenarios().length > 0) {
+        <div class="scenarios-grid">
+          @for (scenario of scenarios(); track scenario.id) {
+            <button type="button" class="scenario-card" (click)="openModal(scenario, $event)">
+              <div class="card-preview">
+                <span class="badge-webgl">WebGL</span>
+                @if (!hasScenarioUrl(scenario)) {
+                  <span class="badge-unavailable">Незабаром</span>
+                }
+                <img
+                  [src]="scenario.imageUrl"
+                  [alt]="scenario.title"
+                  loading="lazy"
+                  decoding="async"
+                  (error)="handleImageError($event)"
+                />
+                <div class="hover-overlay">
+                  <span class="play-icon" aria-hidden="true">▶</span>
+                </div>
+              </div>
 
-          <div class="card-info">
-            <div class="meta-row">
-              <span class="category-tag">{{ scenario.categoryLabel }}</span>
-              <span class="version-tag" *ngIf="scenario.version">
-                v{{ scenario.version }}
-              </span>
-            </div>
-            <h3 class="card-title">{{ scenario.title }}</h3>
-            <p class="card-desc">{{ scenario.description }}</p>
-          </div>
+              <div class="card-info">
+                <div class="meta-row">
+                  <span class="category-tag">{{ scenario.categoryLabel }}</span>
+                  @if (scenario.version) {
+                    <span class="version-tag">v{{ scenario.version }}</span>
+                  }
+                </div>
+                <h3 class="card-title">{{ scenario.title }}</h3>
+                <p class="card-desc">{{ scenario.description }}</p>
+              </div>
+            </button>
+          }
         </div>
-      </div>
+      }
+
+      <!-- Loading state -->
+      @if (isLoading()) {
+        <div class="loading-state">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>Завантаження каталогу...</p>
+        </div>
+      }
+
+      <!-- Pagination -->
+      @if (hasMore() && !isLoading()) {
+        <div class="load-more-bar">
+          <button class="retry-btn" (click)="loadMore()">
+            Показати ще ({{ total() - scenarios().length }})
+          </button>
+        </div>
+      }
 
     </div>
   </main>
@@ -121,58 +147,70 @@
   <!-- ==================== MODAL ==================== -->
   <div
     class="modal-overlay"
-    [class.open]="isModalOpen"
+    [class.open]="isModalOpen()"
     (click)="onOverlayClick($event)"
   >
-    <div class="modal-window" *ngIf="activeScenario" (click)="$event.stopPropagation()">
+    @if (activeScenario(); as scenario) {
+      <div
+        #modalWindow
+        class="modal-window"
+        role="dialog"
+        aria-modal="true"
+        [attr.aria-label]="scenario.title"
+        tabindex="-1"
+        (click)="$event.stopPropagation()"
+        (keydown)="onModalKeydown($event)"
+      >
 
-      <!-- Left: image -->
-      <div class="modal-image-side">
-        <img
-          [src]="activeScenario.imageUrl"
-          [alt]="activeScenario.title"
-          (error)="handleImageError($event)"
-        />
-      </div>
+        <!-- Left: image -->
+        <div class="modal-image-side">
+          <img
+            [src]="scenario.imageUrl"
+            [alt]="scenario.title"
+            (error)="handleImageError($event)"
+          />
+        </div>
 
-      <!-- Right: info -->
-      <div class="modal-info-side">
-        <button class="close-btn" (click)="closeModal()">&times;</button>
+        <!-- Right: info -->
+        <div class="modal-info-side">
+          <button class="close-btn" aria-label="Закрити" (click)="closeModal()">&times;</button>
 
-        <div class="modal-scroll">
-          <span class="modal-category">{{ activeScenario.categoryLabel }}</span>
-          <h2 class="modal-title">{{ activeScenario.title }}</h2>
+          <div class="modal-scroll">
+            <span class="modal-category">{{ scenario.categoryLabel }}</span>
+            <h2 class="modal-title">{{ scenario.title }}</h2>
 
-          <div class="modal-meta" *ngIf="activeScenario.author || activeScenario.version">
-            <span *ngIf="activeScenario.author">
-              👤 {{ activeScenario.author }}
-            </span>
-            <span *ngIf="activeScenario.version">
-              📦 v{{ activeScenario.version }}
-            </span>
+            @if (scenario.author || scenario.version) {
+              <div class="modal-meta">
+                @if (scenario.author) {
+                  <span>👤 {{ scenario.author }}</span>
+                }
+                @if (scenario.version) {
+                  <span>📦 v{{ scenario.version }}</span>
+                }
+              </div>
+            }
+
+            <p class="modal-description">{{ scenario.fullDescription }}</p>
           </div>
 
-          <p class="modal-description">{{ activeScenario.fullDescription }}</p>
+          <div class="modal-footer">
+            <button
+              class="launch-btn"
+              [class.disabled]="!hasScenarioUrl(scenario)"
+              [disabled]="!hasScenarioUrl(scenario)"
+              (click)="launchScenario()"
+            >
+              @if (hasScenarioUrl(scenario)) {
+                🚀 Запустити симуляцію
+              } @else {
+                🔒 Сценарій ще не доступний
+              }
+            </button>
+          </div>
         </div>
 
-        <div class="modal-footer">
-          <button
-            class="launch-btn"
-            [class.disabled]="!hasScenarioUrl(activeScenario)"
-            [disabled]="!hasScenarioUrl(activeScenario)"
-            (click)="launchScenario()"
-          >
-            <ng-container *ngIf="hasScenarioUrl(activeScenario)">
-              🚀 Запустити симуляцію
-            </ng-container>
-            <ng-container *ngIf="!hasScenarioUrl(activeScenario)">
-              🔒 Сценарій ще не доступний
-            </ng-container>
-          </button>
-        </div>
       </div>
-
-    </div>
+    }
   </div>
 
 </div>

@@ -8,7 +8,14 @@
  * This model drives the catalog UI; the engine never sees it.
  */
 export interface ScenarioCatalogItem {
-  /** Unique ID (matches the ID inside the ZIP manifest). */
+  /**
+   * Unique catalog ID; goes into the `/play/:id` path.
+   *
+   * **Not** the same as the `id` inside the ZIP's `manifest.json` — catalog rows
+   * use slugs while manifests use reverse-domain ids, and the engine never
+   * compares them (`loadScenarioFromBuffer` only receives the bytes). The admin
+   * screen surfaces both so the drift stays visible.
+   */
   id: string;
 
   /** Human-readable title shown in cards and modals. */
@@ -69,6 +76,34 @@ export interface ScenarioCatalogManifest {
 
   /** Array of available scenarios. */
   scenarios: ScenarioCatalogItem[];
+
+  /**
+   * Distinct categories actually used by the published scenarios.
+   *
+   * Sent by the API so the filter bar reflects the data instead of a
+   * hard-coded list; the client only supplies the icon per category key.
+   */
+  categories?: CatalogCategory[];
+
+  /** Total rows matching the current filter, across all pages. */
+  total?: number;
+
+  /** Page size the server applied (it caps the requested value). */
+  limit?: number;
+
+  /** Offset of this page. */
+  offset?: number;
+}
+
+/**
+ * One category as reported by the catalog API.
+ */
+export interface CatalogCategory {
+  /** Category key, e.g. "physics". */
+  category: string;
+
+  /** Localized label for display, e.g. "Фізика". */
+  categoryLabel: string;
 }
 
 /**
@@ -78,4 +113,48 @@ export interface CategoryFilter {
   id: string;
   label: string;
   icon?: string;
+}
+
+/**
+ * A scenario as seen by the admin screen: everything the public catalog hides.
+ *
+ * Only reachable with `Authorization: Bearer $ADMIN_TOKEN`
+ * (`GET /api/admin/scenarios`).
+ */
+export interface AdminScenario extends ScenarioCatalogItem {
+  /** Whether the scenario appears in the public catalog. */
+  isPublished: boolean;
+
+  /** `local` = archive in our storage, `drive` = legacy external link. */
+  storageKind: 'local' | 'drive';
+
+  /** Content hash of the stored archive, if any. */
+  archiveSha256: string | null;
+
+  /** Archive size in bytes, if known. */
+  archiveBytes: number | null;
+
+  /**
+   * `id` from the archive's own `manifest.json`.
+   *
+   * Deliberately independent of the catalog `id`: manifests use reverse-domain
+   * ids while the catalog uses slugs, and the engine never compares the two.
+   */
+  manifestId: string | null;
+
+  /** `version` from the archive's manifest. */
+  manifestVersion: string | null;
+}
+
+/**
+ * Result of a successful archive upload / import.
+ */
+export interface ArchiveUploadResult {
+  id: string;
+  sha256: string;
+  bytes: number;
+  url: string;
+  deduplicated: boolean;
+  manifestId: string;
+  warnings: string[];
 }

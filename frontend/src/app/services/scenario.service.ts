@@ -1,8 +1,8 @@
 // path: src/app/services/scenario.service.ts
 
-import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, Observable, firstValueFrom } from 'rxjs';
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { HttpClient, HttpParams } from '@angular/common/http';
+import { firstValueFrom } from 'rxjs';
 import {
   ScenarioCatalogItem,
   ScenarioCatalogManifest,
@@ -22,69 +22,128 @@ export interface DownloadProgress {
   percent: number;
 }
 
+/**
+ * Icons per category key. The set of categories itself comes from the API —
+ * this is only a display lookup, so an unknown category still renders.
+ */
+const CATEGORY_ICONS: Record<string, string> = {
+  all: '📋',
+  physics: '⚡',
+  biology: '🧬',
+  chemistry: '🧪',
+  history: '🏛️',
+  astronomy: '🔭',
+};
+
+const DEFAULT_CATEGORY_ICON = '📁';
+
+/** Scenarios fetched per request; the catalog appends pages on demand. */
+const PAGE_SIZE = 24;
+
+const ALL_CATEGORIES: CategoryFilter = {
+  id: 'all',
+  label: 'Всі сценарії',
+  icon: CATEGORY_ICONS['all'],
+};
+
 @Injectable({ providedIn: 'root' })
 export class ScenarioService {
 
-  private readonly _scenarios$ = new BehaviorSubject<ScenarioCatalogItem[]>([]);
-  private readonly _loading$ = new BehaviorSubject<boolean>(false);
-  private readonly _error$ = new BehaviorSubject<string | null>(null);
+  private readonly http = inject(HttpClient);
 
-  public readonly scenarios$: Observable<ScenarioCatalogItem[]> = this._scenarios$.asObservable();
-  public readonly loading$: Observable<boolean> = this._loading$.asObservable();
-  public readonly error$: Observable<string | null> = this._error$.asObservable();
+  private readonly _scenarios = signal<ScenarioCatalogItem[]>([]);
+  private readonly _apiCategories = signal<CategoryFilter[]>([]);
+  private readonly _loading = signal<boolean>(false);
+  private readonly _error = signal<string | null>(null);
+  private readonly _total = signal(0);
 
-  public readonly categories: CategoryFilter[] = [
-    { id: 'all',       label: 'Всі сценарії',  icon: '📋' },
-    { id: 'physics',   label: 'Фізика',         icon: '⚡' },
-    { id: 'biology',   label: 'Біологія',       icon: '🧬' },
-    { id: 'chemistry', label: 'Хімія',          icon: '🧪' },
-    { id: 'history',   label: 'Історія',        icon: '🏛️' },
-    { id: 'astronomy', label: 'Астрономія',     icon: '🔭' },
-  ];
+  public readonly scenarios = this._scenarios.asReadonly();
+  public readonly loading = this._loading.asReadonly();
+  public readonly error = this._error.asReadonly();
 
-  constructor(private readonly http: HttpClient) {}
+  /** How many scenarios match the current filter, across all pages. */
+  public readonly total = this._total.asReadonly();
+  public readonly hasMore = computed(() => this._scenarios().length < this._total());
+
+  /** "Всі сценарії" plus whatever categories the published scenarios actually use. */
+  public readonly categories = computed<CategoryFilter[]>(
+    () => [ALL_CATEGORIES, ...this._apiCategories()]
+  );
 
   // ==================== CATALOG ====================
 
-  async loadCatalog(): Promise<void> {
-    this._loading$.next(true);
-    this._error$.next(null);
+  /**
+   * Loads the first page for the given filter, replacing what is held.
+   *
+   * Filtering and paging both happen server-side — a client-side filter over a
+   * paged response would only ever search the page in hand.
+   */
+  async loadCatalog(category = 'all', query = ''): Promise<void> {
+    await this.fetchPage(category, query, 0, false);
+  }
+
+  /** Appends the next page for the same filter. */
+  async loadMore(category = 'all', query = ''): Promise<void> {
+    if (this._loading() || !this.hasMore()) return;
+    await this.fetchPage(category, query, this._scenarios().length, true);
+  }
+
+  private async fetchPage(
+    category: string,
+    query: string,
+    offset: number,
+    append: boolean
+  ): Promise<void> {
+    this._loading.set(true);
+    this._error.set(null);
+
+    let params = new HttpParams()
+      .set('limit', String(PAGE_SIZE))
+      .set('offset', String(offset));
+
+    if (category && category !== 'all') params = params.set('category', category);
+    if (query.trim()) params = params.set('q', query.trim());
 
     try {
       const manifest = await firstValueFrom(
-        this.http.get<ScenarioCatalogManifest>(environment.catalogUrl)
+        this.http.get<ScenarioCatalogManifest>(environment.catalogUrl, { params })
       );
 
-      this._scenarios$.next(manifest.scenarios ?? []);
+      const page = manifest.scenarios ?? [];
+      this._scenarios.set(append ? [...this._scenarios(), ...page] : page);
+      this._total.set(manifest.total ?? page.length);
+      this._apiCategories.set(
+        (manifest.categories ?? []).map(c => ({
+          id: c.category,
+          label: c.categoryLabel,
+          icon: CATEGORY_ICONS[c.category] ?? DEFAULT_CATEGORY_ICON,
+        }))
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Не вдалося завантажити каталог';
-      this._error$.next(message);
-      this._scenarios$.next([]);
+      this._error.set(message);
+      if (!append) {
+        this._scenarios.set([]);
+        this._apiCategories.set([]);
+        this._total.set(0);
+      }
       console.error('[ScenarioService] Catalog load failed:', err);
     } finally {
-      this._loading$.next(false);
+      this._loading.set(false);
     }
   }
 
-  getScenarios(): ScenarioCatalogItem[] {
-    return this._scenarios$.getValue();
-  }
-
-  getScenarioById(id: string): ScenarioCatalogItem | undefined {
-    return this._scenarios$.getValue().find(s => s.id === id);
-  }
-
-  filterScenarios(category: string, query: string): ScenarioCatalogItem[] {
-    const all = this._scenarios$.getValue();
-    const q = query.trim().toLowerCase();
-
-    return all.filter(s => {
-      const matchesCategory = category === 'all' || s.category === category;
-      const matchesQuery = !q
-        || (s.title ?? '').toLowerCase().includes(q)      // ← ФИКС: защита от undefined
-        || (s.description ?? '').toLowerCase().includes(q); // ← ФИКС: защита от undefined
-      return matchesCategory && matchesQuery;
-    });
+  /**
+   * Fetches a single scenario straight from the API.
+   *
+   * The viewer uses this instead of an in-memory lookup so that a hard reload
+   * of /play/:id — where the catalog was never loaded — still resolves, and so
+   * that the archive URL comes from the server rather than from the query string.
+   */
+  async fetchScenarioById(id: string): Promise<ScenarioCatalogItem> {
+    return firstValueFrom(
+      this.http.get<ScenarioCatalogItem>(`${environment.catalogUrl}/${encodeURIComponent(id)}`)
+    );
   }
 
   // ==================== ZIP DOWNLOAD ====================
@@ -92,37 +151,38 @@ export class ScenarioService {
   /**
    * Подготавливает URL для скачивания.
    *
-   * Google Drive sharing link:
-   *   https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+   * Локальные архивы (/assets/...) скачиваем напрямую.
    *
-   * Браузер НЕ МОЖЕТ скачать напрямую с Google Drive (CORS).
-   * Поэтому мы проксируем через наш бекенд:
-   *   /api/proxy-download?url=https://drive.google.com/...
-   *
-   * Локальные URL (/assets/...) остаются как есть.
+   * Браузер НЕ МОЖЕТ скачать напрямую с Google Drive (CORS), поэтому внешние
+   * архивы идут через бекенд. The proxy is addressed **by scenario id** — it
+   * looks the URL up itself, so a client cannot point it at anything else.
    */
-  private resolveDownloadUrl(url: string): string {
-    // Локальный файл — скачиваем напрямую
+  private resolveDownloadUrl(scenario: ScenarioCatalogItem): string {
+    const url = scenario.scenarioUrl;
+
     if (url.startsWith('/') || url.startsWith(window.location.origin)) {
       return url;
     }
 
-    // Внешний URL (Google Drive и т.д.) — проксируем через бекенд
-    return `/api/proxy-download?url=${encodeURIComponent(url)}`;
+    return `/api/proxy-download?id=${encodeURIComponent(scenario.id)}`;
   }
 
   /**
-   * Downloads a scenario ZIP from the given URL as an ArrayBuffer.
+   * Downloads a scenario's ZIP archive as an ArrayBuffer.
+   *
+   * `signal` lets the caller abort a transfer that is no longer wanted —
+   * without it, leaving the viewer keeps streaming a large archive into a
+   * component that no longer exists.
    */
   async downloadScenarioZip(
-    url: string,
-    onProgress?: (progress: DownloadProgress) => void
+    scenario: ScenarioCatalogItem,
+    onProgress?: (progress: DownloadProgress) => void,
+    signal?: AbortSignal
   ): Promise<ArrayBuffer> {
 
-    // ← ДОБАВЛЕНО: преобразование URL для Google Drive и др.
-    const downloadUrl = this.resolveDownloadUrl(url);
+    const downloadUrl = this.resolveDownloadUrl(scenario);
 
-    const response = await fetch(downloadUrl);
+    const response = await fetch(downloadUrl, { signal });
 
     if (!response.ok) {
       throw new Error(`Помилка завантаження: ${response.status} ${response.statusText}`);
@@ -139,6 +199,11 @@ export class ScenarioService {
     let received = 0;
 
     while (true) {
+      if (signal?.aborted) {
+        await reader.cancel().catch(() => {});
+        throw new DOMException('Завантаження скасовано', 'AbortError');
+      }
+
       const { done, value } = await reader.read();
       if (done) break;
 

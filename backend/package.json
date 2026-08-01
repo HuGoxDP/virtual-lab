@@ -7,8 +7,11 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
+    "cors": "^2.8.5",
     "express": "^4.21.0",
-    "pg": "^8.13.0",
-    "cors": "^2.8.5"
+    "express-rate-limit": "^8.6.1",
+    "multer": "^2.2.0",
+    "node-stream-zip": "^1.16.0",
+    "pg": "^8.13.0"
   }
 }

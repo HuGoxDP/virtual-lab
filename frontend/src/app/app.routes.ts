@@ -19,6 +19,11 @@ export const routes: Routes = [
       import('./pages/viewer/viewer.component').then(m => m.ViewerComponent),
   },
   {
+    path: 'admin',
+    loadComponent: () =>
+      import('./pages/admin/admin.component').then(m => m.AdminComponent),
+  },
+  {
     path: '**',
     redirectTo: 'catalog',
   },

@@ -1,25 +1,34 @@
 // path: src/app/pages/viewer/viewer.component.ts
 
-import { Component, ElementRef, ViewChild, AfterViewInit, OnDestroy, NgZone, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
-import { Router, ActivatedRoute, RouterModule } from '@angular/router';
-import { CommonModule } from '@angular/common';
+import {
+  Component,
+  ElementRef,
+  ViewChild,
+  AfterViewInit,
+  OnDestroy,
+  ChangeDetectionStrategy,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
+import { Router, ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 
 // Engine imports — from the WebEngineTS npm package
-import { Application } from 'WebEngineTS';
+import { Application, MemoryProfiler } from 'WebEngineTS';
 import type { IScenarioLoadProgress } from 'WebEngineTS';
 
 import { ScenarioService, DownloadProgress } from '../../services/scenario.service';
+import { ScenarioCatalogItem } from '../../models/scenario.model';
 
 /**
  * Viewer states for the loading UI.
  */
-type ViewerState = 'idle' | 'downloading' | 'loading-engine' | 'running' | 'error';
+type ViewerState = 'idle' | 'downloading' | 'loading-engine' | 'running' | 'error' | 'unsupported';
 
 @Component({
   selector: 'app-viewer',
   standalone: true,
-  imports: [CommonModule, RouterModule],
   templateUrl: './viewer.component.html',
   styleUrls: ['./viewer.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -29,54 +38,85 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   @ViewChild('webglCanvas', { static: true })
   canvasRef!: ElementRef<HTMLCanvasElement>;
 
+  private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
+  private readonly scenarioService = inject(ScenarioService);
+
   private readonly destroy$ = new Subject<void>();
   private app: Application | null = null;
 
-  // UI state
-  state: ViewerState = 'idle';
-  progressPercent = 0;
-  progressLabel = '';
-  errorMessage: string | null = null;
-  scenarioTitle = '';
+  /** Aborts the archive download when the user navigates away mid-transfer. */
+  private downloadAbort: AbortController | null = null;
 
-  constructor(
-    private readonly router: Router,
-    private readonly route: ActivatedRoute,
-    private readonly ngZone: NgZone,
-    private readonly scenarioService: ScenarioService,
-    private readonly cdr: ChangeDetectorRef,
-  ) {}
+  /** Kept so "restart" can re-run the scenario without downloading it again. */
+  private loadedBuffer: ArrayBuffer | null = null;
+
+  private contextLostHandler: ((event: Event) => void) | null = null;
+
+  /**
+   * Incremented on every navigation so a load that is still in flight cannot
+   * write its result over a newer one.
+   */
+  private loadToken = 0;
+
+  // UI state. Signals, not plain fields: the app is zoneless, so a signal write
+  // is what notifies the change-detection scheduler. Mutating a field from an
+  // async callback would never repaint.
+  readonly state = signal<ViewerState>('idle');
+  readonly progressPercent = signal(0);
+  readonly progressLabel = signal('');
+  readonly errorMessage = signal<string | null>(null);
+  readonly scenarioTitle = signal('');
+  readonly contextLost = signal(false);
+  readonly isFullscreen = signal(false);
+  readonly diagnosticsVisible = signal(false);
+
+  readonly isLoading = computed(
+    () => this.state() === 'downloading' || this.state() === 'loading-engine'
+  );
+
+  readonly canRestart = computed(() => this.state() === 'running' && !this.contextLost());
+
+  /** Stroke offset for the progress ring (circumference ≈ 264). */
+  readonly ringOffset = computed(() => 264 - (264 * this.progressPercent() / 100));
+
+  readonly engineVersion = Application.version;
 
   // ==================== LIFECYCLE ====================
 
   ngAfterViewInit(): void {
-    // Initialize engine OUTSIDE Angular zone — the game loop
-    // uses requestAnimationFrame which would trigger change detection
-    // on every frame if run inside the zone.
-    this.ngZone.runOutsideAngular(() => {
-      this.app = new Application(this.canvasRef.nativeElement);
-    });
+    const canvas = this.canvasRef.nativeElement;
 
-    // Read route params and start loading
-    this.route.queryParams
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(params => {
-        const url = params['url'];
-        if (url) {
-          this.startLoading(url);
-        } else {
-          this.showError('URL сценарію не вказано.');
-        }
-      });
+    // Probe before constructing: the Application constructor throws on a
+    // machine without WebGL2 and the user would see a raw exception string.
+    if (!ViewerComponent.supportsWebGL2(canvas)) {
+      this.state.set('unsupported');
+      return;
+    }
 
-    // Resolve scenario title from catalog
+    // The engine's game loop is a plain requestAnimationFrame loop and never
+    // touches change detection — the app is zoneless, so no NgZone dance is
+    // needed (or possible: the injected NgZone would be a no-op).
+    this.app = new Application(canvas);
+
+    // A lost context silently freezes the scene otherwise.
+    this.contextLostHandler = (event: Event) => {
+      event.preventDefault();
+      this.app?.stop();
+      this.contextLost.set(true);
+    };
+    canvas.addEventListener('webglcontextlost', this.contextLostHandler);
+
+    document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
+
     this.route.paramMap
       .pipe(takeUntil(this.destroy$))
       .subscribe(params => {
         const id = params.get('id');
         if (id) {
-          const item = this.scenarioService.getScenarioById(id);
-          this.scenarioTitle = item?.title ?? '';
+          void this.openScenario(id);
+        } else {
+          this.showError('Сценарій не вказано.');
         }
       });
   }
@@ -85,6 +125,20 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     this.destroy$.next();
     this.destroy$.complete();
 
+    // Stop streaming a possibly-large archive into a dead component.
+    this.downloadAbort?.abort();
+    this.downloadAbort = null;
+    this.loadedBuffer = null;
+
+    const canvas = this.canvasRef.nativeElement;
+    if (this.contextLostHandler) {
+      canvas.removeEventListener('webglcontextlost', this.contextLostHandler);
+      this.contextLostHandler = null;
+    }
+    document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
+
+    if (this.diagnosticsVisible()) MemoryProfiler.hideOverlay();
+
     // Full cleanup: scenario → engine → WebGL context
     if (this.app) {
       this.app.dispose();
@@ -92,7 +146,52 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  /** Cheap feature probe; the context is released immediately. */
+  private static supportsWebGL2(canvas: HTMLCanvasElement): boolean {
+    try {
+      const probe = document.createElement('canvas');
+      const gl = probe.getContext('webgl2');
+      if (!gl) return false;
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // ==================== LOADING PIPELINE ====================
+
+  /**
+   * Resolves the scenario through the API, then runs the load pipeline.
+   *
+   * The archive URL comes from the server, never from the query string — a
+   * client-supplied URL would let anyone drive the download proxy.
+   */
+  private async openScenario(id: string): Promise<void> {
+    const token = ++this.loadToken;
+    this.setState('downloading', 0, 'Отримання даних сценарію...');
+
+    let scenario: ScenarioCatalogItem;
+
+    try {
+      scenario = await this.scenarioService.fetchScenarioById(id);
+      if (token !== this.loadToken) return;
+
+      this.scenarioTitle.set(scenario.title ?? '');
+
+      if (!scenario.scenarioUrl) {
+        this.showError('Для цього сценарію ще не завантажено архів.');
+        return;
+      }
+    } catch (err) {
+      if (token !== this.loadToken) return;
+      console.error('[ViewerComponent] Scenario lookup failed:', err);
+      this.showError('Сценарій не знайдено.');
+      return;
+    }
+
+    await this.startLoading(scenario, token);
+  }
 
   /**
    * Full loading pipeline:
@@ -100,43 +199,33 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    * 2. Pass ArrayBuffer to engine (with progress)
    * 3. Engine parses ZIP, validates manifest, executes entry point
    */
-  private async startLoading(url: string): Promise<void> {
+  private async startLoading(scenario: ScenarioCatalogItem, token: number): Promise<void> {
     this.setState('downloading', 0, 'Завантаження архіву...');
+
+    this.downloadAbort?.abort();
+    const abort = new AbortController();
+    this.downloadAbort = abort;
 
     try {
       // Step 1: Download the ZIP
       const zipBuffer = await this.scenarioService.downloadScenarioZip(
-        url,
+        scenario,
         (progress: DownloadProgress) => {
-          this.ngZone.run(() => {
-            this.progressPercent = progress.percent >= 0 ? progress.percent : 0;
-            const mb = (progress.loaded / (1024 * 1024)).toFixed(1);
-            this.progressLabel = `Завантаження: ${mb} MB`;
-          });
-        }
+          if (token !== this.loadToken) return;
+          this.progressPercent.set(progress.percent >= 0 ? progress.percent : 0);
+          const mb = (progress.loaded / (1024 * 1024)).toFixed(1);
+          this.progressLabel.set(`Завантаження: ${mb} MB`);
+        },
+        abort.signal
       );
 
-      // Step 2: Pass to engine
-      this.setState('loading-engine', 0, 'Ініціалізація сцени...');
+      if (token !== this.loadToken) return;
+      this.loadedBuffer = zipBuffer;
 
-      await this.ngZone.runOutsideAngular(async () => {
-        if (!this.app) throw new Error('Engine not initialized');
-
-        await this.app.loadScenarioFromBuffer(
-          zipBuffer,
-          (progress: IScenarioLoadProgress) => {
-            this.ngZone.run(() => {
-              this.progressPercent = Math.round(progress.progress * 100);
-              this.progressLabel = progress.currentOperation;
-            });
-          }
-        );
-      });
-
-      // Step 3: Running!
-      this.setState('running', 100, '');
+      await this.runBuffer(zipBuffer, token);
 
     } catch (err) {
+      if (token !== this.loadToken || abort.signal.aborted) return;
       const message = err instanceof Error
         ? err.message
         : 'Невідома помилка при завантаженні сценарію';
@@ -145,32 +234,83 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  /** Hands an already-downloaded archive to the engine. */
+  private async runBuffer(zipBuffer: ArrayBuffer, token: number): Promise<void> {
+    this.setState('loading-engine', 0, 'Ініціалізація сцени...');
+
+    if (!this.app) throw new Error('Engine not initialized');
+
+    await this.app.loadScenarioFromBuffer(
+      zipBuffer,
+      (progress: IScenarioLoadProgress) => {
+        if (token !== this.loadToken) return;
+        this.progressPercent.set(Math.round(progress.progress * 100));
+        this.progressLabel.set(progress.currentOperation);
+      }
+    );
+
+    if (token !== this.loadToken) return;
+    this.setState('running', 100, '');
+  }
+
+  // ==================== VIEWER CONTROLS ====================
+
+  /** Re-runs the scenario from the buffer already in memory — no re-download. */
+  async restart(): Promise<void> {
+    if (!this.loadedBuffer || !this.app) return;
+
+    const token = ++this.loadToken;
+    try {
+      await this.runBuffer(this.loadedBuffer, token);
+    } catch (err) {
+      if (token !== this.loadToken) return;
+      console.error('[ViewerComponent] Restart failed:', err);
+      this.showError(err instanceof Error ? err.message : 'Не вдалося перезапустити сценарій');
+    }
+  }
+
+  async toggleFullscreen(): Promise<void> {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await this.canvasRef.nativeElement.parentElement?.requestFullscreen();
+      }
+    } catch (err) {
+      console.warn('[ViewerComponent] Fullscreen rejected:', err);
+    }
+  }
+
+  private readonly fullscreenChangeHandler = (): void => {
+    this.isFullscreen.set(!!document.fullscreenElement);
+  };
+
+  /** Engine-provided overlay: FPS, CPU frame time, VRAM estimates. */
+  toggleDiagnostics(): void {
+    MemoryProfiler.toggleOverlay();
+    this.diagnosticsVisible.set(MemoryProfiler.isOverlayVisible);
+  }
+
+  /** After a context loss the engine cannot recover in place — reload the page. */
+  reloadPage(): void {
+    window.location.reload();
+  }
+
   // ==================== UI HELPERS ====================
 
   private setState(state: ViewerState, percent: number, label: string): void {
-    // Ensure Angular picks up changes even if called from outside zone
-    this.ngZone.run(() => {
-      this.state = state;
-      this.progressPercent = percent;
-      this.progressLabel = label;
-      this.errorMessage = null;
-      this.cdr.markForCheck();
-    });
+    this.state.set(state);
+    this.progressPercent.set(percent);
+    this.progressLabel.set(label);
+    this.errorMessage.set(null);
   }
 
   private showError(message: string): void {
-    this.ngZone.run(() => {
-      this.state = 'error';
-      this.errorMessage = message;
-      this.cdr.markForCheck();
-    });
-  }
-
-  get isLoading(): boolean {
-    return this.state === 'downloading' || this.state === 'loading-engine';
+    this.state.set('error');
+    this.errorMessage.set(message);
   }
 
   goBack(): void {
-    this.router.navigate(['/catalog']);
+    void this.router.navigate(['/catalog']);
   }
 }

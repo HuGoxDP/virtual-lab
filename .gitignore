@@ -33,6 +33,11 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Secrets — .env is local only; commit .env.example instead
+.env
+.env.*
+!.env.example
+
 # Docker
 *.pid
 

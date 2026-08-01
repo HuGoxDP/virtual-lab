@@ -45,7 +45,7 @@
 
 1. Браузер відкриває `http://server:80` → nginx віддає Angular SPA (index.html + JS + CSS).
 2. Angular робить `GET /api/catalog` → nginx проксірує на Express → Express робить SELECT з PostgreSQL → повертає JSON.
-3. Студент натискає «Запустити» → Angular завантажує ZIP-сценарій. Якщо ZIP на Google Drive — запит іде через `GET /api/proxy-download?url=...` → Express завантажує файл із Google Drive (обхід CORS) → стрімить клієнту.
+3. Студент натискає «Запустити» → Angular завантажує ZIP-сценарій. Якщо ZIP на Google Drive — запит іде через `GET /api/proxy-download?id=...` → Express бере посилання з БД, завантажує файл із Google Drive (обхід CORS) → стрімить клієнту.
 4. WebGL-движок (WebEngineTS) розпаковує ZIP і запускає 3D-сцену в браузері.
 
 ---
@@ -148,33 +148,133 @@ ports:
 
 ## Конфігурація
 
-### Змінні середовища (docker-compose.yml)
+### Змінні середовища (`.env`)
 
-| Змінна | Значення | Опис |
-|--------|----------|------|
-| POSTGRES_DB | virtual_lab | Назва бази даних |
-| POSTGRES_USER | lab_user | Користувач БД |
-| POSTGRES_PASSWORD | lab_secret_123 | Пароль БД (змінити в проді!) |
-| PORT | 3000 | Порт Express (внутрішній) |
+Файл `.env` **не** зберігається в git. Створіть його з шаблону:
+
+```bash
+cp .env.example .env
+```
+
+| Змінна | Опис |
+|--------|------|
+| DB_NAME / DB_USER / DB_PASSWORD | Доступ до PostgreSQL. Пароль згенеруйте: `openssl rand -base64 24` |
+| DB_HOST / DB_PORT | `database` / `5432` — імена всередині compose-мережі |
+| API_PORT | Порт Express (внутрішній), `3000` |
+| ADMIN_TOKEN | Токен для запису в каталог: `openssl rand -hex 32`. Без нього POST/PUT/DELETE відповідають 503 |
+| FRONTEND_PORT | Зовнішній порт сайту |
+| PROXY_RATE_LIMIT | Необов'язково: скільки завантажень з однієї адреси за 15 хв (за замовчуванням 60) |
+| MAX_ARCHIVE_BYTES | Необов'язково: максимальний розмір архіву (за замовчуванням 2 GiB) |
 
 ### Безпека для production
 
-В `docker-compose.yml`:
-1. Змінити `POSTGRES_PASSWORD` на надійний пароль.
-2. Видалити рядки `ports: - "5432:5432"` та `ports: - "3000:3000"` — вони потрібні лише для дебагу. Nginx і так проксірує API, а прямий доступ до БД ззовні небезпечний.
+1. Згенеруйте власні `DB_PASSWORD` та `ADMIN_TOKEN` — значення з `.env.example` є заглушками.
+2. Не публікуйте порти `5432` та `3000` назовні: nginx і так проксіює API, а прямий доступ
+   до БД ззовні небезпечний.
+3. Ротація пароля БД **без втрати даних** (просто змінити `.env` недостатньо — `POSTGRES_PASSWORD`
+   діє лише при першому створенні тому):
+   ```bash
+   docker compose exec database psql -U lab_user -d virtual_lab \
+     -c "ALTER USER lab_user WITH PASSWORD 'НОВИЙ_ПАРОЛЬ';"
+   # потім оновіть DB_PASSWORD у .env і перезапустіть бекенд
+   docker compose up -d backend
+   ```
+
+### Публікація сценарію (через `/admin`)
+
+Повний шлях від зібраного ZIP до видимого в каталозі — без терміналу і без SQL:
+
+1. Відкрити `http://localhost:8044/admin`, ввести `ADMIN_TOKEN`
+   (зберігається лише на час вкладки браузера).
+2. **+ Новий сценарій** → заповнити `id`, назву, категорію та підпис категорії.
+   `id` потрапляє в URL `/play/<id>`, тому це має бути слаг без пробілів.
+3. У рядку сценарію натиснути **Архів…** і вибрати ZIP, зібраний ScenarioCreator.
+   Показується прогрес завантаження, потім sha256 і розмір.
+4. Перемкнути стан на **Опубліковано**.
+
+Сервер перевіряє архів **до** збереження і відмовляє з конкретною причиною:
+файл не читається як ZIP; немає `manifest.json` у корені; маніфест не є валідним JSON;
+у маніфесті бракує обов'язкових полів; точка входу `scripts/<entryPoint>` відсутня в архіві.
+
+> **`id` у каталозі та `id` у маніфесті — різні речі.** Каталог використовує слаги
+> (`solar-system`), маніфести — зворотно-доменні ідентифікатори
+> (`template.benchscene1.primitives`). Рушій їх не звіряє: `loadScenarioFromBuffer`
+> отримує лише байти. Тому розбіжність показується як попередження, а не як помилка,
+> а `manifest_id` зберігається в БД і видно в адмінці.
+
+### Сховище сценаріїв
+
+Архіви лежать у томі `virtual_lab_archives` під іменем свого sha256
+(`/scenarios/<sha256>.zip`) і віддаються **nginx-ом**, не Express. Ім'я = вміст, тому файл
+незмінний: браузер кешує його назавжди, а повторне завантаження того самого архіву
+не займає місця.
+
+```bash
+# Завантажити архів для наявного сценарію
+curl -X POST http://localhost:8044/api/scenarios/solar-system/archive \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -F "archive=@scenario.zip"
+
+# Перенести архів із Google Drive у локальне сховище
+curl -X POST http://localhost:8044/api/scenarios/solar-system/archive/import \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+**Порядок міграції з Google Drive** (потрібен один раз, і після `docker compose down -v`):
+
+1. `LEGACY_DRIVE_PROXY=true` у `.env`, `docker compose up -d backend`.
+2. Викликати `.../archive/import` для кожного сценарію.
+3. `LEGACY_DRIVE_PROXY=false`, `docker compose up -d backend`.
+
+Після цього завантаження сценарію не робить жодного зовнішнього запиту.
+
+### Міграції схеми
+
+`db/init.sql` виконується **лише** при створенні бази. Усі подальші зміни схеми — це файли
+`backend/migrations/NNN_*.sql`, які бекенд застосовує при старті (таблиця `schema_migrations`).
+Нову зміну додавайте туди, а не в `init.sql`.
+
+### Резервне копіювання
+
+Стан зберігається у **двох** томах — БД і архіви. Обидва треба резервувати:
+
+```bash
+# 1. Дамп БД
+docker compose exec -T database pg_dump -U lab_user virtual_lab > backup-$(date +%F).sql
+
+# 2. Архіви сценаріїв
+docker run --rm -v virtual_lab_archives:/data -v "$PWD:/backup" alpine \
+  tar czf /backup/archives-$(date +%F).tar.gz -C /data .
+
+# Відновлення
+docker compose down -v && docker compose up -d database
+docker compose exec -T database psql -U lab_user -d virtual_lab < backup-2026-08-01.sql
+docker run --rm -v virtual_lab_archives:/data -v "$PWD:/backup" alpine \
+  tar xzf /backup/archives-2026-08-01.tar.gz -C /data
+```
+
+> Дамп БД без архівів марний: `scenario_url` вказуватиме на файли, яких немає.
 
 ---
 
 ## API-ендпоінти
 
-| Метод | URL | Опис |
-|-------|-----|------|
-| GET | /api/catalog | Список усіх сценаріїв (формат ScenarioCatalogManifest) |
-| GET | /api/catalog/:id | Один сценарій за ID |
-| POST | /api/catalog | Додати новий сценарій |
-| DELETE | /api/catalog/:id | Видалити сценарій |
-| GET | /api/proxy-download?url=... | Проксі для завантаження ZIP із Google Drive |
-| GET | /api/health | Перевірка стану сервера та БД |
+| Метод | URL | Доступ | Опис |
+|-------|-----|--------|------|
+| GET | /api/catalog | публічний | Опубліковані сценарії. Параметри: `category`, `q`, `limit` (макс. 100), `offset` |
+| GET | /api/catalog/:id | публічний | Один сценарій за ID |
+| POST | /api/catalog | **адмін** | Додати новий сценарій |
+| PUT | /api/catalog/:id | **адмін** | Оновити сценарій (у т.ч. `isPublished`) |
+| DELETE | /api/catalog/:id | **адмін** | Видалити сценарій |
+| GET | /api/admin/scenarios | **адмін** | Усі сценарії, включно з прихованими, зі станом сховища |
+| POST | /api/scenarios/:id/archive | **адмін** | Завантажити ZIP-архів (multipart, поле `archive`) |
+| POST | /api/scenarios/:id/archive/import | **адмін** | Перенести архів із зовнішнього посилання у локальне сховище |
+| GET | /scenarios/&lt;sha256&gt;.zip | публічний | Архів сценарію (віддає nginx, не Express) |
+| GET | /api/proxy-download?id=... | публічний | Legacy-проксі до Google Drive (вимикається `LEGACY_DRIVE_PROXY=false`) |
+| GET | /api/health | публічний | Перевірка стану сервера та БД |
+
+Адмін-ендпоінти вимагають заголовок `Authorization: Bearer $ADMIN_TOKEN`.
+Без заголовка — 401, з невірним токеном — 403, якщо `ADMIN_TOKEN` не заданий у `.env` — 503.
 
 ### Формат каталогу (GET /api/catalog)
 
@@ -194,14 +294,27 @@ ports:
       "version": "1.0.0",
       "author": "HuGox"
     }
-  ]
+  ],
+  "categories": [
+    { "category": "astronomy", "categoryLabel": "Астрономія" }
+  ],
+  "total": 4,
+  "limit": 24,
+  "offset": 0
 }
 ```
+
+`total` — скільки сценаріїв відповідає фільтру загалом (для пагінації).
+
+`categories` — це різні категорії опублікованих сценаріїв. Фільтри в каталозі будуються з цього
+списку, тому нова категорія з'являється у фільтрах одразу після додавання сценарію, без
+перезбірки фронтенду.
 
 ### Додавання сценарію (POST /api/catalog)
 
 ```bash
 curl -X POST http://localhost/api/catalog \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "id": "new-scenario",
@@ -232,10 +345,16 @@ curl -X POST http://localhost/api/catalog \
 Браузер не може завантажити файл напряму з Google Drive через CORS-обмеження. Тому:
 
 1. Фронтенд бачить, що `scenarioUrl` — зовнішнє посилання (не `/assets/...`).
-2. Замість прямого `fetch()` він викликає бекенд: `GET /api/proxy-download?url=<google-drive-url>`.
+2. Замість прямого `fetch()` він викликає бекенд: `GET /api/proxy-download?id=<id сценарію>`.
+   **Посилання не передається з клієнта** — бекенд бере `scenario_url` із БД. Інакше цей
+   ендпоінт був би відкритим релеєм для будь-якого об'єкта на дозволених хостах.
 3. Бекенд перетворює sharing-посилання на пряме посилання для завантаження.
 4. Бекенд завантажує ZIP на сервері (де немає CORS) і стрімить клієнту.
 5. Для великих файлів (>100MB) бекенд автоматично обробляє сторінку підтвердження Google.
+
+Захист проксі: редіректи обробляються вручну з перевіркою хоста **на кожному кроці** (максимум 5),
+таймаут на заголовки, ліміт розміру відповіді, перевірка `Content-Type` (тільки архіви) та
+обмеження частоти запитів.
 
 ### Вимоги до файлів на Google Drive
 
@@ -269,20 +388,22 @@ docker compose down
 docker compose down -v
 
 # Перезапуск бекенду (після зміни server.js)
-docker compose restart api
+docker compose restart backend
 
 # Перезбірка фронтенду (після зміни Angular-коду)
-docker compose up --build web -d
+docker compose up --build frontend -d
 
 # Логи всіх сервісів
 docker compose logs -f
 
 # Логи тільки бекенду
-docker compose logs -f api
+docker compose logs -f backend
 
 # Підключення до БД
-docker compose exec db psql -U lab_user -d virtual_lab
+docker compose exec database psql -U lab_user -d virtual_lab
 ```
+
+> Імена сервісів у compose: `database`, `backend`, `frontend`.
 
 ### SQL-запити для управління
 

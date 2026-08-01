@@ -9,46 +9,121 @@
   </button>
 
   <!-- Scenario title badge -->
-  <div class="title-badge" *ngIf="scenarioTitle && state === 'running'">
-    {{ scenarioTitle }}
-  </div>
+  @if (scenarioTitle() && state() === 'running') {
+    <div class="title-badge">{{ scenarioTitle() }}</div>
+  }
+
+  <!-- Viewer controls -->
+  @if (state() === 'running') {
+    <div class="viewer-controls">
+      <button
+        class="control-btn"
+        title="Перезапустити сценарій"
+        aria-label="Перезапустити сценарій"
+        [disabled]="!canRestart()"
+        (click)="restart()"
+      >⟳</button>
+
+      <button
+        class="control-btn"
+        [class.active]="diagnosticsVisible()"
+        title="Діагностика (FPS, пам'ять)"
+        aria-label="Показати діагностику"
+        (click)="toggleDiagnostics()"
+      >📊</button>
+
+      <button
+        class="control-btn"
+        title="На весь екран"
+        aria-label="На весь екран"
+        (click)="toggleFullscreen()"
+      >{{ isFullscreen() ? '🗗' : '🗖' }}</button>
+    </div>
+  }
 
   <!-- WebGL canvas — always in DOM for engine init -->
   <canvas #webglCanvas class="webgl-canvas"></canvas>
 
+  <!-- Orientation hint (portrait phones) -->
+  @if (state() === 'running') {
+    <div class="orientation-hint">
+      <span>🔄</span>
+      <p>Поверніть пристрій горизонтально для кращого огляду</p>
+    </div>
+  }
+
   <!-- Loading overlay -->
-  <div class="overlay loading-overlay" *ngIf="isLoading">
-    <div class="loader-content">
-      <div class="loader-ring">
-        <svg viewBox="0 0 100 100">
-          <circle class="track" cx="50" cy="50" r="42" />
-          <circle
-            class="progress"
-            cx="50" cy="50" r="42"
-            [style.stroke-dashoffset]="264 - (264 * progressPercent / 100)"
-          />
-        </svg>
-        <span class="loader-percent">{{ progressPercent }}%</span>
-      </div>
+  @if (isLoading()) {
+    <div class="overlay loading-overlay">
+      <div class="loader-content">
+        <div class="loader-ring">
+          <svg viewBox="0 0 100 100">
+            <circle class="track" cx="50" cy="50" r="42" />
+            <circle
+              class="progress"
+              cx="50" cy="50" r="42"
+              [style.stroke-dashoffset]="ringOffset()"
+            />
+          </svg>
+          <span class="loader-percent">{{ progressPercent() }}%</span>
+        </div>
 
-      <p class="loader-label">{{ progressLabel }}</p>
+        <p class="loader-label">{{ progressLabel() }}</p>
 
-      <div class="progress-bar">
-        <div class="progress-fill" [style.width.%]="progressPercent"></div>
+        <div class="progress-bar">
+          <div class="progress-fill" [style.width.%]="progressPercent()"></div>
+        </div>
       </div>
     </div>
-  </div>
+  }
+
+  <!-- WebGL2 unavailable -->
+  @if (state() === 'unsupported') {
+    <div class="overlay error-overlay">
+      <div class="error-content">
+        <span class="error-icon">🖥️</span>
+        <h3>Браузер не підтримує WebGL 2</h3>
+        <p>
+          Для 3D-сценаріїв потрібен WebGL 2. Спробуйте актуальну версію
+          Chrome, Firefox, Edge або Safari 15+ і переконайтесь, що апаратне
+          прискорення увімкнено в налаштуваннях браузера.
+        </p>
+        <button class="retry-btn" (click)="goBack()">
+          &larr; Повернутись до каталогу
+        </button>
+      </div>
+    </div>
+  }
+
+  <!-- WebGL context lost -->
+  @if (contextLost()) {
+    <div class="overlay error-overlay">
+      <div class="error-content">
+        <span class="error-icon">⚡</span>
+        <h3>Графічний контекст втрачено</h3>
+        <p>
+          Браузер скинув WebGL-контекст — таке трапляється при переході в режим
+          сну, оновленні драйвера або нестачі відеопам'яті. Сцену потрібно
+          завантажити заново.
+        </p>
+        <button class="retry-btn" (click)="reloadPage()">Перезавантажити</button>
+        <button class="retry-btn ghost" (click)="goBack()">До каталогу</button>
+      </div>
+    </div>
+  }
 
   <!-- Error overlay -->
-  <div class="overlay error-overlay" *ngIf="state === 'error'">
-    <div class="error-content">
-      <span class="error-icon">⚠️</span>
-      <h3>Помилка завантаження</h3>
-      <p>{{ errorMessage }}</p>
-      <button class="retry-btn" (click)="goBack()">
-        &larr; Повернутись до каталогу
-      </button>
+  @if (state() === 'error') {
+    <div class="overlay error-overlay">
+      <div class="error-content">
+        <span class="error-icon">⚠️</span>
+        <h3>Помилка завантаження</h3>
+        <p>{{ errorMessage() }}</p>
+        <button class="retry-btn" (click)="goBack()">
+          &larr; Повернутись до каталогу
+        </button>
+      </div>
     </div>
-  </div>
+  }
 
 </div>

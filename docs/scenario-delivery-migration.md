@@ -12,7 +12,7 @@ list with file anchors.
 
 | This document (target design) | `implementation-plan.md` (execution) |
 | --- | --- |
-| Stage 0 — own the storage, content-addressed | **Phase 1 — Own the storage** (authoritative task list) |
+| Stage 0 — own the storage, content-addressed | **Phase 1 — Own the storage** ✅ done 2026-08-01 |
 | Stage 1 — manifest + asset table | Phase 1/2 follow-up (new: `scenario_assets`, manifest endpoint) |
 | Stage 2 — progressive delivery | **Phase 6 — Streaming client** |
 | Stage 3 — object store + presigned URLs | Phase 1 alternative (MinIO), deferred until needed |
@@ -97,11 +97,11 @@ serves. **Execution details (tasks, estimates, file anchors) live in
 [`implementation-plan.md`](implementation-plan.md)** — the mapping table above says which phase
 covers which stage.
 
-### Stage 0 — Own the storage (remove Google Drive) ⭐ start here
+### Stage 0 — Own the storage (remove Google Drive) ✅ **done 2026-08-01**
 **Platform work only. No engine changes. Biggest risk reduction per effort.**
 
-→ **Executed as [Phase 1 — Own the storage](implementation-plan.md#phase-1--own-the-storage-46-days)**
-(that phase is authoritative for the task list; Phase 0's security work blocks it).
+→ **Executed as [Phase 1 — Own the storage](implementation-plan.md)** — ✅ done 2026-08-01
+(that phase is authoritative for the task list; Phase 0's security work blocked it and is also done).
 
 Destination shape:
 - Archives served by the existing **nginx** service from a volume (nginx already caches
@@ -167,10 +167,12 @@ uploads only what changed.
 
 ## 5. Where to start
 
-Work Stage 0 as **[Phase 1 in `implementation-plan.md`](implementation-plan.md#phase-1--own-the-storage-46-days)**
-— it carries the concrete checklist, estimates and file anchors, and is gated on Phase 0
-(security: the write endpoints are currently unauthenticated, so an upload endpoint must not
-ship before them).
+Stage 0 is **done** — see [Phase 1 in `implementation-plan.md`](implementation-plan.md) for what
+landed. Archives are content-addressed on a Docker volume served by nginx, the write endpoints are
+behind an admin token, and the Drive proxy is gated by `LEGACY_DRIVE_PROXY`.
+
+Next up is **Stage 1** (manifest + `scenario_assets`), which pairs with Phase 2's publishing
+workflow.
 
 Everything beyond Stage 1 additionally depends on the engine shipping `StreamingAssetSource`
 (engine P1.7); until then the platform can prepare manifests, but the viewer keeps using the

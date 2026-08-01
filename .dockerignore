@@ -1,0 +1,27 @@
+# Build context for Dockerfile.frontend (context: repo root).
+#
+# frontend/node_modules must never reach the image: `COPY frontend/ .` runs
+# after `npm install`, so a host tree — built on Windows, with the MSVC
+# @napi-rs/nice binary — would overwrite the Alpine install and break the build.
+
+.git
+.gitattributes
+.idea
+.vscode
+.env
+.env.*
+!.env.example
+
+frontend/node_modules
+frontend/.angular
+frontend/dist
+frontend/out-tsc
+backend/node_modules
+
+db
+docs
+nginx/*.md
+Readme.md
+CLAUDE.md
+docker-compose.yml
+*.log

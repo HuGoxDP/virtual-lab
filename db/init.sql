@@ -57,7 +57,8 @@ VALUES
     'HuGox'
   ),
   (
-    'Benchscene2 complexmodel',
+    -- Slug ids only: the id goes into the /play/:id path.
+    'benchscene2-complexmodel',
     'Сцена з комплексною моделею',
     '',
     E'',
@@ -68,7 +69,7 @@ VALUES
     '1.0.0',
     'HuGox'
   ),  (
-    'Benchscene3 solarsystem',
+    'benchscene3-solarsystem',
     'Сцена з сонячною системою',
     '',
     E'',

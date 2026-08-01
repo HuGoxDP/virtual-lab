@@ -24,6 +24,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1g
 
   # ── Backend API (Express) ───────────────────────────
   backend:
@@ -38,9 +43,25 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       PORT: ${API_PORT}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      LEGACY_DRIVE_PROXY: ${LEGACY_DRIVE_PROXY:-true}
+    volumes:
+      # Content-addressed archives. Written here, served by nginx.
+      - virtual_lab_archives:/srv/archives
     depends_on:
       database:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:${API_PORT}/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512m
 
   # ── Nginx + Frontend ────────────────────────────────
   frontend:
@@ -51,9 +72,20 @@ services:
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT}:80"
+    volumes:
+      # Read-only: nginx serves archives, Express never streams their bytes.
+      - virtual_lab_archives:/srv/archives:ro
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256m
 
 volumes:
   virtual_lab_pgdata:
     name: virtual_lab_pgdata
+  virtual_lab_archives:
+    name: virtual_lab_archives
