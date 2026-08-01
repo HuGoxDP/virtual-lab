@@ -1,11 +1,25 @@
-# Scenario Storage & Delivery — Migration Plan
+# Scenario Storage & Delivery — Target Architecture & Migration
 
-Status: **plan** · Scope: `virtual-lab` (backend, db, nginx, docker-compose) · Related:
+Status: **design** · Scope: `virtual-lab` (backend, db, nginx, docker-compose) · Related:
 engine-side design in `WebEngineTS/design/asset-streaming-proposal.md`
 
-This document describes how scenario **creation, storage and delivery** will evolve from the
-current state to a streaming-capable platform, and in what order. Each stage is independently
-deployable — the platform keeps working after every stage.
+This document explains **why** scenario storage/delivery must change and **what** the end state
+looks like (addressing model, manifest, data model). It is the architectural companion to
+[`implementation-plan.md`](implementation-plan.md), which holds the actionable, estimated task
+list with file anchors.
+
+**How the two relate — do not duplicate work items:**
+
+| This document (target design) | `implementation-plan.md` (execution) |
+| --- | --- |
+| Stage 0 — own the storage, content-addressed | **Phase 1 — Own the storage** (authoritative task list) |
+| Stage 1 — manifest + asset table | Phase 1/2 follow-up (new: `scenario_assets`, manifest endpoint) |
+| Stage 2 — progressive delivery | **Phase 6 — Streaming client** |
+| Stage 3 — object store + presigned URLs | Phase 1 alternative (MinIO), deferred until needed |
+| Stage 4 — LOD streaming + atomic publish | **Phase 2** (publishing) + engine P1.7 Stage 3 |
+
+When the two disagree on *how* or *when*, `implementation-plan.md` wins; this document defines
+the *shape* of the destination.
 
 ---
 
@@ -77,26 +91,31 @@ Principles:
 
 ## 3. Migration stages
 
-Stages map 1:1 onto the engine-side stages in `asset-streaming-proposal.md`. Platform work
-leads; the engine consumes what the platform serves.
+Stages describe the *destination* of each step and mirror the engine-side stages in
+`asset-streaming-proposal.md`. Platform work leads; the engine consumes what the platform
+serves. **Execution details (tasks, estimates, file anchors) live in
+[`implementation-plan.md`](implementation-plan.md)** — the mapping table above says which phase
+covers which stage.
 
 ### Stage 0 — Own the storage (remove Google Drive) ⭐ start here
 **Platform work only. No engine changes. Biggest risk reduction per effort.**
 
-- Add a `scenarios` volume served by the existing **nginx** service (`nginx/nginx.conf` already
-  caches `zip|ktx2|glb|wasm` with `Cache-Control: public, immutable`).
-- Store archives under a **versioned, immutable** path: `/scenarios/<id>/v<version>.zip`.
-- Add `POST /api/scenarios/:id/archive` (multipart) — backend writes the file, computes
-  **SHA-256** and size, updates the row atomically.
-- DB migration: add `archive_sha256`, `archive_bytes`, `storage_kind` (`drive|local|object`)
-  to `scenarios`. Keep `scenario_url` (now points at our own domain).
-- Migrate existing rows: download each Drive ZIP once, store locally, rewrite `scenario_url`.
-- **Delete** `toGoogleDriveDirectUrl`, `extractDriveConfirmUrl`, `extractDriveConfirmToken`,
-  `buildConfirmedUrl` and the `/api/proxy-download` scraping path from `backend/server.js`.
+→ **Executed as [Phase 1 — Own the storage](implementation-plan.md#phase-1--own-the-storage-46-days)**
+(that phase is authoritative for the task list; Phase 0's security work blocks it).
 
-*Done when:* no code touches Google Drive; the viewer loads scenarios from our nginx with
-immutable caching; every archive has a checksum. **Frontend change:** fetch `scenario_url`
-directly instead of `/api/proxy-download`.
+Destination shape:
+- Archives served by the existing **nginx** service from a volume (nginx already caches
+  `zip|ktx2|glb|wasm` with `Cache-Control: public, immutable`), never streamed by Express.
+- Archives stored **content-addressed** (`/scenarios/<sha256>.zip`) — immutable, cacheable
+  forever, and dedup comes free once assets are split out in Stage 1.
+- `scenarios` gains `archive_sha256` + `archive_bytes` (integrity + real `Content-Length`);
+  a `storage_kind` (`drive|local|object`) discriminator lets old and new rows coexist while
+  migrating.
+- All Drive scraping (`toGoogleDriveDirectUrl`, `extractDriveConfirm*`, `buildConfirmedUrl`,
+  `/api/proxy-download`) is deleted once the seeded scenarios are migrated.
+
+*Done when:* loading a scenario issues zero external requests; every archive has a checksum;
+an offline `docker compose up` still plays the whole catalog.
 
 ### Stage 1 — Manifest + asset table (format change, behaviour unchanged)
 - New table `scenario_assets` (`scenario_id`, `asset_id`, `type`, `lod_level`, `sha256`,
@@ -146,12 +165,13 @@ uploads only what changed.
 
 ---
 
-## 5. Immediate next steps (Stage 0 checklist)
+## 5. Where to start
 
-1. `db/init.sql` + migration: add `archive_sha256`, `archive_bytes`, `storage_kind`.
-2. `docker-compose.yml`: add a `scenarios` volume mounted into the `frontend` (nginx) service.
-3. `nginx/nginx.conf`: serve `/scenarios/` from that volume (immutable caching already configured).
-4. `backend/server.js`: add `POST /api/scenarios/:id/archive` (multipart + SHA-256); remove the
-   Drive scraping helpers and `/api/proxy-download`.
-5. One-off migration script: pull each Drive ZIP → store → update `scenario_url` + checksum.
-6. Frontend `scenario.service.ts`: download from `scenario_url` directly (no proxy).
+Work Stage 0 as **[Phase 1 in `implementation-plan.md`](implementation-plan.md#phase-1--own-the-storage-46-days)**
+— it carries the concrete checklist, estimates and file anchors, and is gated on Phase 0
+(security: the write endpoints are currently unauthenticated, so an upload endpoint must not
+ship before them).
+
+Everything beyond Stage 1 additionally depends on the engine shipping `StreamingAssetSource`
+(engine P1.7); until then the platform can prepare manifests, but the viewer keeps using the
+single-ZIP path.
