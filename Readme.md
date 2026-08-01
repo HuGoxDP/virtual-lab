@@ -221,6 +221,12 @@ curl -X POST http://localhost/api/catalog \
 
 ## Завантаження сценаріїв із Google Drive
 
+> ⚠️ **Тимчасове рішення.** Google Drive буде замінено власним сховищем із
+> контентно-адресованими ассетами. Це потрібно для LOD-стрімінгу, прогресивного
+> завантаження та передзавантаження — монолітний ZIP їх зробити не дозволяє.
+> Поетапний план переходу: [`docs/scenario-delivery-migration.md`](docs/scenario-delivery-migration.md)
+> (рушійна частина — `WebEngineTS/design/asset-streaming-proposal.md`).
+
 ### Як це працює
 
 Браузер не може завантажити файл напряму з Google Drive через CORS-обмеження. Тому:
