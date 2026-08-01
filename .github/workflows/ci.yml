@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: virtual_lab_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d virtual_lab_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install
+        working-directory: backend
+        run: npm ci
+
+      - name: Test
+        working-directory: backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: virtual_lab_test
+          DB_USER: test_user
+          DB_PASSWORD: test_password
+          ADMIN_TOKEN: ci-admin-token
+        run: npm test
+
+  frontend:
+    name: Frontend build & tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Not `npm ci`: the lockfile is generated on Windows, where @napi-rs/nice
+      # resolves to a native MSVC binary. On Linux it falls back to the wasm
+      # runtime and pulls @emnapi/* peers the Windows lockfile cannot record.
+      # Same reason Dockerfile.frontend uses npm install.
+      - name: Install
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Test
+        working-directory: frontend
+        run: npx ng test --no-watch
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Catches Dockerfile drift and, via .dockerignore, that the frontend
+      # context stays small instead of shipping host node_modules.
+      - name: Build images
+        run: |
+          cp .env.example .env
+          docker compose build
+
+  config:
+    name: Config checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: nginx config is valid
+        run: |
+          docker run --rm -v "$PWD/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:alpine nginx -t
+
+      - name: No secrets are tracked
+        run: |
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "::error::.env must not be tracked"
+            exit 1
+          fi
+          if grep -rEn '(DB_PASSWORD|ADMIN_TOKEN)=' .env.example | grep -v 'change-me'; then
+            echo "::error::.env.example must contain placeholders only"
+            exit 1
+          fi

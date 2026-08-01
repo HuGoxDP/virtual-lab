@@ -45,9 +45,6 @@ pool.on('error', err => {
   console.error('[DB] Idle client error:', err.message);
 });
 
-pool.query('SELECT NOW()')
-  .then(() => console.log('[DB] Connected to PostgreSQL'))
-  .catch(err => console.error('[DB] Connection failed:', err.message));
 
 // ══════════════════════════════════════════════════════
 // AUTH
@@ -55,7 +52,7 @@ pool.query('SELECT NOW()')
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 
-if (!ADMIN_TOKEN) {
+if (!ADMIN_TOKEN && require.main === module) {
   console.warn('[AUTH] ADMIN_TOKEN is not set — catalog writes are disabled');
 }
 
@@ -985,6 +982,10 @@ const PORT = process.env.PORT || 3000;
 // Migrations and storage directories must exist before the first request:
 // a half-migrated schema serving traffic is worse than a restart loop.
 async function bootstrap() {
+  await pool.query('SELECT NOW()')
+    .then(() => console.log('[DB] Connected to PostgreSQL'))
+    .catch(err => console.error('[DB] Connection failed:', err.message));
+
   await storage.ensureStorageDirs();
   await runMigrations(pool);
   await storage.cleanStaleTemp();
@@ -996,12 +997,19 @@ async function bootstrap() {
 
 let server;
 
-bootstrap()
-  .then(instance => { server = instance; })
-  .catch(err => {
-    console.error('[API] Startup failed:', err.message);
-    process.exit(1);
-  });
+// Only bind a port when run as the entry point. Under test, `app` and `pool`
+// are imported directly so supertest can drive the routes without a listener.
+if (require.main === module) {
+  bootstrap()
+    .then(instance => { server = instance; })
+    .catch(err => {
+      console.error('[API] Startup failed:', err.message);
+      process.exit(1);
+    });
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
 
 // ── Graceful shutdown ────────────────────────────────
 // `docker compose down` sends SIGTERM; without this the process is killed
@@ -1036,5 +1044,14 @@ function shutdown(signal) {
   });
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+module.exports = {
+  app,
+  pool,
+  bootstrap,
+  // Exported for unit tests — pure helpers with no HTTP surface of their own.
+  escapeLikePattern,
+  tokensMatch,
+  toGoogleDriveDirectUrl,
+  parseLimit,
+  parseOffset,
+};

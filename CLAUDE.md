@@ -161,10 +161,19 @@ Consequences to respect:
   the WebGL context leaks and a few navigations exhaust the browser's context limit.
 - UI strings are Ukrainian. Code comments and identifiers should be English (the codebase
   currently mixes Russian/Ukrainian/English comments — new code is English).
+- **`fakeAsync()` does not work** — it is a zone.js helper and this app is zoneless. Use
+  vitest fake timers (`vi.useFakeTimers()` / `vi.advanceTimersByTime()`) in specs.
+- **Signal state settles in a microtask** after an awaited HTTP call, so a `flush()` in a spec
+  must be followed by `await Promise.resolve()` before asserting on the result.
 
 ## Build & Dev
 
 ```bash
+# Tests
+cd backend  && npm test           # 148 tests; needs docker-compose.test.yml up
+cd frontend && npx ng test --no-watch   # 60 tests
+docker compose -f docker-compose.test.yml up -d   # throwaway Postgres on :55432
+
 docker compose up --build -d      # full stack on ${FRONTEND_PORT}
 docker compose logs -f            # all services
 docker compose down               # stop
@@ -206,8 +215,8 @@ Summary of the phases and why they are ordered this way:
 | 1 ✅ | Own the storage | Google Drive is the platform's single biggest fragility: the proxy scrapes Drive's HTML confirmation page with regexes. Also unlocks real download progress and caching. Matches the engine's asset-streaming Stage 0. Starts with a migration runner, since `db/init.sql` only ever runs on an empty volume. |
 | 2 ✅ | Publishing workflow | Scenarios are currently added with hand-written `curl`. Needed before the editor can publish. |
 | 3 ✅ | Viewer & catalog robustness | Capability checks, context-loss recovery, cancellable downloads, fullscreen/restart, keyboard access. |
-| 4 | Session telemetry | ✅ done. One `scenario_sessions` table and three endpoints — no users, roles or courses. Duration is computed server-side; sessions survive scenario deletion. |
-| 5 | Quality gates | Tests and CI. **Plan written: [`docs/test-plan.md`](docs/test-plan.md)** — inventory, levels, 98 scenarios, acceptance criteria. Phases 0–4 are marked done there. |
+| 4 ✅ | Session telemetry | ✅ done. One `scenario_sessions` table and three endpoints — no users, roles or courses. Duration is computed server-side; sessions survive scenario deletion. |
+| 5 ✅ | Quality gates | 208 tests (148 backend, 60 frontend) + CI. Plan: [`docs/test-plan.md`](docs/test-plan.md); browser-only checks: [`docs/manual-browser-checks.md`](docs/manual-browser-checks.md). |
 | 6 | Streaming client | Follows the engine's asset-streaming Stages 1–2. |
 
 Phases 0–1 are the ones that change whether this can be deployed at all; 2–3 make it usable by

@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.js\"",
+    "test:unit": "node --test \"test/unit/*.test.js\"",
+    "test:integration": "node --test --test-concurrency=1 \"test/integration/*.test.js\""
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -13,5 +16,8 @@
     "multer": "^2.2.0",
     "node-stream-zip": "^1.16.0",
     "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2"
   }
 }

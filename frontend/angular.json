@@ -76,7 +76,20 @@
           "defaultConfiguration": "development"
         },
         "test": {
-          "builder": "@angular/build:unit-test"
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "buildTarget": "university-mock:build:development",
+            "tsConfig": "tsconfig.spec.json",
+            "runner": "vitest",
+            "include": [
+              "src/**/*.spec.ts"
+            ],
+            "coverage": true,
+            "coverageReporters": [
+              "text-summary",
+              "lcov"
+            ]
+          }
         }
       }
     }

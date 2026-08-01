@@ -1,0 +1,28 @@
+# docker-compose.test.yml
+#
+# A throwaway Postgres for the backend integration suite, isolated from the
+# dev stack: its own container, its own port, and **no volume** — every
+# `up` starts from an empty database, so tests can never inherit dev data.
+#
+#   docker compose -f docker-compose.test.yml up -d
+#   cd backend && npm test
+#   docker compose -f docker-compose.test.yml down
+
+services:
+  test-database:
+    image: postgres:16-alpine
+    container_name: VirtualLabTestDatabase
+    environment:
+      POSTGRES_DB: virtual_lab_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+    ports:
+      - "55432:5432"
+    # tmpfs, not a volume: fast, and nothing survives a restart.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d virtual_lab_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15

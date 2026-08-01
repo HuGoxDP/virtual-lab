@@ -318,31 +318,58 @@ without a token; deleting a scenario leaves its session rows intact.
 
 ---
 
-## Phase 5 — Quality gates (~3–4 days)
+## Phase 5 — Quality gates (~3–4 days) — **done 2026-08-01**
 
-- [ ] **Make the test target runnable.** `angular.json` declares
-      `"test": { "builder": "@angular/build:unit-test" }` with no options at all, and there are zero
-      `*.spec.ts` files, so `npm test` has never run. Configure the runner against the existing
-      `tsconfig.spec.json` (which already sets `types: ["vitest/globals"]`) before writing specs.
-- [ ] **Frontend tests.** `vitest` and `jsdom` are already devDependencies
-      (`frontend/package.json`) with zero spec files. Start with the logic that has real branching:
-      `ScenarioService.filterScenarios` (category + query, including the `?? ''` guards at
-      `scenario.service.ts:84`), the download progress accumulator, and the `ViewerComponent` state
-      machine (`idle → downloading → loading-engine → running → error`).
-- [ ] **Backend tests** with `supertest`: catalog CRUD, the Phase 0 auth middleware, and the proxy
-      guard (unknown id refused, allowlisted host passes, redirect off-list refused).
-- [ ] **Production environment file.** `angular.json` has no `fileReplacements`, so
-      `environment.production` is `false` even in the production bundle
-      (`src/environments/environment.ts:4`). Add `environment.prod.ts` and the replacement before
-      anything starts branching on the flag.
-- [ ] **CI** (`.github/workflows/ci.yml`, none today): install, build the frontend, run both test
-      suites, and `docker compose build` to catch Dockerfile drift.
-- [ ] **Engine build identity.** Every tarball is version `0.1.0` regardless of content (by design
-      in the engine's `release:local`), so a deployed instance cannot report which engine build it
-      runs. Have the frontend build stamp the tarball's hash into the bundle and expose it in
-      `/api/health` and a UI footer.
+The repository had zero automated tests. It now has **208**, all green, plus CI.
+The scenario numbering below refers to [`docs/test-plan.md`](test-plan.md).
+
+- [x] **Made the test targets runnable.** `angular.json` declared `@angular/build:unit-test` with
+      no options and had never run; it now names the vitest runner, `tsconfig.spec.json` and
+      coverage. `server.js` used to listen on import — it is now guarded by
+      `require.main === module` and exports `app`, `pool` and the pure helpers, so supertest can
+      drive the routes without binding a port. The DB connection check and the `ADMIN_TOKEN`
+      warning moved into `bootstrap()`, making import side-effect free.
+- [x] **Backend: 148 tests** (`node:test` + `supertest`).
+      Unit (49): `escapeLikePattern`, `tokensMatch`, `parseLimit`/`parseOffset`,
+      `toGoogleDriveDirectUrl`, the whole of `archive-validation.js`, and `storage.js` including
+      dedup, hash-equals-filename, and the temp sweep's age cutoff.
+      Integration (99): catalog read/paging/filter/search, auth on all seven guarded routes,
+      catalog CRUD, archive upload and its five rejection paths, import guards, proxy addressing,
+      and the telemetry lifecycle.
+- [x] **Frontend: 60 tests** (vitest + jsdom + `TestBed`), 81% statements / 86% lines.
+      `ScenarioService` (paging, append-vs-replace, category icons, download progress and abort),
+      `TelemetryService` (client id, beacon, failure swallowing), `AdminService` (token storage,
+      headers, error mapping), `CatalogComponent` (debounce, paging, theme, modal focus return,
+      Esc, launch-by-id-only).
+- [x] **Test database**: `docker-compose.test.yml` — its own container, its own port, **tmpfs and
+      no volume**, so a run can never inherit dev data.
+- [x] **CI** (`.github/workflows/ci.yml`): four jobs — backend tests against a Postgres service
+      container, frontend build + tests, `docker compose build`, and config checks
+      (`nginx -t`, `.env` not tracked, `.env.example` placeholders only).
+- [x] **Manual checklist** ([`docs/manual-browser-checks.md`](manual-browser-checks.md)) for the
+      browser-only surface: progress ring, context loss, fullscreen, diagnostics overlay, focus
+      trap, `sendBeacon` on tab close, mobile orientation hint.
+
+### Things the tests forced into the open
+
+- **`fakeAsync()` is unusable here.** It is a zone.js helper and this app is zoneless, so it fails
+  outright. Component timing is driven with vitest fake timers instead — noted in the spec so the
+  next person does not rediscover it.
+- **Signals settle in a microtask.** The service writes its state *after* awaiting the HTTP
+  observable, so `flush()` alone is not enough; specs need an explicit `settle()`. Two tests
+  failed on this before it was made explicit.
+- **Test files must run serially.** `node --test` parallelises across files, and three suites
+  sharing one database interfered. `--test-concurrency=1`.
+- **`?days=-5` clamps to 1, not to the default 30.** Found by a test asserting the wrong thing;
+  the code was right and the contract ("clamp to 1…365") holds, but the asymmetry with `days=0`
+  is now documented in the test rather than left as folklore.
 
 **Done when:** CI is green on a PR; the deployed site can name its engine build.
+
+**Still open:** the *engine build identity* item — every tarball is version `0.1.0` regardless of
+content, so a deployed instance cannot report which engine build it runs. The viewer already reads
+`Application.version`; stamping the tarball hash into the bundle and surfacing it in
+`/api/health` is the remaining piece.
 
 ---
 
