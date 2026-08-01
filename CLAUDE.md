@@ -84,8 +84,11 @@ alternative and is deferred until presigned URLs or horizontal scale actually ma
 - `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit, publish
   toggle, delete, archive upload with progress. The token lives in `sessionStorage`
   (`AdminService`), so it dies with the tab.
-- `src/app/services/scenario.service.ts` — catalog state (`BehaviorSubject`s), filtering, and the
-  streamed ZIP download with progress.
+- `src/app/services/scenario.service.ts` — catalog state as **signals**, paged fetching, and the
+  streamed ZIP download with progress and abort.
+- `src/app/services/admin.service.ts` — admin token + CRUD + upload with progress.
+- `src/app/services/telemetry.service.ts` — anonymous session log; failures are swallowed, since
+  telemetry must never break playback.
 - `src/app/models/scenario.model.ts` — `ScenarioCatalogItem` / `ScenarioCatalogManifest`. This is
   the **platform's** catalog model, deliberately separate from the engine's `IScenarioManifest`
   that lives inside the ZIP. The engine never sees this model.
@@ -105,6 +108,9 @@ alternative and is deferred until presigned URLs or horizontal scale actually ma
 - `GET /api/proxy-download?id=…` — legacy Drive proxy, gated by `LEGACY_DRIVE_PROXY` (410 when
   off). Takes a **scenario id**, never a URL; redirects are followed manually with the hostname
   allowlist re-checked on every hop.
+- `POST /api/telemetry/session` and `.../:id/end` — public, anonymous session log. The end call
+  is a POST so `sendBeacon` can deliver it during unload; duration is computed server-side.
+- `GET /api/telemetry/summary` — admin; launches and median duration per scenario.
 - `GET /api/health` — liveness plus a DB ping.
 - `migrations.js` applies `backend/migrations/*.sql` at startup under an advisory lock;
   `storage.js` owns the content-addressed archive store.
@@ -195,13 +201,13 @@ Summary of the phases and why they are ordered this way:
 
 | Phase | Theme | Why here |
 |---|---|---|
-| 0 | Security & hygiene | Tracked `.env`, unauthenticated write endpoints and a proxy that will fetch any URL a client hands it make any public deployment indefensible. Blocks everything else. |
-| 0.5 | Correctness quick wins | Cheap fixes to confirmed defects — chiefly the zoneless progress bar that reports 0% for an entire download, which would otherwise make Phase 1's success metric unverifiable. |
-| 1 | Own the storage | Google Drive is the platform's single biggest fragility: the proxy scrapes Drive's HTML confirmation page with regexes. Also unlocks real download progress and caching. Matches the engine's asset-streaming Stage 0. Starts with a migration runner, since `db/init.sql` only ever runs on an empty volume. |
-| 2 | Publishing workflow | Scenarios are currently added with hand-written `curl`. Needed before the editor can publish. |
-| 3 | Viewer & catalog robustness | Capability checks, context-loss recovery, cancellable downloads, fullscreen/restart, keyboard access. |
-| 4 | Session telemetry | Scoped down 2026-08-01 to one `scenario_sessions` table and two endpoints — no users, roles or courses. Enough to say something quantitative about real use. |
-| 5 | Quality gates | Tests (vitest + jsdom are already installed but unused, and the `test` target is declared with no options) and CI. |
+| 0 ✅ | Security & hygiene | Tracked `.env`, unauthenticated write endpoints and a proxy that will fetch any URL a client hands it make any public deployment indefensible. Blocks everything else. |
+| 0.5 ✅ | Correctness quick wins | Cheap fixes to confirmed defects — chiefly the zoneless progress bar that reports 0% for an entire download, which would otherwise make Phase 1's success metric unverifiable. |
+| 1 ✅ | Own the storage | Google Drive is the platform's single biggest fragility: the proxy scrapes Drive's HTML confirmation page with regexes. Also unlocks real download progress and caching. Matches the engine's asset-streaming Stage 0. Starts with a migration runner, since `db/init.sql` only ever runs on an empty volume. |
+| 2 ✅ | Publishing workflow | Scenarios are currently added with hand-written `curl`. Needed before the editor can publish. |
+| 3 ✅ | Viewer & catalog robustness | Capability checks, context-loss recovery, cancellable downloads, fullscreen/restart, keyboard access. |
+| 4 | Session telemetry | ✅ done. One `scenario_sessions` table and three endpoints — no users, roles or courses. Duration is computed server-side; sessions survive scenario deletion. |
+| 5 | Quality gates | Tests and CI. **Plan written: [`docs/test-plan.md`](docs/test-plan.md)** — inventory, levels, 98 scenarios, acceptance criteria. Phases 0–4 are marked done there. |
 | 6 | Streaming client | Follows the engine's asset-streaming Stages 1–2. |
 
 Phases 0–1 are the ones that change whether this can be deployed at all; 2–3 make it usable by

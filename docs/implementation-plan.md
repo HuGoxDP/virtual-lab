@@ -284,26 +284,37 @@ in this repo; Phase 5 is where that gap should be closed.
 
 ---
 
-## Phase 4 — Session telemetry (~1 day) — *scoped down 2026-08-01*
+## Phase 4 — Session telemetry (~1 day) — **done 2026-08-01**
 
-The schema knows about scenarios and nothing else — no record that a student ever opened anything,
-so the thesis's deployment section has no numbers to quote. The **scope decision has been taken:
-telemetry only, no identity model.** No users, no roles, no courses; the admin token from Phase 0
-remains the only credential.
+The schema knew about scenarios and nothing else, so the deployment write-up had no numbers to
+quote. Scope decision taken 2026-08-01: **telemetry only, no identity model.** No users, no roles,
+no courses; the admin token stays the only credential.
 
-- [ ] `scenario_sessions` table (via the Phase 1 migration runner): `id`, `scenario_id`,
-      `started_at`, `ended_at`, `duration_ms`, `user_agent`, and an anonymous `client_id` kept in
-      `localStorage` — no personal data.
-- [ ] `POST /api/telemetry/session` — public, rate-limited, records the start and returns the row
-      id; a follow-up `PATCH /api/telemetry/session/:id` on viewer teardown records the duration.
-      Wire it into `ViewerComponent`'s existing state machine: start on `running`, close in
-      `ngOnDestroy` next to `app.dispose()`.
-- [ ] `GET /api/telemetry/summary` — admin-only: launches and median duration per scenario. Enough
-      to say something quantitative about real use.
+- [x] **`scenario_sessions`** (`003_scenario_sessions.sql`): `scenario_id`, anonymous `client_id`
+      (a random UUID from `localStorage`), `started_at`, `ended_at`, `duration_ms`, `user_agent`.
+      **No foreign key to `scenarios` on purpose** — deleting a scenario must not erase the record
+      that it was used.
+- [x] **`POST /api/telemetry/session`** — public, rate-limited, validates that the scenario exists
+      so the table cannot be filled with junk, and stores a malformed `client_id` as `NULL` rather
+      than rejecting (telemetry must never block playback).
+- [x] **`POST /api/telemetry/session/:id/end`** — POST, not PATCH, so the browser can send it with
+      `navigator.sendBeacon` during unload, which is the only reliable moment. Idempotent by
+      construction (`WHERE ended_at IS NULL`), and the duration is computed **server-side** from
+      `started_at` and clamped to 8 h — never taken from the client.
+- [x] **`GET /api/telemetry/summary?days=`** — admin-only: launches, completed, unique clients and
+      **median** duration per scenario. Median rather than mean, or one tab left open overnight
+      would dominate.
+- [x] **Client** (`telemetry.service.ts` + viewer): session opens only once the viewer reaches
+      `running` — a failed load must not count as a launch — and closes on `ngOnDestroy` *and* on
+      `pagehide`, since `ngOnDestroy` never runs when the tab is closed.
 
-**Deferred, not cancelled:** `users` with student/teacher roles, session auth replacing the admin
-token, `courses` + `course_scenarios`, and a teacher dashboard. Revisit only if a user study is
-actually scheduled — at that point this phase moves ahead of Phase 3.
+**Deferred, not cancelled:** `users` with roles, session auth replacing the admin token, `courses`
++ `course_scenarios`, teacher dashboard. Revisit only if a user study is scheduled.
+
+*Verified 2026-08-01 against the running stack:* start → 201 with a session id; end after ~2 s →
+204 and `duration_ms = 2175`; replaying end → 204 with the duration unchanged; unknown scenario →
+404, missing `scenarioId` → 400; summary returns launches/completed/unique/median and is 401
+without a token; deleting a scenario leaves its session rows intact.
 
 ---
 

@@ -19,6 +19,7 @@ import { Application, MemoryProfiler } from 'WebEngineTS';
 import type { IScenarioLoadProgress } from 'WebEngineTS';
 
 import { ScenarioService, DownloadProgress } from '../../services/scenario.service';
+import { TelemetryService } from '../../services/telemetry.service';
 import { ScenarioCatalogItem } from '../../models/scenario.model';
 
 /**
@@ -41,6 +42,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   private readonly scenarioService = inject(ScenarioService);
+  private readonly telemetry = inject(TelemetryService);
 
   private readonly destroy$ = new Subject<void>();
   private app: Application | null = null;
@@ -58,6 +60,9 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    * write its result over a newer one.
    */
   private loadToken = 0;
+
+  /** Catalog id of the scenario currently loaded, for telemetry attribution. */
+  private scenarioId = '';
 
   // UI state. Signals, not plain fields: the app is zoneless, so a signal write
   // is what notifies the change-detection scheduler. Mutating a field from an
@@ -108,6 +113,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     canvas.addEventListener('webglcontextlost', this.contextLostHandler);
 
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
+    window.addEventListener('pagehide', this.pageHideHandler);
 
     this.route.paramMap
       .pipe(takeUntil(this.destroy$))
@@ -136,6 +142,8 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       this.contextLostHandler = null;
     }
     document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
+    window.removeEventListener('pagehide', this.pageHideHandler);
+    this.telemetry.endSession();
 
     if (this.diagnosticsVisible()) MemoryProfiler.hideOverlay();
 
@@ -177,6 +185,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       scenario = await this.scenarioService.fetchScenarioById(id);
       if (token !== this.loadToken) return;
 
+      this.scenarioId = scenario.id;
       this.scenarioTitle.set(scenario.title ?? '');
 
       if (!scenario.scenarioUrl) {
@@ -251,6 +260,9 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
     if (token !== this.loadToken) return;
     this.setState('running', 100, '');
+
+    // Only count a launch that actually reached a running scene.
+    void this.telemetry.startSession(this.scenarioId);
   }
 
   // ==================== VIEWER CONTROLS ====================
@@ -283,6 +295,11 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
   private readonly fullscreenChangeHandler = (): void => {
     this.isFullscreen.set(!!document.fullscreenElement);
+  };
+
+  /** ngOnDestroy never runs when the tab is closed; pagehide does. */
+  private readonly pageHideHandler = (): void => {
+    this.telemetry.endSession();
   };
 
   /** Engine-provided overlay: FPS, CPU frame time, VRAM estimates. */
