@@ -366,10 +366,13 @@ The scenario numbering below refers to [`docs/test-plan.md`](test-plan.md).
 
 **Done when:** CI is green on a PR; the deployed site can name its engine build.
 
-**Still open:** the *engine build identity* item — every tarball is version `0.1.0` regardless of
-content, so a deployed instance cannot report which engine build it runs. The viewer already reads
-`Application.version`; stamping the tarball hash into the bundle and surfacing it in
-`/api/health` is the remaining piece.
+**Still open — but now half-solved by the engine.** `release:local` stamps a unique version into
+the package (`0.1.0-local.<timestamp>`), which `frontend/package-lock.json` records, so the *build*
+is identifiable at install time. What is still missing is a **runtime** report: `Application.version`
+remains the hardcoded `"0.1.0"`, and `ViewerComponent.engineVersion` reads it but nothing renders it.
+Surfacing the installed package version (from the lockfile, at build time) in the UI and in
+`/api/health` is the remaining piece — and it matters more now that benchmark numbers may be quoted:
+telling an old build from a new one currently requires grepping `.d.ts` for symbols.
 
 ---
 
@@ -400,10 +403,12 @@ Roughly 14–19 focused days for Phases 0–3 + 5, plus about a day for Phase 4.
 
 ## Cross-cutting notes
 
-- **Engine updates** come from `npm run release:local` in the WebEngineTS repo. The engine's UI
-  overhaul (canvas HiDPI/scaler/repaint, commit `4a84e99`) has **not** been pushed here yet;
-  `frontend/WebEngineTS-0.1.0.tgz` currently shows as modified in the working tree from an earlier
-  push. Pull the current engine before starting Phase 3's mobile verification.
+- **Engine updates** come from `npm run release:local` in the WebEngineTS repo. Pulled
+  2026-08-01: the tarball now carries the profiler/benchmark rework (`Benchmark` with cold start,
+  load time, per-phase CPU breakdown and first-render cost; `Profiler.beginSample`/`endSample`
+  markers rendered live in the overlay Stats tab) plus the canvas HiDPI/`CanvasScaler` work.
+  All 208 tests and the production build pass against it unchanged — the API this platform uses
+  (`Application`, `loadScenarioFromBuffer`, `dispose`, `MemoryProfiler.toggleOverlay`) is intact.
 - **Do not** add engine or scenario-content code to this repo (see `CLAUDE.md` → Critical rules).
 - `Readme.md` uses the old compose service names (`db`, `api`, `web`); the current names are
   `database`, `backend`, `frontend`. Worth a small docs pass during Phase 0.

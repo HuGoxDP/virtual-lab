@@ -27,8 +27,11 @@ back, and the engine never imports from it.
 
 **Engine updates arrive via `npm run release:local` run in the WebEngineTS repo** — it builds,
 packs, copies the tarball here and reinstalls it. Do not hand-edit the tarball or the dependency
-spec. The version stays `0.1.0` while the *content* changes every run, so the dependency spec
-never needs touching (see "Engine build identity" under Known Gaps).
+spec. The **tarball filename** stays `WebEngineTS-0.1.0.tgz` while the content changes every run,
+so the dependency spec never needs touching. The package *inside* is stamped
+`0.1.0-local.<timestamp>` and `frontend/package-lock.json` records it — that lockfile line is
+currently the only way to tell which engine build is installed. `Application.version` still
+reports a hardcoded `"0.1.0"` and is **not** a build identifier.
 
 ## Architecture
 
