@@ -55,11 +55,19 @@ R5, R6, R10                independent
 ### First — R1 then R2 (~1 day)
 
 Unchanged from `roadmap.md`, and still first: **the catalog still serves the stale Drive
-imports.** Everything else is measured against content nobody has republished.
+imports.** Everything else is measured against content nobody has republished, so a
+before/after difference could not be attributed to the change under test.
 
 R2 matters more than its size suggests because its failure mode is silent: a wrong KTX2
 transcoder path breaks neither the build nor any test, only one scenario at run time on a
 machine that happens to support the format. It needs a real browser pass, not a green CI.
+
+**There is now a specific reason to suspect the KTX2 pipeline**, beyond the transcoder path:
+in `Benchscene3`, `earth_normal.ktx2` is 2.67 MB and deflates to 15% inside the archive, which
+a properly supercompressed texture would not, and it is larger than the JPEG it replaces.
+KTX2's win is VRAM rather than file size, so being bigger on disk is not automatically wrong —
+but R2 should check the transcoded format actually reported at run time
+(`MemoryProfiler` under `?diag=1`), not just that the textures appear.
 
 Note for R1: `ScenarioCreator/ReleaseScenarios/` currently holds `Molecules` (22 KB),
 `solar-system-scenario` (18.3 MB) and, under `test/`, `Benchscene1` (2.3 KB), `Benchscene2`
@@ -89,6 +97,12 @@ surface, and there is currently no automated way to notice it breaking.
 **Do not start this first.** Nothing publishes a `scenario.json` yet, so there is nothing to
 stream. `ScenarioCreator/docs/PLAN.md` P1 is the unblock, and it is the first thing being done
 there.
+
+**The platform's part can start later than it looks.** `StreamingAssetSource.fromUrl` takes any
+URL, so ScenarioCreator can prove the whole streaming path against a directory of hashed files
+served by the existing nginx — no `scenario_assets` table and no manifest endpoint. Everything
+below is for catalog integration and dedup accounting, and is worth doing only once the path is
+known to work.
 
 When manifests exist, the platform side is `scenario-delivery-migration.md` Stage 1:
 
