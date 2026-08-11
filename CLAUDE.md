@@ -83,7 +83,10 @@ alternative and is deferred until presigned URLs or horizontal scale actually ma
   **Filtering and paging are server-side** (`?category=&q=&limit=&offset=`) — a client-side filter
   over a paged response would only ever search the page in hand.
 - `src/app/pages/viewer/` — the 3D host: canvas, load progress, error states, engine lifecycle,
-  restart / fullscreen / `MemoryProfiler` overlay, WebGL2 probe and context-loss handling.
+  restart / fullscreen, WebGL2 probe and context-loss handling. The `MemoryProfiler` overlay is a
+  **measurement tool, not a student control**: the button only renders with `?diag=1` on the
+  viewer URL, and `toggleDiagnostics()` refuses without the flag too, so the profiler's rAF loop
+  is never created rather than merely hidden.
 - `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit, publish
   toggle, delete, archive upload with progress. The token lives in `sessionStorage`
   (`AdminService`), so it dies with the tab.
@@ -147,6 +150,12 @@ Consequences to respect:
 - `Dockerfile.frontend` uses `npm install`, not `npm ci`, on purpose: the lockfile is generated on
   Windows where `@napi-rs/nice` resolves to a native MSVC binary, while Alpine falls back to the
   wasm runtime and pulls `@emnapi/*` peers the Windows lockfile cannot record.
+- **The KTX2 transcoder is served by the host, not the engine.** `ViewerComponent` sets
+  `Texture2D.ktx2TranscoderPath = '/assets/basis/'` before any scenario loads. The engine's
+  default is `/basis/`, which 404s here because Angular publishes `src/assets` under `/assets` —
+  and it fails **silently** until a scenario actually ships `.ktx2` textures. The transcoder
+  itself lives in `frontend/src/assets/basis/` (`basis_transcoder.js` + `.wasm`) and is committed
+  for the same reason as the engine tarball: nothing fetches it at build time.
 
 ## Angular conventions
 
@@ -206,10 +215,13 @@ Service names in compose are `database`, `backend`, `frontend` — `Readme.md` s
 
 ## Roadmap
 
-Phased implementation plan with actionable TODOs, effort estimates and per-phase success metrics:
-**[`docs/implementation-plan.md`](docs/implementation-plan.md)**.
+**What is next: [`docs/roadmap.md`](docs/roadmap.md)** — republishing the rebuilt scenarios,
+verifying KTX2 end to end, runtime engine-build identity, Playwright E2E, archive GC, CSP.
 
-Summary of the phases and why they are ordered this way:
+**What already landed and why: [`docs/implementation-plan.md`](docs/implementation-plan.md)** —
+phases 0–5, closed history with per-phase verification notes.
+
+Summary of the phases and why they were ordered this way:
 
 | Phase | Theme | Why here |
 |---|---|---|
@@ -220,7 +232,8 @@ Summary of the phases and why they are ordered this way:
 | 3 ✅ | Viewer & catalog robustness | Capability checks, context-loss recovery, cancellable downloads, fullscreen/restart, keyboard access. |
 | 4 ✅ | Session telemetry | ✅ done. One `scenario_sessions` table and three endpoints — no users, roles or courses. Duration is computed server-side; sessions survive scenario deletion. |
 | 5 ✅ | Quality gates | 208 tests (148 backend, 60 frontend) + CI. Plan: [`docs/test-plan.md`](docs/test-plan.md); browser-only checks: [`docs/manual-browser-checks.md`](docs/manual-browser-checks.md). |
-| 6 | Streaming client | Follows the engine's asset-streaming Stages 1–2. |
+| 6 ⛔ | Streaming client | Blocked: `StreamingAssetSource` is not in the installed engine build (checked 2026-08-02). Tracked as R8 in the roadmap. |
 
-Phases 0–1 are the ones that change whether this can be deployed at all; 2–3 make it usable by
-someone other than its author; 4–6 are growth.
+Phases 0–1 are the ones that changed whether this could be deployed at all; 2–3 made it usable by
+someone other than its author; 4–6 are growth. Everything through Phase 5 is done — new work goes
+in [`docs/roadmap.md`](docs/roadmap.md), not here.

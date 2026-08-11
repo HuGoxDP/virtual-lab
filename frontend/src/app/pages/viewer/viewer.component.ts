@@ -15,7 +15,7 @@ import { Router, ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 
 // Engine imports — from the WebEngineTS npm package
-import { Application, MemoryProfiler } from 'WebEngineTS';
+import { Application, MemoryProfiler, Texture2D } from 'WebEngineTS';
 import type { IScenarioLoadProgress } from 'WebEngineTS';
 
 import { ScenarioService, DownloadProgress } from '../../services/scenario.service';
@@ -76,6 +76,17 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   readonly isFullscreen = signal(false);
   readonly diagnosticsVisible = signal(false);
 
+  /**
+   * Whether the engine diagnostics overlay may be opened at all.
+   *
+   * Off unless the URL asks for it (`?diag=1`), per scenario. Diagnostics are a
+   * measurement tool, not a student-facing feature: without the flag the button
+   * is not rendered, the overlay is never created, and nothing is sampled — the
+   * profiler's rAF loop only exists while the overlay does, so the cost is
+   * genuinely zero rather than merely hidden.
+   */
+  readonly diagnosticsEnabled = signal(false);
+
   readonly isLoading = computed(
     () => this.state() === 'downloading' || this.state() === 'loading-engine'
   );
@@ -104,6 +115,12 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     // needed (or possible: the injected NgZone would be a no-op).
     this.app = new Application(canvas);
 
+    // KTX2 textures are transcoded by a WASM module the *host* serves, not the
+    // engine bundle. Angular publishes src/assets at /assets, so the engine's
+    // default of "/basis/" would 404 here — silently, until a scenario actually
+    // ships compressed textures. Set before any scenario loads.
+    Texture2D.ktx2TranscoderPath = '/assets/basis/';
+
     // A lost context silently freezes the scene otherwise.
     this.contextLostHandler = (event: Event) => {
       event.preventDefault();
@@ -114,6 +131,11 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
     window.addEventListener('pagehide', this.pageHideHandler);
+
+    // Read once: the flag is a launch option, not something to toggle mid-run.
+    this.diagnosticsEnabled.set(
+      ViewerComponent.readDiagFlag(this.route.snapshot.queryParamMap.get('diag'))
+    );
 
     this.route.paramMap
       .pipe(takeUntil(this.destroy$))
@@ -302,10 +324,25 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     this.telemetry.endSession();
   };
 
-  /** Engine-provided overlay: FPS, CPU frame time, VRAM estimates. */
+  /**
+   * Engine-provided overlay: FPS, CPU frame time, VRAM estimates.
+   *
+   * Guarded as well as hidden. The template does not render the button without
+   * the flag, but a stale DOM node or a console call must not be able to start
+   * sampling either.
+   */
   toggleDiagnostics(): void {
+    if (!this.diagnosticsEnabled()) return;
+
     MemoryProfiler.toggleOverlay();
     this.diagnosticsVisible.set(MemoryProfiler.isOverlayVisible);
+  }
+
+  /** Accepts `1`, `true` or a bare `?diag`; anything else means off. */
+  private static readDiagFlag(raw: string | null): boolean {
+    if (raw === null) return false;
+    const v = raw.toLowerCase();
+    return v === '' || v === '1' || v === 'true';
   }
 
   /** After a context loss the engine cannot recover in place — reload the page. */

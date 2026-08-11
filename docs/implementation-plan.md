@@ -4,6 +4,10 @@ Drafted 2026-07-31 against commit `f08b1575`; revised 2026-08-01 after a full co
 working tree. Companion to `CLAUDE.md`; every item is a concrete change with a file anchor and a
 done-when condition.
 
+> **Phases 0–5 are done.** This document is now closed history — kept because the *why* behind
+> each decision, and the defects each phase surfaced, are worth not losing. **New work goes in
+> [`roadmap.md`](roadmap.md)**, which picks up the items these phases deliberately left open.
+
 Estimates are focused engineering days for one developer. Phases 0–0.5 are sequential and block a
 public deployment; 1–6 can be resequenced against whatever the thesis needs.
 
@@ -366,7 +370,7 @@ The scenario numbering below refers to [`docs/test-plan.md`](test-plan.md).
 
 **Done when:** CI is green on a PR; the deployed site can name its engine build.
 
-**Still open — but now half-solved by the engine.** `release:local` stamps a unique version into
+**Still open — tracked as R3 in [`roadmap.md`](roadmap.md), and half-solved by the engine.** `release:local` stamps a unique version into
 the package (`0.1.0-local.<timestamp>`), which `frontend/package-lock.json` records, so the *build*
 is identifiable at install time. What is still missing is a **runtime** report: `Application.version`
 remains the hardcoded `"0.1.0"`, and `ViewerComponent.engineVersion` reads it but nothing renders it.
@@ -376,9 +380,11 @@ telling an old build from a new one currently requires grepping `.d.ts` for symb
 
 ---
 
-## Phase 6 — Streaming client (follows engine work)
+## Phase 6 — Streaming client (follows engine work) — **blocked**
 
-Gated on the engine shipping `StreamingAssetSource` (its P1.7 Stages 1–2).
+Gated on the engine shipping `StreamingAssetSource` (its P1.7 Stages 1–2). Verified 2026-08-02
+against the installed build `0.1.0-local.1785778939871`: the symbol is **not** there, so this
+cannot start on the platform side. Tracked as **R8** in [`roadmap.md`](roadmap.md).
 
 - [ ] Consume manifest-based scenarios alongside the single-ZIP path.
 - [ ] Show progressive first paint in the viewer: scene visible after critical assets, remaining

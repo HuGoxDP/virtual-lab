@@ -24,13 +24,16 @@
         (click)="restart()"
       >⟳</button>
 
-      <button
-        class="control-btn"
-        [class.active]="diagnosticsVisible()"
-        title="Діагностика (FPS, пам'ять)"
-        aria-label="Показати діагностику"
-        (click)="toggleDiagnostics()"
-      >📊</button>
+      <!-- Measurement tool, not a student-facing control: only with ?diag=1. -->
+      @if (diagnosticsEnabled()) {
+        <button
+          class="control-btn"
+          [class.active]="diagnosticsVisible()"
+          title="Діагностика (FPS, пам'ять)"
+          aria-label="Показати діагностику"
+          (click)="toggleDiagnostics()"
+        >📊</button>
+      }
 
       <button
         class="control-btn"
