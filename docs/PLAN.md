@@ -175,14 +175,44 @@ Three findings worth keeping:
 Open: catalog rows have no `image_url`, so the ten production scenarios fall back to the UI
 placeholder. Cosmetic, and not something to invent — it needs real artwork.
 
-### R2 — KTX2 ⏳ blocked on a browser
+### R2 — KTX2: file half verified ✅, runtime half open ⏳ 2026-08-13
 
-**Only `Benchscene3_solarsystem.zip` ships `.ktx2` at all** (12 textures). `solar-system-scenario.zip`
-carries 12 plain PNG/JPEG. So the KTX2 path cannot be checked against a production scenario —
-it has to be Benchscene3, which is now unpublished, so verifying means publishing it temporarily.
+**The suspicion recorded above is disproven — that paragraph is now stale.** It reads
+"`earth_normal.ktx2` is 2.67 MB and deflates to 15% inside the archive, which a properly
+supercompressed texture would not". In the current release that file is **365 KB and deflates to
+100%** — it does not compress further, which is precisely what a supercompressed payload does.
+ScenarioCreator's supercompression fix landed; the earlier reading was of the older build.
 
-The remaining check is genuinely browser-only: which format the transcoder actually produces at
-run time, read from `MemoryProfiler` under `?diag=1`. Not assertable from CI.
+`backend/scripts/verify-ktx2.mjs` (`npm run verify:ktx2`) now checks this from the bytes, so it
+cannot quietly regress again. All 12 textures pass: 11 × ETC1S/BasisLZ, `earth_normal` ×
+UASTC/Zstd — the right split, since a normal map is what ETC1S handles worst. Two independent
+signals, the KTX2 header's `supercompressionScheme` + DFD colour model, and how far the entry
+still deflates inside the ZIP.
+
+Also settled, without a browser:
+
+- **Only `Benchscene3_solarsystem.zip` ships `.ktx2` at all.** `solar-system-scenario.zip` carries
+  12 plain PNG/JPEG. The KTX2 path cannot be exercised by a production scenario, only by a bench
+  scene — which is now unpublished, so checking it means publishing it temporarily.
+- `/assets/basis/basis_transcoder.js` and `.wasm` are served (200). The engine's own default
+  `/basis/` returns 404, confirming why `ViewerComponent` overrides `ktx2TranscoderPath`.
+
+**What is left is browser-only, and the plan's method for it does not exist.** R2 says to check
+"the transcoded format actually reported at run time (`MemoryProfiler` under `?diag=1`)". The
+installed engine reports no such thing: `MemoryReport` has no format field, and `TextureFormat`
+is the authoring enum (`RGBA32`, `RGB24`, …) with no compressed GPU formats in it.
+
+The usable proxy is `estimatedTextureVramBytes`, which is documented to account for KTX2/Basis
+compression. For Benchscene3 the two outcomes are far apart enough to be unmistakable:
+
+| texture VRAM under `?diag=1` | meaning |
+|---|---|
+| ≈ **36 MB** | transcoded to BC1/BC7 — working |
+| ≈ **279 MB** | fell back to RGBA8 — transcoder never loaded |
+
+Recorded as a check with those thresholds in
+[`manual-browser-checks.md`](manual-browser-checks.md) §5. Closing it is a job for R4's browser
+harness, which is why R4 now runs before R2's last step rather than after it.
 
 ## Explicitly not planned
 
