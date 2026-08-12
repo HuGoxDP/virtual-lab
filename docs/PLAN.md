@@ -1,6 +1,7 @@
 # Virtual Lab — plan
 
 Drafted 2026-08-11, against branch `phases-0-3-hardening` (`2af1c244`).
+Progress log at the bottom: [what has been done](#progress).
 
 This is the **sequenced execution plan** given the engine that just landed. It does not restate
 [`roadmap.md`](roadmap.md) — that document owns the item descriptions and the R-numbers, and
@@ -135,6 +136,53 @@ time-to-first-frame is measurably lower.
   truth, so the seed can stop carrying Drive links and the scraping code can finally go.
 
 ---
+
+## Progress
+
+### R1 — catalog republished ✅ 2026-08-13
+
+The catalog now serves the current ScenarioCreator release: **13 rows, all `storage_kind = local`,
+all with `manifest_id` equal to the catalog id.** No upload reported `deduplicated`, so no stale
+archive was re-uploaded by mistake.
+
+The release turned out larger than the plan assumed — **ten** production scenarios, not two, so
+**nine** new rows were created rather than the eight the note anticipated (`Kepler` was built last).
+
+Done with a script rather than by hand, because republishing recurs on every ScenarioCreator
+build and hand-running it is how the catalog reached the state found here:
+
+- `backend/scripts/publish-release.mjs` — walks a release directory, reads each archive's
+  `manifest.json`, creates or updates the catalog row, uploads the ZIP. Talks to the admin HTTP
+  API only, so it works against a deployed instance. `--dry-run` and `--prune-superseded`.
+- `backend/scripts/catalog-metadata.mjs` — the platform's half of the metadata. Title,
+  description and version come from the archive manifest; only subject, visibility and image
+  live here. The manifest's own `category` (`education` / `simulation` / `test`) is a content
+  type, not a university subject, and is deliberately unused.
+
+Three findings worth keeping:
+
+1. **The live database had drifted from `db/init.sql`.** Two rows carried ids containing a
+   space — `Benchscene2 complexmodel` — which lands in the `/play/:id` URL. Catalog ids are now
+   the manifest ids; the old rows are deleted. `scenario_sessions` has no foreign key by design,
+   so the two bench-scene sessions recorded against the old id survive as historical values.
+2. **The seed is gone from `db/init.sql`.** It pointed at Google Drive and would have resurrected
+   the space-ids on the next `docker compose down -v`. SQL cannot place a file on the archives
+   volume, so a seeded row could never point at local storage anyway — an empty catalog on a
+   fresh install is the correct state, filled by `npm run publish:release`. That is most of R10.
+3. **Bench scenes are `is_published = false`** — out of the student catalog, still visible in
+   `/admin`. Consequence for R2 below.
+
+Open: catalog rows have no `image_url`, so the ten production scenarios fall back to the UI
+placeholder. Cosmetic, and not something to invent — it needs real artwork.
+
+### R2 — KTX2 ⏳ blocked on a browser
+
+**Only `Benchscene3_solarsystem.zip` ships `.ktx2` at all** (12 textures). `solar-system-scenario.zip`
+carries 12 plain PNG/JPEG. So the KTX2 path cannot be checked against a production scenario —
+it has to be Benchscene3, which is now unpublished, so verifying means publishing it temporarily.
+
+The remaining check is genuinely browser-only: which format the transcoder actually produces at
+run time, read from `MemoryProfiler` under `?diag=1`. Not assertable from CI.
 
 ## Explicitly not planned
 

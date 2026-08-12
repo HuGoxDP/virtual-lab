@@ -27,59 +27,23 @@ CREATE TABLE IF NOT EXISTS scenarios (
 CREATE INDEX IF NOT EXISTS idx_scenarios_category ON scenarios(category);
 
 -- ══════════════════════════════════════════════════════
--- НАЧАЛЬНЫЕ ДАННЫЕ (seed)
+-- НАЧАЛЬНЫЕ ДАННЫЕ (seed) — их здесь нет, и это намеренно
 -- ══════════════════════════════════════════════════════
-
-INSERT INTO scenarios (id, title, description, full_description, category, category_label, image_url, scenario_url, version, author)
-VALUES
-  (
-    'solar-system',
-    'Сонячна Система',
-    'Масштабна модель нашої планетарної системи. Орбіти планет, пояс астероїдів та супутники.',
-    E'Вирушайте у віртуальну подорож Сонячною системою. Цей сценарій демонструє реальні співвідношення розмірів планет.\n\nФункціонал:\n• Переміщення камери, зупинка часу',
-    'astronomy',
-    'Астрономія',
-    'https://images.unsplash.com/photo-1614730341194-75c607ae82b3?q=80&w=800&auto=format&fit=crop',
-    'https://drive.google.com/file/d/1fGK4yN3VZnvRN9oPV-rVJckK3qrb98eC/view?usp=sharing',
-    '1.0.0',
-    'HuGox'
-  ),
-  (
-    'Benchscene1_primitives',
-    'Сцена з примітивами',
-    '',
-    E'',
-    'test',
-    'Test',
-    '',
-    'https://drive.google.com/file/d/1-wqMBqbPwYh1RfSwWZK8ZOPXa7_2LTCn/view?usp=sharing',
-    '1.0.0',
-    'HuGox'
-  ),
-  (
-    -- Slug ids only: the id goes into the /play/:id path.
-    'benchscene2-complexmodel',
-    'Сцена з комплексною моделею',
-    '',
-    E'',
-    'test',
-    'Test',
-    '',
-    'https://drive.google.com/file/d/1dG6W3r2FmFXeYjsuxG3jcdhinrTabt48/view?usp=drive_link',
-    '1.0.0',
-    'HuGox'
-  ),  (
-    'benchscene3-solarsystem',
-    'Сцена з сонячною системою',
-    '',
-    E'',
-    'test',
-    'Test',
-    '',
-    'https://drive.google.com/file/d/1QqL9YQhGwLEVFXTC3cmcZAQ3kTcAC3bh/view?usp=sharing',
-    '1.0.0',
-    'HuGox'
-  )
-
-
-ON CONFLICT (id) DO NOTHING;
+--
+-- Раньше здесь лежали четыре строки со ссылками на Google Drive. Они удалены:
+--
+--   * архивы теперь хранятся локально и адресуются по содержимому
+--     (`/scenarios/<sha256>.zip`), а SQL не может положить файл на том, поэтому
+--     засеять рабочую строку отсюда всё равно невозможно — она указывала бы в
+--     никуда;
+--   * ссылки на Drive — ровно то, от чего уходит платформа;
+--   * два id содержали пробел, который попадал в URL `/play/:id`.
+--
+-- Каталог наполняется из релиза ScenarioCreator:
+--
+--   cd backend && npm run publish:release -- --release <dir>
+--
+-- Метаданные (предмет, видимость) — `backend/scripts/catalog-metadata.mjs`;
+-- название, описание и версия берутся из manifest.json внутри архива.
+--
+-- Пустой каталог на свежей установке — корректное состояние, а не сбой.
