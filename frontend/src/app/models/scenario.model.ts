@@ -144,6 +144,15 @@ export interface AdminScenario extends ScenarioCatalogItem {
 
   /** `version` from the archive's manifest. */
   manifestVersion: string | null;
+
+  /**
+   * Which engine build the archive was compiled against, from the manifest's
+   * `engineVersion`. Null for archives built before ScenarioCreator stamped it.
+   *
+   * Compare against the build the viewer reports under `?diag=1`: this says what
+   * the scenario was built against, that says what is actually running them.
+   */
+  manifestEngineVersion: string | null;
 }
 
 /**

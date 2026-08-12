@@ -214,6 +214,36 @@ Recorded as a check with those thresholds in
 [`manual-browser-checks.md`](manual-browser-checks.md) §5. Closing it is a job for R4's browser
 harness, which is why R4 now runs before R2's last step rather than after it.
 
+### R3 — build identity, platform half ✅ 2026-08-13
+
+Three questions that were being conflated, now answered separately:
+
+| Question | Where | Value here today |
+|---|---|---|
+| Which engine is running scenarios? | `BuildInfo`, viewer under `?diag=1` | `0.1.0-local.1786569427449`, built `2026-08-12 21:17 UTC` |
+| Which engine was a scenario built against? | `manifest_engine_version`, `/admin` | `0.1.0-local.1786479071411` — all 13 |
+| Which API build is serving? | `GET /api/health` → `build` | `1.0.0`, `commit: null` |
+
+**Those first two rows differ, and that is the point of the change.** Every archive in the catalog
+was built against a different engine build from the one installed to run them. Harmless so far,
+but previously it could only have been found by unzipping an archive and grepping a lockfile.
+
+- The viewer's `engineVersion` field was dead code reading `Application.version` — a literal fixed
+  at `"0.1.0"` across every pack, so it could not distinguish builds even if something had rendered
+  it. Replaced by `BuildInfo`, shown bottom-left under `?diag=1`, outside the `running` guard so
+  it is readable on the error screen too.
+- `/api/health` gained `build` — version, commit, startedAt, uptime. It reports the **API's**
+  identity and deliberately not the engine's: the backend cannot observe a bundle running in a
+  browser, and would drift the moment a tarball was installed without a backend rebuild. That is
+  the honest split `roadmap.md` argued for. `commit` is null unless `API_COMMIT` is set at image
+  build; null beats a placeholder that cannot be told from a real commit.
+- Migration `004_manifest_engine_version.sql` stores the manifest's `engineVersion`;
+  `/admin` shows it per row.
+
+Backend suite is 153 (was 148). Two display formatters — `shortEngineBuild` and the viewer's
+`describeEngineBuild` — are **not** unit-tested: neither the admin nor the viewer component has a
+spec, both being browser-dependent, which is what R4 is for. Flagging rather than hiding it.
+
 ## Explicitly not planned
 
 Unchanged from `roadmap.md`: no users/roles/courses, no MinIO until presigned URLs or

@@ -29,9 +29,24 @@ back, and the engine never imports from it.
 packs, copies the tarball here and reinstalls it. Do not hand-edit the tarball or the dependency
 spec. The **tarball filename** stays `WebEngineTS-0.1.0.tgz` while the content changes every run,
 so the dependency spec never needs touching. The package *inside* is stamped
-`0.1.0-local.<timestamp>` and `frontend/package-lock.json` records it — that lockfile line is
-currently the only way to tell which engine build is installed. `Application.version` still
-reports a hardcoded `"0.1.0"` and is **not** a build identifier.
+`0.1.0-local.<timestamp>` and `frontend/package-lock.json` records it.
+
+**Which engine build is running is answerable at run time: `BuildInfo`** (`version` / `builtAt` /
+`isBuild`), rendered by the viewer under `?diag=1`. `builtAt` is the field that identifies a
+build. Do **not** use `Application.version` for this — it is a string literal fixed at `"0.1.0"`
+across every local pack, so it cannot tell two builds apart.
+
+Two different questions, deliberately answered in different places:
+
+| Question | Where |
+|---|---|
+| Which engine is running scenarios? | `BuildInfo`, viewer under `?diag=1` |
+| Which engine was this scenario built against? | `scenarios.manifest_engine_version`, shown in `/admin` |
+| Which API build is serving? | `GET /api/health` → `build` |
+
+`/api/health` reports the **API's** build only, never the engine's: the engine bundle runs in the
+browser and the backend cannot observe it, so restating it there would drift the moment a tarball
+was installed without a backend rebuild.
 
 ## Architecture
 

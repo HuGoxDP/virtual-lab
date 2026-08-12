@@ -57,6 +57,32 @@
 
 // ==================== TITLE BADGE ====================
 
+/*
+ * Engine build identity, shown only under ?diag=1.
+ *
+ * Bottom-left, monospace and dim: it is a label to read off when recording a
+ * measurement, not something to look at while a scenario runs. Sits above the
+ * canvas but takes no pointer events, so it can never intercept a drag.
+ */
+.build-badge {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 100;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: ui-monospace, "SFMono-Regular", "Consolas", monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: all;
+}
+
 .title-badge {
   position: absolute;
   top: 16px;

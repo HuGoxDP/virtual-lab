@@ -162,6 +162,16 @@
                 @if (scenario.manifestId) {
                   <code class="row-id">{{ scenario.manifestId }}</code>
                   <span class="sub">v{{ scenario.manifestVersion }}</span>
+                  <!--
+                    Which engine build this archive was compiled against. Pairs
+                    with the build the viewer reports under ?diag=1 — together
+                    they answer "was this built against what is running it?".
+                  -->
+                  @if (scenario.manifestEngineVersion) {
+                    <span class="sub" [title]="scenario.manifestEngineVersion">
+                      двигун {{ shortEngineBuild(scenario.manifestEngineVersion) }}
+                    </span>
+                  }
                 } @else {
                   <span class="sub">—</span>
                 }

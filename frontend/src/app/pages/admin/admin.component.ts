@@ -273,6 +273,25 @@ export class AdminComponent implements OnInit {
     return hash ? hash.slice(0, 12) : '—';
   }
 
+  /**
+   * Shortens an engine build string for the table.
+   *
+   * Local packs are `0.1.0-local.<epoch ms>`, where only the timestamp differs
+   * between builds — so the tail is the part worth showing. The full string
+   * stays in the cell's title attribute.
+   */
+  shortEngineBuild(engineVersion: string): string {
+    const local = /^(.*)-local\.(\d+)$/.exec(engineVersion);
+    if (!local) return engineVersion;
+
+    const [, version, epochMs] = local;
+    const built = new Date(Number(epochMs));
+
+    return Number.isNaN(built.getTime())
+      ? engineVersion
+      : `${version}-local ${built.toISOString().slice(0, 10)}`;
+  }
+
   onTokenInput(event: Event): void {
     this.tokenInput.set((event.target as HTMLInputElement).value);
   }

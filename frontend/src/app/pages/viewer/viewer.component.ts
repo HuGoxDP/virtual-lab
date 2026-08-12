@@ -15,7 +15,7 @@ import { Router, ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 
 // Engine imports — from the WebEngineTS npm package
-import { Application, MemoryProfiler, Texture2D } from 'WebEngineTS';
+import { Application, BuildInfo, MemoryProfiler, Texture2D } from 'WebEngineTS';
 import type { IScenarioLoadProgress } from 'WebEngineTS';
 
 import { ScenarioService, DownloadProgress } from '../../services/scenario.service';
@@ -96,7 +96,27 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   /** Stroke offset for the progress ring (circumference ≈ 264). */
   readonly ringOffset = computed(() => 264 - (264 * this.progressPercent() / 100));
 
-  readonly engineVersion = Application.version;
+  /**
+   * Which engine build is running, for the diagnostics readout.
+   *
+   * Not `Application.version`: that is a string literal fixed at "0.1.0" across
+   * every local pack, so it cannot tell two builds apart — which is the only
+   * question worth asking. `BuildInfo` is stamped from the engine's package.json
+   * at build time, and `builtAt` is what actually distinguishes one build from
+   * the next. A frame time quoted without it is not reproducible.
+   */
+  readonly engineBuild = ViewerComponent.describeEngineBuild();
+
+  private static describeEngineBuild(): string {
+    if (!BuildInfo.isBuild) return 'engine: running from source';
+
+    // Minutes are enough to identify a pack; seconds are noise on screen.
+    const builtAt = BuildInfo.builtAt
+      ? BuildInfo.builtAt.replace('T', ' ').slice(0, 16) + ' UTC'
+      : 'build date unknown';
+
+    return `engine ${BuildInfo.version} · ${builtAt}`;
+  }
 
   // ==================== LIFECYCLE ====================
 

@@ -44,6 +44,15 @@
     </div>
   }
 
+  <!--
+    Which engine build is running. Only under ?diag=1, and deliberately outside
+    the `running` guard: a measurement is quoted against a named build, and the
+    build matters just as much on the error screen as on a working one.
+  -->
+  @if (diagnosticsEnabled()) {
+    <div class="build-badge">{{ engineBuild }}</div>
+  }
+
   <!-- WebGL canvas — always in DOM for engine init -->
   <canvas #webglCanvas class="webgl-canvas"></canvas>
 

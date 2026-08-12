@@ -103,6 +103,36 @@ test('public reads stay public', async t => {
   });
 });
 
+test('GET /api/health reports the API build, not the engine build', async t => {
+  if (skipUnlessDb(t)) return;
+
+  const res = await request(app).get('/api/health').expect(200);
+
+  await t.test('carries this service\'s own version', () => {
+    assert.equal(res.body.build.version, require('../../package.json').version);
+  });
+
+  await t.test('reports uptime and a start time', () => {
+    assert.ok(Number.isInteger(res.body.build.uptimeSeconds));
+    assert.ok(!Number.isNaN(Date.parse(res.body.build.startedAt)));
+  });
+
+  await t.test('commit is null rather than a stale default when unset', () => {
+    // Null is the honest answer for an image built from a working tree; a
+    // placeholder string would be indistinguishable from a real commit.
+    assert.equal(res.body.build.commit, process.env.API_COMMIT || null);
+  });
+
+  await t.test('says nothing about the engine', () => {
+    // The engine build is a property of the bundle in the browser and only the
+    // browser can read it (BuildInfo, shown in the viewer under ?diag=1).
+    // Restating it here would drift the moment a tarball was installed without
+    // a backend rebuild.
+    assert.ok(!('engine' in res.body.build));
+    assert.ok(!('engineVersion' in res.body.build));
+  });
+});
+
 test('GET /api/admin/scenarios exposes what the catalog hides', async t => {
   if (skipUnlessDb(t)) return;
 
