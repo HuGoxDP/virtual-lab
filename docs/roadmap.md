@@ -21,7 +21,12 @@ Each item states **why now**, **done when**, and its real dependency. Estimates 
 | **R8** | Catalog and viewer integration exist behind `?stream=1`. The decision to make it the default is open. | **A measurement on a real GPU.** SwiftShader's 30% run-to-run spread is larger than the effect. Nothing else. |
 | **R9** | Performance telemetry. | A decision — it samples students' machines, and the paper may not need it. |
 
-Two findings from this round that constrain future work, both recorded in
+**Both are waiting on someone else, and the questions are written down:**
+[`upstream/webenginets.md`](upstream/webenginets.md) and
+[`upstream/scenariocreator.md`](upstream/scenariocreator.md) carry the findings this repo cannot
+act on, with evidence and repro steps.
+
+Two of them constrain future work here directly, and are also recorded in
 [`PLAN.md`](PLAN.md#progress):
 
 - **Nothing in the catalog loads a `.ktx2`.** The archives ship them; the scenarios ask for the

@@ -25,6 +25,10 @@ This is the **consumer** end of a four-repo ecosystem (all under `C:\Users\Work\
 Data flow is one-directional: **engine → tarball → this repo**. This repo never exports anything
 back, and the engine never imports from it.
 
+**Findings that belong to those repos live in [`docs/upstream/`](docs/upstream/)** — things
+discovered here that this repo cannot fix, with evidence and repro steps. Check there before
+re-investigating something odd about the engine or an archive; it is probably already written up.
+
 **Engine updates arrive via `npm run release:local` run in the WebEngineTS repo** — it builds,
 packs, copies the tarball here and reinstalls it. Do not hand-edit the tarball or the dependency
 spec. The **tarball filename** stays `WebEngineTS-0.1.0.tgz` while the content changes every run,
