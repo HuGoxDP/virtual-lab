@@ -409,6 +409,40 @@ taking this change — the import path is part of what was deleted. This deploym
 is the honest flow: SQL cannot place a file on the archives volume, so a seeded row could never
 have pointed at local storage.
 
+### R5 — archive garbage collection ✅ 2026-08-13
+
+The leak was real and already measurable: **17 objects on disk, 13 referenced — 52 MB of 88.7 MB
+reclaimable**, all four orphans being the pre-R1 Drive imports that republishing replaced. The
+store is now exactly its 13 live objects.
+
+- `GET /api/admin/storage` — total, referenced, orphaned and reclaimable bytes, with the largest
+  orphans named. Read-only, so seeing the number never costs the files.
+- `POST /api/admin/storage/gc` — **dry run unless `{"dryRun": false}`**. An accidental POST reports
+  instead of deleting, which is the right default for the only endpoint here that destroys data.
+
+Three things the implementation had to get right, each with a test:
+
+1. **Dedup means a row is not a reference count.** The same bytes can back several catalog rows, so
+   collection is decided by "nothing references this hash", never by "a row was deleted". A test
+   uploads identical content under a second id (asserting `deduplicated: true`), deletes that row,
+   and requires the object to survive because `solar-system` still points at it. This is also why
+   the sweep is on demand rather than automatic on delete — that, and a mistaken delete staying
+   recoverable while its archive is still on disk.
+2. **A new object is unreferenced by design.** `commitArchive` stores an object before the `UPDATE`
+   that points a row at it, so an upload in flight is indistinguishable from an orphan. Objects
+   younger than `GC_MIN_AGE_MS` (1 h) are reported separately as `protectedByAge` and left alone.
+3. Only `<sha256>.zip` is considered; anything else in `objects/` was not put there by this code
+   and is not this sweep's to remove.
+
+**Not done: a UI for it.** The roadmap asked for an admin endpoint, and GC is a rare maintenance
+operation; a destructive button needs more confirmation design than the value currently justifies.
+Documented as `curl` in `Readme.md`.
+
+**The per-asset store under `/a/` is not collected.** Its references live in the manifests rather
+than the database, and the backend cannot write to `/srv/assets` at all today — the store is filled
+by `docker compose cp` as root. That belongs with the upload endpoint in R8, and until then the
+store is disposable: wipe it and re-run `npm run import:assets`.
+
 ## Explicitly not planned
 
 Unchanged from `roadmap.md`: no users/roles/courses, no MinIO until presigned URLs or

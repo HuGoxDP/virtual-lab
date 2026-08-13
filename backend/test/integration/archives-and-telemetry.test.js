@@ -162,6 +162,148 @@ test('archive upload rejects bad input without leaking temp files', async t => {
 });
 
 // ══════════════════════════════════════════════════════
+// STORAGE REPORTING AND GARBAGE COLLECTION
+// ══════════════════════════════════════════════════════
+
+/** Writes a file straight into the store, bypassing upload, with a chosen age. */
+async function plantObject(contents, { ageMs = 0 } = {}) {
+  const sha256 = crypto.createHash('sha256').update(contents).digest('hex');
+  const file = storage.objectPath(sha256);
+
+  await fsp.writeFile(file, contents);
+
+  if (ageMs > 0) {
+    const when = new Date(Date.now() - ageMs);
+    await fsp.utimes(file, when, when);
+  }
+
+  return sha256;
+}
+
+const exists = async file => fsp.access(file).then(() => true, () => false);
+
+test('storage report separates what is referenced from what is not', async t => {
+  if (skipUnlessDb(t)) return;
+
+  // Old enough to be collectable — the grace period exists for uploads in
+  // flight, and a planted file has no upload behind it.
+  const orphan = await plantObject('an archive nothing points at', { ageMs: 2 * 60 * 60 * 1000 });
+
+  const res = await request(app).get('/api/admin/storage').set(AUTH).expect(200);
+
+  await t.test('counts the orphan and names it', () => {
+    assert.ok(res.body.orphans.count >= 1);
+    assert.ok(res.body.orphans.sample.some(o => o.sha256 === orphan));
+  });
+
+  await t.test('totals cover every object', () => {
+    const { total, referenced, orphans, protectedByAge } = res.body;
+    assert.equal(total.count, referenced.count + orphans.count + protectedByAge.count);
+  });
+
+  await t.test('reporting deletes nothing', async () => {
+    assert.ok(await exists(storage.objectPath(orphan)));
+  });
+});
+
+test('garbage collection', async t => {
+  if (skipUnlessDb(t)) return;
+
+  const OLD = 2 * 60 * 60 * 1000;
+
+  await t.test('needs the admin token', async () => {
+    await request(app).get('/api/admin/storage').expect(401);
+    await request(app).post('/api/admin/storage/gc').expect(401);
+  });
+
+  await t.test('dry run is the default and removes nothing', async () => {
+    const orphan = await plantObject('dry run subject', { ageMs: OLD });
+
+    const res = await request(app).post('/api/admin/storage/gc').set(AUTH).expect(200);
+
+    assert.equal(res.body.dryRun, true);
+    assert.ok(res.body.wouldDelete.count >= 1);
+    assert.ok(await exists(storage.objectPath(orphan)), 'a dry run must not delete');
+  });
+
+  await t.test('removes an unreferenced object when asked explicitly', async () => {
+    const orphan = await plantObject('collect me', { ageMs: OLD });
+
+    const res = await request(app)
+      .post('/api/admin/storage/gc')
+      .set(AUTH)
+      .send({ dryRun: false })
+      .expect(200);
+
+    assert.equal(res.body.dryRun, false);
+    assert.ok(res.body.deleted.count >= 1);
+    assert.equal(await exists(storage.objectPath(orphan)), false);
+  });
+
+  await t.test('keeps an object a scenario still points at', async () => {
+    // Upload through the real path so the row and the object agree.
+    const upload = await request(app)
+      .post('/api/scenarios/solar-system/archive')
+      .set(AUTH)
+      .attach('archive', validArchive(), 'scenario.zip')
+      .expect(201);
+
+    // Age it past the grace period, so only the reference can save it.
+    const file = storage.objectPath(upload.body.sha256);
+    const when = new Date(Date.now() - OLD);
+    await fsp.utimes(file, when, when);
+
+    await request(app).post('/api/admin/storage/gc').set(AUTH).send({ dryRun: false }).expect(200);
+
+    assert.ok(await exists(file), 'a referenced archive must survive');
+  });
+
+  await t.test('an object shared by two scenarios survives losing one', async () => {
+    // Deduplication means the same bytes back several rows. Collecting on
+    // "this row was deleted" rather than on "nothing references it" would take
+    // an archive still in use — the reason gc is not automatic on delete.
+    const id = 'gc-shared-probe';
+
+    await request(app).post('/api/catalog').set(AUTH)
+      .send({ id, title: 'Shared', category: 'test', categoryLabel: 'Test' })
+      .expect(201);
+
+    const shared = await request(app)
+      .post(`/api/scenarios/${id}/archive`)
+      .set(AUTH)
+      .attach('archive', validArchive(), 'scenario.zip')
+      .expect(201);
+
+    assert.equal(shared.body.deduplicated, true, 'same bytes as solar-system');
+
+    await request(app).delete(`/api/catalog/${id}`).set(AUTH).expect(200);
+
+    const file = storage.objectPath(shared.body.sha256);
+    const when = new Date(Date.now() - OLD);
+    await fsp.utimes(file, when, when);
+
+    await request(app).post('/api/admin/storage/gc').set(AUTH).send({ dryRun: false }).expect(200);
+
+    assert.ok(await exists(file), 'solar-system still points at it');
+  });
+
+  await t.test('spares an object too new to judge', async () => {
+    // An upload that has committed its object but not yet updated its row is
+    // indistinguishable from an orphan. Age is what tells them apart.
+    const fresh = await plantObject('written just now');
+
+    const res = await request(app)
+      .post('/api/admin/storage/gc')
+      .set(AUTH)
+      .send({ dryRun: false })
+      .expect(200);
+
+    assert.ok(res.body.protectedByAge.count >= 1);
+    assert.ok(await exists(storage.objectPath(fresh)), 'a fresh object must not be collected');
+  });
+});
+
+// ══════════════════════════════════════════════════════
 // THE DRIVE PATH IS GONE
 // ══════════════════════════════════════════════════════
 

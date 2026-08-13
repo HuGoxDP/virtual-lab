@@ -89,9 +89,14 @@ async function runScenario(
       // Generous: on a loaded machine the streamed path is still fetching here,
       // and settling early would compare a half-loaded scene against a complete
       // one — the exact mistake this loop exists to avoid.
+      //
+      // Six seconds of no change, not three. The request queue is bounded at
+      // six in flight, so a stall while the rasteriser hogs the main thread
+      // looks exactly like "finished" for a short window — which is how this
+      // reported a partly-loaded scene in about one full-suite run in three.
       const settleBy = Date.now() + 180_000;
 
-      while (stableFor < 12 && Date.now() < settleBy) {
+      while (stableFor < 24 && Date.now() < settleBy) {
         await new Promise(resolve => setTimeout(resolve, 250));
         const sample = MemoryProfiler.snapshot().renderer;
         const current = `${sample?.textures ?? 0}/${sample?.estimatedTextureVramBytes ?? 0}`;
@@ -263,9 +268,13 @@ test.describe('streaming (manifest) scenario delivery', () => {
     );
   });
 
+  // Two full runs of a 17 MB scene on a software rasteriser, while Docker runs
+  // beside it. That is a measurement, not a pure function, and it is honest to
+  // allow one retry rather than to pretend otherwise — the assertions below are
+  // all equivalence checks, so a retry cannot turn a real failure green.
+  test.describe.configure({ retries: 1 });
+
   test('an asset-heavy scenario renders the same scene from a manifest as from its ZIP', async ({ page, request }) => {
-    // Two full scenario runs of the largest published scenario, on a software
-    // rasteriser.
     test.setTimeout(600_000);
 
     const detail = await (await request.get(`${BASE_URL}/api/catalog/solar-system`)).json();

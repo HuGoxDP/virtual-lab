@@ -155,6 +155,11 @@ by `npm run import:assets`; proven end to end, not yet wired into the catalog or
   **admin only** (`Authorization: Bearer $ADMIN_TOKEN`).
 - `GET /api/admin/scenarios` — admin; every row including unpublished, with storage and manifest
   metadata.
+- `GET /api/admin/storage` / `POST /api/admin/storage/gc` — admin; what the archive store holds and
+  how much of it nothing references. **The sweep is a dry run unless `{"dryRun": false}`.**
+  Collection is decided by "no row references this hash", never by "a row was deleted" — dedup
+  means one object may back several rows. Objects younger than `GC_MIN_AGE_MS` are spared, because
+  `commitArchive` stores an object before the row that points at it.
 - `POST /api/scenarios/:id/archive` — admin, multipart field `archive`; validates the ZIP
   (`archive-validation.js`), then stores it under its sha256 and repoints the scenario at it.
 - **There is no download proxy and no import-from-URL endpoint.** Both existed for Google Drive

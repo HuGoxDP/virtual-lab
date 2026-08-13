@@ -60,19 +60,20 @@ scenario content lives in ScenarioCreator, and committing a fixture archive here
 repo exists to keep. The `e2e` job in `ci.yml` is `workflow_dispatch` with a release directory
 supplied to it, and the suite is a pre-release gate. See [`e2e/README.md`](../e2e/README.md).
 
-### R5. Archive garbage collection (~1 day)
+### R5. Archive garbage collection — ✅ 2026-08-13
 
-Deleting a scenario leaves its object in `objects/` forever. Nothing collects it, and deletion
-cannot be naive: dedup means one object may back several catalog rows
-([`test-plan.md`](test-plan.md) §6.3).
+`GET /api/admin/storage` reports; `POST /api/admin/storage/gc` sweeps, dry-run unless
+`{"dryRun": false}`. The leak was already 52 MB of 88.7 MB — four orphans left by R1's republish.
 
-- [ ] Reference-count over `scenarios.archive_sha256`.
-- [ ] A sweep — on demand via an admin endpoint, not automatic on delete, so a mistaken delete
-      stays recoverable.
-- [ ] Report reclaimable bytes before deleting anything.
+Reference counting is over `scenarios.archive_sha256`, so dedup is handled: an object backing two
+rows survives losing one, asserted by a test. Objects younger than `GC_MIN_AGE_MS` are spared,
+because `commitArchive` stores an object before the row that references it and an upload in flight
+otherwise looks exactly like an orphan.
 
-**Done when:** an object with zero referring rows is removable, one with any referring row is
-refused, and the test suite asserts both.
+Not built: a UI for it (rare operation, destructive button needs more design than it is worth), and
+collection for the per-asset `/a/` store — its references live in manifests, not the database, and
+the backend cannot write there yet. That belongs with R8's upload path; until then that store is
+disposable.
 
 ### R6. Content Security Policy (~1 day) — *Phase 0 deliberately deferred*
 

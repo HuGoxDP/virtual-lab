@@ -100,6 +100,83 @@ async function discardTemp(tmpFile) {
   await fsp.unlink(tmpFile).catch(() => {});
 }
 
+/** `<sha256>.zip` — anything else in objects/ was not put there by this code. */
+const OBJECT_NAME = /^([0-9a-f]{64})\.zip$/;
+
+/**
+ * Every stored object, with its size and age.
+ *
+ * Age matters for garbage collection: an object is committed to the store
+ * *before* the row that references it is updated, so a freshly written object
+ * is briefly unreferenced through no fault of its own.
+ */
+async function listObjects() {
+  let names;
+  try {
+    names = await fsp.readdir(OBJECTS_DIR);
+  } catch {
+    return [];
+  }
+
+  const objects = [];
+
+  for (const name of names) {
+    const match = OBJECT_NAME.exec(name);
+    if (!match) continue;
+
+    try {
+      const stat = await fsp.stat(path.join(OBJECTS_DIR, name));
+      if (stat.isFile()) {
+        objects.push({ sha256: match[1], bytes: stat.size, mtimeMs: stat.mtimeMs });
+      }
+    } catch {
+      // Removed between readdir and stat — nothing to report.
+    }
+  }
+
+  return objects;
+}
+
+/**
+ * Splits the store into what is still referenced and what is not.
+ *
+ * `referenced` is a Set of sha256 values taken from the catalog. Deduplication
+ * means one object can back several rows, so membership — not a count — is what
+ * decides whether it may go.
+ *
+ * `minAgeMs` protects the window between `commitArchive` and the `UPDATE` that
+ * points a row at it: without it, a sweep running at the wrong moment deletes an
+ * archive that is seconds away from being referenced.
+ */
+async function classifyObjects(referenced, minAgeMs) {
+  const cutoff = Date.now() - minAgeMs;
+  const result = { referenced: [], orphans: [], tooNew: [] };
+
+  for (const object of await listObjects()) {
+    if (referenced.has(object.sha256)) result.referenced.push(object);
+    else if (object.mtimeMs > cutoff) result.tooNew.push(object);
+    else result.orphans.push(object);
+  }
+
+  return result;
+}
+
+/** Removes stored objects by hash. Returns what actually went. */
+async function deleteObjects(objects) {
+  const deleted = [];
+
+  for (const object of objects) {
+    try {
+      await fsp.unlink(objectPath(object.sha256));
+      deleted.push(object);
+    } catch {
+      // Already gone, or a concurrent sweep took it.
+    }
+  }
+
+  return deleted;
+}
+
 /** Best-effort sweep of temp files left behind by a crash or a killed upload. */
 async function cleanStaleTemp(maxAgeMs = 6 * 60 * 60 * 1000) {
   let names;
@@ -134,4 +211,7 @@ module.exports = {
   writeTempFromStream,
   discardTemp,
   cleanStaleTemp,
+  listObjects,
+  classifyObjects,
+  deleteObjects,
 };

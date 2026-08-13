@@ -320,12 +320,17 @@ transaction — which is exactly the four seed rows) could be ordered differentl
 query and the next, letting a row appear on two pages or on none. Fixed by adding `, id DESC`.
 Scenario 3 now means something.
 
-### 6.3 Orphaned archive objects — **open, by decision**
+### 6.3 Orphaned archive objects — **fixed 2026-08-13**
 
-Deleting a scenario leaves its object in `objects/` forever and nothing collects it. Deliberate for
-now: dedup means one object may back several catalog rows, so deletion cannot be naive — it needs
-reference counting over `archive_sha256`. Either implement a sweep or document it as permanent
-growth; until then scenario 46 asserts only integrity, not cleanup.
+Deleting or republishing a scenario left its object in `objects/` forever. By the time this was
+implemented the leak was 52 MB of an 88.7 MB store — four orphans from R1's republish.
+
+`GET /api/admin/storage` reports; `POST /api/admin/storage/gc` sweeps, dry-run unless
+`{"dryRun": false}`. Reference counting is over `archive_sha256`, so the dedup hazard this entry
+warned about is handled directly: a test uploads identical bytes under a second id, deletes that
+row, and requires the object to survive because another row still points at it. Objects younger
+than `GC_MIN_AGE_MS` are spared, since an upload commits its object before the row that references
+it and would otherwise look exactly like an orphan.
 
 ### 6.4 Search does not cover the scenario id — **open, by decision**
 
