@@ -443,6 +443,52 @@ than the database, and the backend cannot write to `/srv/assets` at all today �
 by `docker compose cp` as root. That belongs with the upload endpoint in R8, and until then the
 store is disposable: wipe it and re-run `npm run import:assets`.
 
+### R6 — Content Security Policy ✅ 2026-08-13
+
+The last unset security header, deferred since Phase 0 because a naive policy breaks the import
+map. Every directive was **measured** against the running app under a report-only header rather
+than guessed, which is what the roadmap asked for — and the measurement changed the design twice.
+
+```
+default-src 'self'; script-src 'self' blob: 'nonce-$request_id'; script-src-attr 'none';
+style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self';
+worker-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self';
+form-action 'self'; frame-ancestors 'self'
+```
+
+**Four findings, each of which would have shipped a broken or pointless policy:**
+
+1. **`Content-Security-Policy-Report-Only` is ignored in a `<meta>` tag.** The first measurement
+   reported zero violations against a deliberately strict policy — a vacuous result, not a clean
+   bill. It has to be an HTTP header.
+2. **`script-src blob:` is load-bearing.** The engine executes a scenario's scripts from blob URLs
+   — 8 per run, on both the ZIP and the manifest path. Without it *no scenario runs at all*.
+3. **Chromium matches import maps by nonce only and ignores CSP hashes.** A hash-based policy was
+   built, and the import map was still blocked. nginx now stamps `$request_id` onto the tag with
+   `sub_filter` and the header carries the same value; a test asserts they agree per response and
+   differ between responses.
+4. **Angular's critical-CSS inliner emits `onload="this.media='all'"`** — an inline event handler,
+   and the only thing preventing `script-src-attr 'none'`. Disabled in `angular.json`
+   (`optimization.styles.inlineCritical: false`), which also removed an inline `<style>`.
+
+**`'unsafe-eval'` is deliberately absent, and that is a decision worth knowing about.** The KTX2
+basis transcoder needs it: measured directly, `'wasm-unsafe-eval'` gets the module compiled and
+then fails, because the Emscripten glue evaluates a string. Since **nothing in the catalog loads a
+`.ktx2` today** (R2), leaving it out breaks nothing now — but adopting KTX2 means revisiting this
+line rather than discovering it at run time. A test asserts the directive stays absent, so enabling
+it is a deliberate act.
+
+`style-src 'unsafe-inline'` is unavoidable here: Angular injects component styles as `<style>`
+elements at run time, which cannot be hashed ahead of time, and a nonce would have to reach
+Angular from a statically served `index.html`.
+
+**Acceptance is that a scenario still renders**, not that the header is present — a CSP that blocks
+the import map is worse than none, because it fails silently while looking correct in a `curl`.
+`e2e/tests/csp.spec.ts` (6 tests) asserts exactly that, plus that archives and manifests carry the
+header, since `add_header` does not inherit into a location that sets its own.
+`frontend/scripts/check-csp-assumptions.mjs` fails the image build if a second inline script or an
+event-handler attribute ever appears.
+
 ## Explicitly not planned
 
 Unchanged from `roadmap.md`: no users/roles/courses, no MinIO until presigned URLs or

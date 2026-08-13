@@ -94,7 +94,7 @@ alternative and is deferred until presigned URLs or horizontal scale actually ma
 
 **Streaming delivery (the second store, `/a/`).** A scenario can also be served as a *manifest* of
 individually-fetched files rather than one ZIP (`Application.loadScenarioFromManifest`). Populated
-by `npm run import:assets`; proven end to end, not yet wired into the catalog or the viewer.
+by `npm run import:assets`; proven end to end and exposed in the catalog, but opt-in in the viewer.
 
 - Layout: `virtual_lab_assets:/srv/assets` holding `<scenario id>.json` beside
   `objects/<2 chars>/<sha256>.<ext>`. Two-level sharding, as ScenarioCreator emits.
@@ -179,6 +179,14 @@ by `npm run import:assets`; proven end to end, not yet wired into the catalog or
 - `backend/migrations/*.sql` — every schema change after the baseline. Idempotent DDL, applied by
   the backend on boot. **Add schema changes here, never to `init.sql`.**
 
+**CSP** (`nginx/csp.conf`) — every directive was measured, not guessed, and two are load-bearing:
+`script-src blob:` (the engine executes scenario scripts from blob URLs — without it *nothing
+runs*) and a **nonce** for the inline import map, because **Chromium ignores CSP hashes for import
+maps**. nginx stamps `$request_id` onto the tag with `sub_filter`. `'unsafe-eval'` is deliberately
+absent, which means KTX2 transcoding cannot run — nothing loads a `.ktx2` today, and a test keeps
+that decision explicit. `add_header` does not inherit into a location that sets its own, so
+`csp.conf` is `include`d in each.
+
 **nginx** (`nginx/nginx.conf`) — SPA fallback, `/api/` reverse proxy, `^~ /scenarios/` archive
 serving (the `^~` is required or the `.zip` regex block wins), `no-cache` on `index.html`,
 30-day immutable caching for hashed assets, security headers, gzip.
@@ -236,7 +244,7 @@ Consequences to respect:
 # Tests
 cd backend  && npm test           # 153 tests; needs docker-compose.test.yml up
 cd frontend && npx ng test --no-watch   # 60 tests
-cd e2e      && npm test           # 22 Playwright tests; needs the stack up AND a published
+cd e2e      && npm test           # 35 Playwright tests; needs the stack up AND a published
                                   # catalog — see e2e/README.md
 docker compose -f docker-compose.test.yml up -d   # throwaway Postgres on :55432
 
@@ -274,8 +282,10 @@ Service names in compose are `database`, `backend`, `frontend` — `Readme.md` s
 
 ## Roadmap
 
-**What is next: [`docs/roadmap.md`](docs/roadmap.md)** — republishing the rebuilt scenarios,
-verifying KTX2 end to end, runtime engine-build identity, Playwright E2E, archive GC, CSP.
+**What is next: [`docs/roadmap.md`](docs/roadmap.md)** — R1–R6 and R10 all landed 2026-08-13.
+What remains: R7 (mostly ScenarioCreator's), R8 (streaming — blocked on a real-GPU measurement,
+not on code), R9 (optional). [`docs/PLAN.md`](docs/PLAN.md#progress) records what each one turned
+up, including several findings that contradict older notes in these docs.
 
 **What already landed and why: [`docs/implementation-plan.md`](docs/implementation-plan.md)** —
 phases 0–5, closed history with per-phase verification notes.

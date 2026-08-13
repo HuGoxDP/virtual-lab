@@ -75,15 +75,22 @@ collection for the per-asset `/a/` store — its references live in manifests, n
 the backend cannot write there yet. That belongs with R8's upload path; until then that store is
 disposable.
 
-### R6. Content Security Policy (~1 day) — *Phase 0 deliberately deferred*
+### R6. Content Security Policy — ✅ 2026-08-13
 
-The only security header not set. It was skipped because a naive policy breaks the import map in
-`frontend/src/index.html`, which is load-bearing for the engine.
+Shipped, measured rather than guessed, and verified by a scenario still rendering under it
+(`e2e/tests/csp.spec.ts`). The policy lives in `nginx/csp.conf` with every loosening justified.
 
-- [ ] A policy that permits the inline `<script type="importmap">` (nonce or hash) and the
-      engine's WASM (`wasm-unsafe-eval` for the basis transcoder — verify what it actually needs).
-- [ ] Confirm a scenario still loads and renders with the policy on; that is the acceptance test,
-      not the header being present.
+The import map is allowed by a **nonce**, not a hash — Chromium ignores CSP hashes for import maps,
+which cost a full build to discover. nginx stamps `$request_id` onto the tag with `sub_filter`.
+
+`script-src blob:` turned out to be load-bearing: the engine executes scenario scripts from blob
+URLs, so without it nothing runs.
+
+**The `wasm-unsafe-eval` question in the original note has a sharper answer than expected:** the
+basis transcoder needs full `'unsafe-eval'`, because its Emscripten glue evaluates a string.
+`'unsafe-eval'` is therefore **absent**, and KTX2 transcoding cannot run under this policy. That
+costs nothing today — nothing in the catalog loads a `.ktx2` (see R2) — but it is a live constraint
+on adopting them, asserted by a test so it cannot be enabled by accident.
 
 ### R7. Real manifest metadata (~0.5 day here, ~0.5 in ScenarioCreator)
 
@@ -159,7 +166,7 @@ this change, because the import path is part of what was deleted.
 R1 ─► R2                     republish, then prove KTX2 works
 R3                           cheap, and stops the next "which build is this?"
 R4                           the biggest real gap in confidence
-R5, R6, R7                   independent, any order
+R5, R6                       done; R7 is mostly ScenarioCreator now
 R10                          done; Drive code deleted
 R8                           path proven; catalog + viewer integration next
 R9                           only if the paper needs the numbers

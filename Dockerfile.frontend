@@ -18,8 +18,14 @@ RUN npm install --no-audit --no-fund --prefer-offline
 COPY frontend/ .
 RUN npm run build
 
+# The CSP in nginx.conf assumes exactly one inline script — the import map,
+# which nginx gives a nonce. Fail here rather than at run time if that stops
+# being true: a blocked import map means no scenario runs at all.
+RUN node scripts/check-csp-assumptions.mjs
+
 # ── Stage 2: nginx ────────────────────────────────────
 FROM nginx:alpine
 COPY --from=build /app/dist/university-mock/browser /usr/share/nginx/html
 COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx/csp.conf   /etc/nginx/csp.conf
 EXPOSE 80
