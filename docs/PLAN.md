@@ -494,6 +494,34 @@ header, since `add_header` does not inherit into a location that sets its own.
 `frontend/scripts/check-csp-assumptions.mjs` fails the image build if a second inline script or an
 event-handler attribute ever appears.
 
+### CI — the nginx check was never checking nginx ⚠ fixed 2026-08-13
+
+Found while verifying R6 didn't break anything. The `config` job ran:
+
+```
+docker run --rm -v "$PWD/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro" nginx:alpine nginx -t
+```
+
+Two problems, one of them old:
+
+1. **`nginx -t` resolves `proxy_pass http://backend:3000` at parse time**, and `backend` does not
+   exist in a bare container. Verified against the pre-R6 config with the exact pre-change command:
+   `[emerg] host not found in upstream "backend"`. **This predates the CSP work** — the step has
+   been failing for as long as the API proxy has named a compose service, which is to say always.
+   Fixed with `--add-host backend:127.0.0.1`, so the result depends on the file rather than on DNS.
+2. **R6 added a second reason:** `nginx.conf` now `include`s `csp.conf`, which the job did not
+   mount, so it failed on `open() /etc/nginx/csp.conf`. That one was mine.
+
+Also added a check that `index.html` still carries exactly one import map and no inline event
+handler — the same assumptions `frontend/scripts/check-csp-assumptions.mjs` enforces at image build
+time, hoisted to CI so a source edit fails before an image is built.
+
+**A methodology note worth keeping**, because it nearly produced a wrong conclusion: on Windows,
+`docker run -v /tmp/x.conf:...` **silently mounts nothing** — the container reads nginx's stock
+1072-byte `default.conf` instead, and every such test passes. Three isolation runs "proving" that
+the old config passed and the new one failed were testing the default config. Use a real
+`$(pwd -W)` path, and confirm a deliberately broken file actually fails before trusting a green.
+
 ## Explicitly not planned
 
 Unchanged from `roadmap.md`: no users/roles/courses, no MinIO until presigned URLs or

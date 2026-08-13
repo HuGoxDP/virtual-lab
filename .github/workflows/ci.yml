@@ -170,10 +170,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Two things this needs that are easy to miss:
+      #
+      #   * **Both files.** nginx.conf `include`s csp.conf in the server block
+      #     and in every location that sets headers of its own, so mounting only
+      #     the first fails with "open() /etc/nginx/csp.conf failed" and tells
+      #     you nothing about the config.
+      #   * **`--add-host`.** `nginx -t` resolves the hostname in
+      #     `proxy_pass http://backend:3000` at parse time, and `backend` does
+      #     not exist in a bare container — so the check was testing DNS as much
+      #     as syntax, and passed or failed for reasons unrelated to the config.
+      #     Pointing it at loopback makes the result depend only on the file.
       - name: nginx config is valid
         run: |
-          docker run --rm -v "$PWD/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+          docker run --rm --add-host backend:127.0.0.1 \
+            -v "$PWD/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            -v "$PWD/nginx/csp.conf:/etc/nginx/csp.conf:ro" \
             nginx:alpine nginx -t
+
+      # The CSP allows exactly one inline script — the import map, which nginx
+      # nonces. A second one would be blocked at run time, and a blocked import
+      # map means no scenario runs at all, so it is worth failing here.
+      - name: index.html matches the CSP
+        run: |
+          if ! grep -q '<script type="importmap">' frontend/src/index.html; then
+            echo "::error::no import map in index.html — nginx's sub_filter has nothing to nonce"
+            exit 1
+          fi
+          if grep -nE '\son(load|click|error|submit)\s*=' frontend/src/index.html; then
+            echo "::error::inline event handler in index.html — script-src-attr is 'none'"
+            exit 1
+          fi
 
       - name: No secrets are tracked
         run: |
