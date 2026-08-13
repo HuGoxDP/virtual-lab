@@ -356,11 +356,30 @@ has exactly one LOD, so it is not a retained ladder. This repo can measure it bu
 it is an engine-side question, and it matters because it is the opposite of what a VRAM budget
 assumes.
 
-**Not done, deliberately:** `scenario_assets`, `GET /api/scenarios/:id/manifest`, and the viewer
-switch. The path is proven; the schema should be designed now that its shape is known rather than
-guessed from §3.1. One practical note for whoever does: the store is written by `docker compose cp`
-as root, so the backend user cannot currently write to `/srv/assets` — an upload endpoint will need
-that fixed.
+#### Catalog integration — ✅ 2026-08-13, opt-in
+
+`scenarios.manifest_url` (migration `005`) records where a scenario's manifest lives; the catalog
+exposes it as `manifestUrl` beside `scenarioUrl`, and `npm run import:assets` sets it on every row
+it imports. The two paths coexist rather than the row committing to one.
+
+**The viewer uses it only with `?stream=1`.** Not the default, on the evidence above: the manifest
+path is not faster to first frame here and holds ~2.9x the texture memory, so defaulting to it
+would trade a student-visible regression for an unproven win. The flag is what makes the
+comparison repeatable on a real GPU — which is the measurement that would actually settle it.
+Falling back is explicit: no `manifestUrl` means the flag has nothing to select and the ZIP loads.
+
+One consequence worth knowing: a streamed run keeps no buffer, so **restart is disabled** for it —
+re-running would mean re-fetching, which is not what that button promises. `canRestart` derives
+from a signal for exactly this reason.
+
+**Still not done, deliberately: `scenario_assets` and `GET /api/scenarios/:id/manifest`.** The
+manifest already lists every asset with its priority and LOD ladder and is served statically, so
+a table duplicating it would have no reader and the endpoint would only proxy a static file.
+Reference counting for GC (R5) is the first thing that will genuinely need the table — design it
+then, against the shape now known rather than §3.1's sketch.
+
+One practical note for whoever adds an upload endpoint: the store is written by
+`docker compose cp` as root, so the backend user cannot currently write to `/srv/assets`.
 
 ## Explicitly not planned
 

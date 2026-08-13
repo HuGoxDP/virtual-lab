@@ -439,6 +439,7 @@ app.get('/api/catalog', async (req, res) => {
           category_label     AS "categoryLabel",
           image_url          AS "imageUrl",
           scenario_url       AS "scenarioUrl",
+          manifest_url       AS "manifestUrl",
           version,
           author,
           upload_date        AS "uploadDate"
@@ -485,6 +486,7 @@ app.get('/api/admin/scenarios', requireAdmin, async (req, res) => {
         category_label     AS "categoryLabel",
         image_url          AS "imageUrl",
         scenario_url       AS "scenarioUrl",
+        manifest_url       AS "manifestUrl",
         version, author,
         upload_date        AS "uploadDate",
         is_published       AS "isPublished",
@@ -515,6 +517,7 @@ app.get('/api/catalog/:id', async (req, res) => {
         full_description   AS "fullDescription",
         category, category_label AS "categoryLabel",
         image_url AS "imageUrl", scenario_url AS "scenarioUrl",
+        manifest_url AS "manifestUrl",
         version, author, upload_date AS "uploadDate"
       FROM scenarios
       WHERE id = $1 AND is_published = true
@@ -576,7 +579,7 @@ app.put('/api/catalog/:id', requireAdmin, async (req, res) => {
   const { id } = req.params;
   const {
     title, description, fullDescription,
-    category, categoryLabel, imageUrl, scenarioUrl,
+    category, categoryLabel, imageUrl, scenarioUrl, manifestUrl,
     version, author, isPublished,
   } = req.body;
 
@@ -599,6 +602,9 @@ app.put('/api/catalog/:id', requireAdmin, async (req, res) => {
   addField('category_label', categoryLabel);
   addField('image_url', imageUrl);
   addField('scenario_url', scenarioUrl);
+  // Null clears it — a scenario whose manifest was withdrawn must be able to
+  // fall back to its ZIP rather than keep pointing at a store entry that is gone.
+  addField('manifest_url', manifestUrl);
   addField('version', version);
   addField('author', author);
   addField('is_published', isPublished);

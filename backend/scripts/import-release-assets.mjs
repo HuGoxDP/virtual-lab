@@ -55,6 +55,32 @@ const HERE = import.meta.dirname;
 const CONTAINER_PATH = '/srv/assets';
 const COMPOSE_SERVICE = 'backend';
 
+/** Public prefix the store is served under; must match the nginx location. */
+const PUBLIC_PREFIX = '/a/';
+
+/**
+ * Points a catalog row at its manifest, so the viewer can offer the streamed
+ * path for that scenario. Best-effort: a release may contain scenarios that
+ * were never added to the catalog, and importing assets for them is still valid.
+ */
+async function registerManifests(ids, baseUrl, token) {
+  const registered = [];
+  const skipped = [];
+
+  for (const id of ids) {
+    const res = await fetch(`${baseUrl}/api/catalog/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manifestUrl: `${PUBLIC_PREFIX}${id}.json` }),
+    });
+
+    if (res.ok) registered.push(id);
+    else skipped.push(`${id} (${res.status})`);
+  }
+
+  return { registered, skipped };
+}
+
 function parseArgs(argv) {
   const args = {
     release: path.resolve(HERE, '../../../../ScenarioCreator/ReleaseScenarios'),
@@ -271,10 +297,30 @@ async function main() {
 
   if (!args.out) await rm(staging, { recursive: true, force: true });
 
+  // ── register on the catalog rows ──────────────────
+  // Serving the manifest is not enough for the viewer to offer it; the row has
+  // to say it exists.
+  const token = process.env.ADMIN_TOKEN;
+
+  if (token) {
+    const baseUrl = process.env.PUBLISH_BASE_URL
+      || `http://localhost:${process.env.FRONTEND_PORT || 8044}`;
+    const { registered, skipped } = await registerManifests(
+      imported.map(s => s.id), baseUrl, token
+    );
+
+    console.log(`\n  registered manifest_url on ${registered.length} catalog row(s)`);
+    if (skipped.length > 0) {
+      console.log(`  not in the catalog, assets imported anyway: ${skipped.join(', ')}`);
+    }
+  } else {
+    console.log('\n  ADMIN_TOKEN not set — assets imported, catalog rows not updated.');
+  }
+
   console.log(
-    `\nOK — ${imported.length} scenario(s) available at /a/<id>.json\n` +
-    `Load with: app.loadScenarioFromManifest('/a/<id>.json')\n` +
-    `Asset URLs resolve against the manifest's directory, so no baseUrl is needed.`
+    `\nOK — ${imported.length} scenario(s) available at ${PUBLIC_PREFIX}<id>.json\n` +
+    `Asset URLs resolve against the manifest's directory, so no baseUrl is needed.\n` +
+    `The viewer uses this path only with ?stream=1 — see docs/PLAN.md for why not by default.`
   );
 }
 

@@ -50,8 +50,14 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   /** Aborts the archive download when the user navigates away mid-transfer. */
   private downloadAbort: AbortController | null = null;
 
-  /** Kept so "restart" can re-run the scenario without downloading it again. */
-  private loadedBuffer: ArrayBuffer | null = null;
+  /**
+   * Kept so "restart" can re-run the scenario without downloading it again.
+   *
+   * A signal, not a field, because `canRestart` derives from it: a streamed run
+   * has no buffer to re-run, and a plain field would never notify the zoneless
+   * scheduler to disable the button.
+   */
+  private readonly loadedBuffer = signal<ArrayBuffer | null>(null);
 
   private contextLostHandler: ((event: Event) => void) | null = null;
 
@@ -87,11 +93,29 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    */
   readonly diagnosticsEnabled = signal(false);
 
+  /**
+   * Whether to load from the scenario's streaming manifest rather than its ZIP.
+   *
+   * Opt-in via `?stream=1`, and deliberately **not** the default. The manifest
+   * path is proven to render the same scene, but on the hardware measured so far
+   * it is not faster to first frame and holds noticeably more texture memory
+   * (`docs/PLAN.md`). Making it the default would trade a student-visible
+   * regression for an unproven win. The flag exists so the comparison can be
+   * repeated on a real GPU, which is what would settle it.
+   *
+   * Ignored when the scenario has no `manifestUrl` — most do not.
+   */
+  readonly streamingRequested = signal(false);
+
   readonly isLoading = computed(
     () => this.state() === 'downloading' || this.state() === 'loading-engine'
   );
 
-  readonly canRestart = computed(() => this.state() === 'running' && !this.contextLost());
+  // A streamed run holds no buffer, so there is nothing to re-run in place —
+  // restarting it would mean re-fetching, which is not what the button promises.
+  readonly canRestart = computed(
+    () => this.state() === 'running' && !this.contextLost() && this.loadedBuffer() !== null
+  );
 
   /** Stroke offset for the progress ring (circumference ≈ 264). */
   readonly ringOffset = computed(() => 264 - (264 * this.progressPercent() / 100));
@@ -152,10 +176,10 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
     window.addEventListener('pagehide', this.pageHideHandler);
 
-    // Read once: the flag is a launch option, not something to toggle mid-run.
-    this.diagnosticsEnabled.set(
-      ViewerComponent.readDiagFlag(this.route.snapshot.queryParamMap.get('diag'))
-    );
+    // Read once: these are launch options, not something to toggle mid-run.
+    const query = this.route.snapshot.queryParamMap;
+    this.diagnosticsEnabled.set(ViewerComponent.readFlag(query.get('diag')));
+    this.streamingRequested.set(ViewerComponent.readFlag(query.get('stream')));
 
     this.route.paramMap
       .pipe(takeUntil(this.destroy$))
@@ -176,7 +200,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     // Stop streaming a possibly-large archive into a dead component.
     this.downloadAbort?.abort();
     this.downloadAbort = null;
-    this.loadedBuffer = null;
+    this.loadedBuffer.set(null);
 
     const canvas = this.canvasRef.nativeElement;
     if (this.contextLostHandler) {
@@ -251,6 +275,11 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    * 3. Engine parses ZIP, validates manifest, executes entry point
    */
   private async startLoading(scenario: ScenarioCatalogItem, token: number): Promise<void> {
+    if (this.streamingRequested() && scenario.manifestUrl) {
+      await this.startStreaming(scenario.manifestUrl, token);
+      return;
+    }
+
     this.setState('downloading', 0, 'Завантаження архіву...');
 
     this.downloadAbort?.abort();
@@ -271,7 +300,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       );
 
       if (token !== this.loadToken) return;
-      this.loadedBuffer = zipBuffer;
+      this.loadedBuffer.set(zipBuffer);
 
       await this.runBuffer(zipBuffer, token);
 
@@ -281,6 +310,44 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
         ? err.message
         : 'Невідома помилка при завантаженні сценарію';
       console.error('[ViewerComponent] Load failed:', err);
+      this.showError(message);
+    }
+  }
+
+  /**
+   * Runs a scenario from its streaming manifest instead of its archive.
+   *
+   * No download step: the engine fetches scripts and assets itself, in priority
+   * order, so the only progress worth reporting is the engine's own. `restart()`
+   * is unavailable afterwards because there is no buffer to re-run — it would
+   * have to re-fetch, which is a different thing from what the button promises.
+   */
+  private async startStreaming(manifestUrl: string, token: number): Promise<void> {
+    this.setState('loading-engine', 0, 'Ініціалізація сцени...');
+
+    try {
+      if (!this.app) throw new Error('Engine not initialized');
+
+      await this.app.loadScenarioFromManifest(
+        manifestUrl,
+        (progress: IScenarioLoadProgress) => {
+          if (token !== this.loadToken) return;
+          this.progressPercent.set(Math.round(progress.progress * 100));
+          this.progressLabel.set(progress.currentOperation);
+        }
+      );
+
+      if (token !== this.loadToken) return;
+      this.loadedBuffer.set(null);
+      this.setState('running', 100, '');
+
+      this.enforceDiagnosticsPolicy();
+      void this.telemetry.startSession(this.scenarioId);
+
+    } catch (err) {
+      if (token !== this.loadToken) return;
+      const message = err instanceof Error ? err.message : 'Не вдалося завантажити сценарій';
+      console.error('[ViewerComponent] Streamed load failed:', err);
       this.showError(message);
     }
   }
@@ -335,11 +402,12 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
   /** Re-runs the scenario from the buffer already in memory — no re-download. */
   async restart(): Promise<void> {
-    if (!this.loadedBuffer || !this.app) return;
+    const buffer = this.loadedBuffer();
+    if (!buffer || !this.app) return;
 
     const token = ++this.loadToken;
     try {
-      await this.runBuffer(this.loadedBuffer, token);
+      await this.runBuffer(buffer, token);
     } catch (err) {
       if (token !== this.loadToken) return;
       console.error('[ViewerComponent] Restart failed:', err);
@@ -382,8 +450,8 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     this.diagnosticsVisible.set(MemoryProfiler.isOverlayVisible);
   }
 
-  /** Accepts `1`, `true` or a bare `?diag`; anything else means off. */
-  private static readDiagFlag(raw: string | null): boolean {
+  /** Accepts `1`, `true` or a bare `?flag`; anything else means off. */
+  private static readFlag(raw: string | null): boolean {
     if (raw === null) return false;
     const v = raw.toLowerCase();
     return v === '' || v === '1' || v === 'true';

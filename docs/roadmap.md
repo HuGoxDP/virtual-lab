@@ -105,12 +105,18 @@ No longer blocked: the engine ships `StreamingAssetSource` and `loadScenarioFrom
 scenario now **runs from a manifest and renders the same scene as its ZIP** — `nginx ^~ /a/`, the
 `virtual_lab_assets` volume, `npm run import:assets`, and `e2e/tests/streaming.spec.ts`.
 
+Catalog integration is done too: `scenarios.manifest_url`, exposed as `manifestUrl`, set by
+`npm run import:assets`. **The viewer uses it only with `?stream=1`** — see below for why not by
+default.
+
 Still to do, and now worth designing against what the shape turned out to be rather than the
 sketch in [`scenario-delivery-migration.md`](scenario-delivery-migration.md) §3.1, which
 [`PLAN.md`](PLAN.md#progress) corrects:
 
-- [ ] `scenario_assets` table + `GET /api/scenarios/:id/manifest`.
-- [ ] Viewer calls `loadScenarioFromManifest` when a row has a manifest.
+- [ ] **Re-run the comparison on a real GPU.** This is the blocking measurement: `?stream=1`
+      exists to make it repeatable, and nothing below is worth deciding without it.
+- [ ] `scenario_assets` — but only when GC (R5) needs reference counting. The manifest already
+      lists every asset and is served statically, so the table has no reader yet.
 - [ ] An upload path — the store is currently written by `docker compose cp` as root, so the
       backend user cannot write to `/srv/assets`.
 

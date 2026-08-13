@@ -196,6 +196,44 @@ test('GET /api/catalog/:id', async t => {
   });
 });
 
+test('manifest_url carries the streaming alternative', async t => {
+  if (skipUnlessDb(t)) return;
+
+  const AUTH = { Authorization: `Bearer ${process.env.ADMIN_TOKEN}` };
+
+  await t.test('is null for a scenario published only as an archive', async () => {
+    const res = await request(app).get('/api/catalog/solar-system').expect(200);
+    assert.equal(res.body.manifestUrl, null);
+  });
+
+  await t.test('is exposed once set, alongside the archive', async () => {
+    await request(app)
+      .put('/api/catalog/solar-system')
+      .set(AUTH)
+      .send({ manifestUrl: '/a/solar-system.json' })
+      .expect(200);
+
+    const res = await request(app).get('/api/catalog/solar-system').expect(200);
+
+    // Both, not either: the two delivery paths coexist, and the viewer picks
+    // between them rather than the row committing to one.
+    assert.equal(res.body.manifestUrl, '/a/solar-system.json');
+    assert.equal(res.body.scenarioUrl, '/scenarios/aaa.zip');
+  });
+
+  await t.test('can be withdrawn without stranding the scenario', async () => {
+    await request(app)
+      .put('/api/catalog/solar-system')
+      .set(AUTH)
+      .send({ manifestUrl: null })
+      .expect(200);
+
+    const res = await request(app).get('/api/catalog/solar-system').expect(200);
+    assert.equal(res.body.manifestUrl, null);
+    assert.equal(res.body.scenarioUrl, '/scenarios/aaa.zip');
+  });
+});
+
 test('ids needing URL encoding resolve correctly', async t => {
   if (skipUnlessDb(t)) return;
 

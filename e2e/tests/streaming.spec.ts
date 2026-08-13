@@ -170,6 +170,80 @@ test.describe('streaming (manifest) scenario delivery', () => {
     expect(res.headers()['cache-control']).toContain('no-cache');
   });
 
+  test.describe('the viewer opts in, rather than defaulting', () => {
+    /** Which URLs the page fetched, so the delivery path is observable. */
+    function trackRequests(page: import('@playwright/test').Page) {
+      const urls: string[] = [];
+      page.on('request', r => urls.push(r.url()));
+      return {
+        usedManifest: () => urls.some(u => /\/a\/[^/]+\.json$/.test(u)),
+        usedZip: () => urls.some(u => u.includes('/scenarios/') && u.endsWith('.zip')),
+      };
+    }
+
+    test('the catalog advertises the manifest', async ({ request }) => {
+      const detail = await (await request.get(`${BASE_URL}/api/catalog/molecules`)).json();
+      expect(detail.manifestUrl, 'an imported scenario should advertise its manifest')
+        .toBe(manifestUrl('molecules'));
+      expect(detail.scenarioUrl, 'and keep its archive').toContain('/scenarios/');
+    });
+
+    test('without ?stream=1 it still downloads the ZIP', async ({ page }) => {
+      const seen = trackRequests(page);
+
+      await page.goto('/play/molecules');
+      await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
+
+      expect(seen.usedZip(), 'the default path must stay the archive').toBe(true);
+      expect(seen.usedManifest(), 'the manifest must not be fetched by default').toBe(false);
+    });
+
+    test('with ?stream=1 it loads from the manifest instead', async ({ page }) => {
+      const seen = trackRequests(page);
+
+      await page.goto('/play/molecules?stream=1');
+      await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
+
+      expect(seen.usedManifest(), 'the flag should select the manifest').toBe(true);
+      expect(seen.usedZip(), 'and skip the archive entirely').toBe(false);
+
+      // A streamed run holds no buffer, so restarting in place is impossible —
+      // the control must say so rather than sit there doing nothing.
+      await expect(page.locator('.control-btn[aria-label="Перезапустити сценарій"]')).toBeDisabled();
+    });
+
+    test('?stream=1 falls back to the ZIP when there is no manifest', async ({ page, request }) => {
+      const setManifest = (value: string | null) => request.fetch(
+        `${BASE_URL}/api/catalog/optics-lenses`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${process.env.ADMIN_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          data: { manifestUrl: value },
+        }
+      );
+
+      // Withdrawing a manifest must not strand a scenario: the row keeps its
+      // archive, and the flag then has nothing to select.
+      await setManifest(null);
+
+      try {
+        const seen = trackRequests(page);
+
+        await page.goto('/play/optics-lenses?stream=1');
+        await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
+
+        expect(seen.usedZip(), 'it should fall back to the archive').toBe(true);
+      } finally {
+        // Shared catalog: leaving it withdrawn would silently change what every
+        // later run of this file is testing.
+        await setManifest(manifestUrl('optics-lenses'));
+      }
+    });
+  });
+
   test('a script-only scenario runs from a manifest', async ({ page }) => {
     test.setTimeout(180_000);
     await page.goto('/');

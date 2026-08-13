@@ -39,6 +39,16 @@ export interface ScenarioCatalogItem {
   /** URL to the scenario ZIP archive (engine downloads this). */
   scenarioUrl: string;
 
+  /**
+   * URL of the streaming manifest, when this scenario is also published as one.
+   *
+   * The alternative delivery path: scripts and assets fetched individually from
+   * a `scenario.json` instead of unpacked from one ZIP. Null for scenarios that
+   * only exist as an archive — which is most of them, and the viewer falls back
+   * to `scenarioUrl` in that case.
+   */
+  manifestUrl?: string | null;
+
   /** Scenario version string. */
   version?: string;
 

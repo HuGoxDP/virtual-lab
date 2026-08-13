@@ -111,6 +111,15 @@ by `npm run import:assets`; proven end to end, not yet wired into the catalog or
   shape in `docs/scenario-delivery-migration.md` §3.1 predates the engine and is wrong.
 - `scripts` + `entry` are what make a manifest *runnable*; one listing only assets is a valid asset
   source but not a scenario.
+- `scenarios.manifest_url` records it; the catalog exposes `manifestUrl` beside `scenarioUrl`. Both
+  coexist — the row does not commit to one delivery path.
+- **The viewer takes this path only with `?stream=1`.** It is measurably *not* faster to first
+  frame on the hardware tested and holds ~2.9× the texture VRAM, so defaulting to it would be a
+  student-visible regression for an unproven win (`docs/PLAN.md`). A streamed run keeps no buffer,
+  so **restart is disabled** for it.
+- There is deliberately **no `scenario_assets` table and no `/api/scenarios/:id/manifest`**: the
+  manifest already lists every asset and is served statically, so both would duplicate it without
+  a reader. Add the table when GC (R5) needs reference counting.
 
 ## Key components
 
