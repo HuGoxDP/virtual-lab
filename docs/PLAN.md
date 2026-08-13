@@ -522,6 +522,27 @@ time, hoisted to CI so a source edit fails before an image is built.
 the old config passed and the new one failed were testing the default config. Use a real
 `$(pwd -W)` path, and confirm a deliberately broken file actually fails before trusting a green.
 
+#### The rest of CI, audited the same way — sound
+
+Finding one vacuous check is a reason to distrust the others, so each was made to fail on purpose:
+
+| Job | Checked | Result |
+|---|---|---|
+| backend | `npm ci` resolves; `node --test` exit code on a failing test | ok, exits 1 |
+| frontend | `ng test --no-watch` exit code on a failing spec | ok, exits 1 |
+| docker | `docker compose build` from a clean `.env.example` | ok, and it runs `check-csp-assumptions.mjs` inside the image build |
+| config | every `${VAR}` in `docker-compose.yml` exists in `.env.example` | ok, none missing |
+
+`ng test` and `node --test` were the ones worth doubting: a test runner that reports failures and
+still exits 0 makes an entire job decorative, and neither the nginx step nor a green tick would
+have told anyone. The `e2e` job is `workflow_dispatch` and cannot be exercised without a runner.
+
+### Deployed state, verified 2026-08-13
+
+After all of the above, against freshly built images: **10 published scenarios in 4 categories,
+13 stored objects with 0 orphans, CSP served, `/api/health` ok.** Suites: 158 backend, 60
+frontend, 34 + 1 skipped E2E.
+
 ## Explicitly not planned
 
 Unchanged from `roadmap.md`: no users/roles/courses, no MinIO until presigned URLs or
