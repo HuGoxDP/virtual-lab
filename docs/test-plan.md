@@ -333,19 +333,40 @@ growth; until then scenario 46 asserts only integrity, not cleanup.
 finds nothing. Left as-is because it is unchanged behaviour, but worth a decision when the catalog
 grows.
 
-## 7. Not verifiable without a browser
+## 7. Not verifiable without a browser — **covered as of 2026-08-13**
 
 These were implemented but confirmed only by reading the code and by checking that the production
-build is clean. They are the strongest argument for the Playwright layer in §2.
+build is clean. They were the argument for the Playwright layer, and `e2e/` is now that layer:
+22 tests, one skipped by design.
 
-- Progress ring actually animating 0→100 during a real download (F5).
-- WebGL2-unavailable message on a machine without WebGL2 (F7).
-- Context-loss overlay after a forced `WEBGL_lose_context` (F7).
-- Fullscreen toggle and the `MemoryProfiler` overlay (F8).
-- Modal focus trap, Esc, focus restoration (F10).
-- Orientation hint on a portrait phone viewport (F9).
-- The `/admin` screen itself — every endpoint behind it is verified, the UI is not (F12).
-- `sendBeacon` firing on tab close (F13).
+| Item | Where it is now covered |
+|---|---|
+| Progress ring animating 0→100 during a real download (F5) | `viewer.spec.ts` |
+| WebGL2-unavailable message (F7) | `viewer.spec.ts` — `getContext('webgl2')` stubbed to null |
+| Context-loss overlay after `WEBGL_lose_context` (F7) | `viewer.spec.ts` |
+| Fullscreen toggle and the `MemoryProfiler` overlay (F8) | `viewer.spec.ts` |
+| Modal focus trap, Esc, focus restoration (F10) | `catalog-a11y.spec.ts` |
+| Orientation hint on a portrait viewport (F9) | `viewer.spec.ts`, `catalog-a11y.spec.ts` |
+| The `/admin` screen itself (F12) | `admin-golden-path.spec.ts` |
+| `sendBeacon` firing on tab close (F13) | `student-golden-path.spec.ts` — asserted on the request |
+| Golden paths #97 / #98 | `student-golden-path.spec.ts`, `admin-golden-path.spec.ts` |
+
+Two things the browser layer found immediately, neither of which any unit test could have:
+
+1. **A scenario could open the profiler overlay on a student.** `solar-system` calls
+   `MemoryProfiler.showOverlay()` from its own code, so the platform's flagship scenario showed
+   students a developer overlay of FPS and VRAM counters. The `?diag=1` gate governs the
+   platform's button, not what content does once it is running — the viewer now closes it, and
+   `viewer.spec.ts` holds the line.
+2. **Nothing in the release actually loads a `.ktx2`.** Benchscene3 ships twelve of them and its
+   manifest lists them, but `Scenario.js` asks for the `.jpg` originals, so the transcoder is
+   never fetched and texture VRAM sits at 242.7 MB where transcoding would give ~36 MB. That is
+   ScenarioCreator's to fix; `ktx2.spec.ts` skips with that reason and switches itself on when a
+   scenario does reference one.
+
+Note on the progress ring: it is **not** one continuous 0→100 ramp, and asserting that was wrong.
+`progressPercent` is shared by two phases — the archive download, then the engine unpacking it —
+and restarts between them. The test asserts monotonicity within each phase.
 
 ---
 

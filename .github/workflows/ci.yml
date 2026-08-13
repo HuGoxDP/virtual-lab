@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The e2e job below is opt-in; see the comment on it for why.
+  workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: 'Run the Playwright suite (needs a ScenarioCreator release on the runner)'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -93,6 +100,68 @@ jobs:
         run: |
           cp .env.example .env
           docker compose build
+
+  e2e:
+    name: Playwright (opt-in)
+    runs-on: ubuntu-latest
+    # Deliberately NOT a per-PR gate.
+    #
+    # These tests need a catalog with real scenarios in it, and scenario content
+    # lives in ScenarioCreator — this repo stores none, on purpose. A runner
+    # therefore has nothing to publish, and `global-setup.ts` would fail on an
+    # empty catalog. Rather than fake that with a fixture archive committed here
+    # (which is the rule this repo exists to keep), the suite is a pre-release
+    # gate run against a stack that has a release published into it.
+    #
+    # Locally, that is: docker compose up -d && npm run publish:release && npm test
+    if: github.event_name == 'workflow_dispatch' && inputs.run_e2e
+    env:
+      RELEASE_DIR: ${{ vars.SCENARIO_RELEASE_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Start the stack
+        run: |
+          cp .env.example .env
+          sed -i 's/^ADMIN_TOKEN=.*/ADMIN_TOKEN=ci-admin-token/' .env
+          docker compose up --build -d
+          timeout 180 bash -c 'until curl -sf localhost:8044/api/health; do sleep 3; done'
+
+      - name: Publish a release into the catalog
+        working-directory: backend
+        env:
+          ADMIN_TOKEN: ci-admin-token
+        run: |
+          if [ -z "$RELEASE_DIR" ]; then
+            echo "::error::SCENARIO_RELEASE_DIR is not set — nothing to publish."
+            exit 1
+          fi
+          npm ci
+          npm run publish:release -- --release "$RELEASE_DIR"
+
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Test
+        working-directory: e2e
+        env:
+          ADMIN_TOKEN: ci-admin-token
+        run: npm test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
 
   config:
     name: Config checks

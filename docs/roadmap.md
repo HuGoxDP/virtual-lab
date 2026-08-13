@@ -12,85 +12,53 @@ Each item states **why now**, **done when**, and its real dependency. Estimates 
 
 ---
 
-## Now — unblocks other work or is already half-finished
+## Done — see [`PLAN.md`](PLAN.md#progress) for what each one actually turned up
 
-### R1. Republish the rebuilt scenarios (~0.5 day) — *waiting on nothing*
+### R1. Republish the rebuilt scenarios — ✅ 2026-08-13
 
-ScenarioCreator has finished the rebuild
-(`ScenarioCreator/docs/TASK-rebuild-and-republish.md`): all four archives are content-only, the
-`Benchscene1_primitives` source was recovered from `05af25d^`, and every ZIP passes this
-platform's own validator when run against it directly. **The archives in the catalog are still
-the stale Drive imports.**
+Turned out to be ten production scenarios and three bench scenes, not four archives. Done with
+`backend/scripts/publish-release.mjs` rather than by hand; catalog ids are now the manifest ids,
+and the Drive seed is gone from `db/init.sql`.
 
-- [ ] Upload the four ZIPs from `ScenarioCreator/ReleaseScenarios/` through `/admin`.
-- [ ] Confirm each returns a **new** `sha256` — a "deduplicated" reply means the old file was
-      re-uploaded by mistake.
-- [ ] Play each one from the catalog.
+### R2. Verify KTX2 end-to-end — ✅ 2026-08-13, with an unexpected answer
 
-Sizes to expect (from the ScenarioCreator task doc): `Benchscene1_primitives` 2 295 B (was
-5 771 B with the harness), `Benchscene2_complexmodel` 29 352 066 B,
-`Benchscene3_solarsystem` 10 476 770 B (grew: it now ships both `.jpg` and `.ktx2`),
-`solar-system-scenario` 18 256 979 B.
+The platform's KTX2 wiring is correct and **never exercised**: `basis_transcoder.*` is not
+requested during a run, because `Benchscene3`'s `Scenario.js` loads the `.jpg` originals rather
+than the `.ktx2` files it also ships. Texture VRAM sits at 242.7 MB where transcoding would give
+~36 MB.
 
-**Done when:** no archive in `objects/` contains a `Benchmark*` file, and every catalog row has a
-`archive_sha256` that differs from today's.
+**The remaining fix is ScenarioCreator's** — point the scenario at the compressed variants.
+`backend/scripts/verify-ktx2.mjs` proves the files themselves are properly supercompressed, and
+`e2e/tests/ktx2.spec.ts` turns itself on the moment a scenario references one.
 
-### R2. Verify KTX2 end-to-end (~0.5 day) — *depends on R1*
+### R3. Engine build identity at runtime — ✅ 2026-08-13
 
-`ViewerComponent` now sets `Texture2D.ktx2TranscoderPath = '/assets/basis/'`, and
-`/assets/basis/basis_transcoder.{js,wasm}` are served (checked 2026-08-02; the engine's default
-`/basis/` returns 404 here). Nothing has exercised it yet, because no published archive carries
-`.ktx2` — `Benchscene3_solarsystem` will be the first.
+The engine now stamps `BuildInfo`, so no build-time codegen was needed. The viewer shows it under
+`?diag=1`; `manifest_engine_version` records what each archive was built against; `/api/health`
+reports the API's own build. The honest split in the design note below is what was implemented.
 
-This matters because the failure mode is **silent**: a wrong transcoder path does not break the
-build or any test, it breaks one scenario at run time on a machine that happens to support the
-compressed format.
-
-- [ ] After R1, open `Benchscene3 solarsystem` and confirm textures render.
-- [ ] With `?diag=1`, confirm the overlay's texture-VRAM figure is materially lower than the
-      uncompressed equivalent — that is the proof the `.ktx2` path was actually taken.
-- [ ] Add the check to [`manual-browser-checks.md`](manual-browser-checks.md).
-
-### R3. Engine build identity at runtime (~0.5 day) — *Phase 5 leftover*
-
-`release:local` now stamps `0.1.0-local.<timestamp>` into the package and `package-lock.json`
-records it, so the build is identifiable **at install time**. At run time it is not:
-`Application.version` is a hardcoded `"0.1.0"`, and `ViewerComponent.engineVersion` reads it but
-renders it nowhere.
-
-This has already cost time twice — telling an old engine from a new one required grepping
-`.d.ts` for symbols. It gets worse the moment benchmark numbers are quoted anywhere.
-
-- [ ] Read the installed version from `node_modules/WebEngineTS/package.json` at build time and
-      stamp it into the bundle (a generated `engine-build.ts`, or a `define`).
-- [ ] Surface it: the diagnostics overlay area under `?diag=1`, and `/api/health`.
-
-**Design note:** `/api/health` is the backend, which cannot know a frontend build value. Either
-pass it in as a build arg through compose, or accept that the honest split is *frontend reports
-engine build, backend reports API build*. Decide before implementing — do not smear one build's
-identity across the other's endpoint.
+**Design note (kept — it decided the shape):** `/api/health` is the backend, which cannot know a
+frontend build value. The honest split is *frontend reports engine build, backend reports API
+build*, rather than smearing one build's identity across the other's endpoint.
 
 ---
 
 ## Next — closes real gaps, no external dependency
 
-### R4. Playwright E2E for the browser-only surface (~2–3 days)
+### R4. Playwright E2E for the browser-only surface — ✅ 2026-08-13
 
-208 automated tests cover logic; **nothing** covers the browser. `manual-browser-checks.md` exists
-precisely because these cannot be asserted otherwise, and a manual checklist decays the moment
-nobody runs it. The list in [`test-plan.md`](test-plan.md) §7 is the backlog:
+`e2e/` — 22 tests covering both golden paths and all of [`test-plan.md`](test-plan.md) §7, which
+is now a table of where each item is covered. `manual-browser-checks.md` keeps only what a machine
+genuinely cannot judge: whether a scene *looks* right, real hardware instead of SwiftShader, and a
+real phone.
 
-progress ring actually animating 0→100 · WebGL2-unavailable message · context-loss overlay ·
-fullscreen · diagnostics overlay under `?diag=1` · modal focus trap and focus restore ·
-`sendBeacon` on tab close · portrait orientation hint · the `/admin` screen itself.
+It found two defects on the first run — a scenario opening the profiler overlay on students, and
+the KTX2 finding in R2 above. Details in [`PLAN.md`](PLAN.md#progress).
 
-Plus the two golden paths from §4.11 (student journey, admin publish journey).
-
-- [ ] Playwright against `docker compose up`, wired as a fifth CI job.
-- [ ] Delete from `manual-browser-checks.md` every item the suite now covers, so what remains is
-      genuinely manual rather than a list nobody reads.
-
-**Done when:** both golden paths are green in CI on a fresh stack.
+**One deviation from the plan:** it is not a per-PR CI job. These tests need a populated catalog,
+scenario content lives in ScenarioCreator, and committing a fixture archive here is the rule this
+repo exists to keep. The `e2e` job in `ci.yml` is `workflow_dispatch` with a release directory
+supplied to it, and the suite is a pre-release gate. See [`e2e/README.md`](../e2e/README.md).
 
 ### R5. Archive garbage collection (~1 day)
 

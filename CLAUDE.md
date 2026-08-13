@@ -100,8 +100,11 @@ alternative and is deferred until presigned URLs or horizontal scale actually ma
 - `src/app/pages/viewer/` — the 3D host: canvas, load progress, error states, engine lifecycle,
   restart / fullscreen, WebGL2 probe and context-loss handling. The `MemoryProfiler` overlay is a
   **measurement tool, not a student control**: the button only renders with `?diag=1` on the
-  viewer URL, and `toggleDiagnostics()` refuses without the flag too, so the profiler's rAF loop
-  is never created rather than merely hidden.
+  viewer URL, and `toggleDiagnostics()` refuses without the flag too.
+  **A scenario can still open the overlay itself** — it is arbitrary engine code, and
+  `solar-system` does exactly that — so the gate on the button is not sufficient.
+  `enforceDiagnosticsPolicy()` closes it after load when the flag is absent. Whether the overlay
+  belongs in a scenario is ScenarioCreator's question; whether students see it is this repo's.
 - `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit, publish
   toggle, delete, archive upload with progress. The token lives in `sessionStorage`
   (`AdminService`), so it dies with the tab.
@@ -197,9 +200,15 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 148 tests; needs docker-compose.test.yml up
+cd backend  && npm test           # 153 tests; needs docker-compose.test.yml up
 cd frontend && npx ng test --no-watch   # 60 tests
+cd e2e      && npm test           # 22 Playwright tests; needs the stack up AND a published
+                                  # catalog — see e2e/README.md
 docker compose -f docker-compose.test.yml up -d   # throwaway Postgres on :55432
+
+# Publishing a ScenarioCreator release into the catalog
+cd backend && npm run publish:release -- --dry-run
+cd backend && npm run verify:ktx2   # checks supercompression from the archive bytes
 
 docker compose up --build -d      # full stack on ${FRONTEND_PORT}
 docker compose logs -f            # all services
@@ -246,7 +255,7 @@ Summary of the phases and why they were ordered this way:
 | 2 ✅ | Publishing workflow | Scenarios are currently added with hand-written `curl`. Needed before the editor can publish. |
 | 3 ✅ | Viewer & catalog robustness | Capability checks, context-loss recovery, cancellable downloads, fullscreen/restart, keyboard access. |
 | 4 ✅ | Session telemetry | ✅ done. One `scenario_sessions` table and three endpoints — no users, roles or courses. Duration is computed server-side; sessions survive scenario deletion. |
-| 5 ✅ | Quality gates | 208 tests (148 backend, 60 frontend) + CI. Plan: [`docs/test-plan.md`](docs/test-plan.md); browser-only checks: [`docs/manual-browser-checks.md`](docs/manual-browser-checks.md). |
+| 5 ✅ | Quality gates | 213 unit tests (153 backend, 60 frontend) + 22 Playwright (`e2e/`) + CI. Plan: [`docs/test-plan.md`](docs/test-plan.md); what still needs human eyes: [`docs/manual-browser-checks.md`](docs/manual-browser-checks.md). |
 | 6 ⛔ | Streaming client | Blocked: `StreamingAssetSource` is not in the installed engine build (checked 2026-08-02). Tracked as R8 in the roadmap. |
 
 Phases 0–1 are the ones that changed whether this could be deployed at all; 2–3 made it usable by

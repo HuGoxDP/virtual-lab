@@ -244,6 +244,63 @@ Backend suite is 153 (was 148). Two display formatters — `shortEngineBuild` an
 `describeEngineBuild` — are **not** unit-tested: neither the admin nor the viewer component has a
 spec, both being browser-dependent, which is what R4 is for. Flagging rather than hiding it.
 
+### R4 — Playwright ✅ 2026-08-13
+
+`e2e/` — 22 tests, ~4.5 min, one skipped by design. Covers both golden paths (§4.11 #97/#98) and
+all of `test-plan.md` §7, which is now a table of where each item is covered rather than a list of
+things nobody can check.
+
+The instrument that made this cheap: `helpers/engine.ts` does `await import('WebEngineTS')`
+**inside the page**. The import map in `index.html` applies to dynamic imports too, so a test
+holds the same module instance the app is using — no test hook in production code. "Did it
+render?" becomes `renderStats.drawCalls > 0` instead of a screenshot diff, which under SwiftShader
+would be slow and flaky.
+
+Headless Chromium was checked before anything was written: WebGL2 via ANGLE + SwiftShader, with
+ASTC, ETC and S3TC. Without compressed-texture support every viewer assertion would have been
+quietly testing the fallback path.
+
+**It found two real defects on the first run.**
+
+1. **A scenario could open the profiler overlay on a student.** `solar-system` calls
+   `MemoryProfiler.showOverlay()` from its own scenario code, so the platform's flagship scenario
+   was showing students a developer overlay of FPS and VRAM counters. `?diag=1` gates the
+   platform's *button*; it cannot govern what content does once running. `CLAUDE.md`'s claim that
+   without the flag "the profiler's rAF loop is never created rather than merely hidden" was
+   therefore false in practice. The viewer now closes the overlay when the flag is absent —
+   a platform policy enforced by the platform rather than assumed of content.
+2. **Nothing in the release actually loads a `.ktx2`** — see R2 below, which this settles.
+
+Also corrected: the progress ring is **not** one continuous 0→100 ramp. `progressPercent` is
+shared by the download and engine-load phases and restarts between them, so the test asserts
+monotonicity per phase. Asserting a single ramp would have been asserting a design the viewer
+does not have.
+
+**Not a per-PR CI gate, deliberately.** The tests need a catalog, scenario content lives in
+ScenarioCreator, and this repo stores none. Committing a fixture archive here is the rule the repo
+exists to keep, so the `e2e` job in `ci.yml` is `workflow_dispatch` with a release directory
+supplied to it. Running it is a pre-release step, documented in `e2e/README.md`.
+
+### R2 — closed 2026-08-13: the transcoder is fine, nothing calls it
+
+The runtime half of R2 is now answered, and the answer is not the one the plan expected.
+
+`benchscene3-solarsystem` renders with **242.7 MB** of texture VRAM — essentially the ~279 MB
+RGBA8 figure, nowhere near the ~36 MB transcoding would give. But the cause is not a broken
+transcoder path:
+
+- `/assets/basis/basis_transcoder.{js,wasm}` are served (200); the engine's default `/basis/`
+  404s, so the `ViewerComponent` override is doing its job.
+- **`basis_transcoder.*` is never requested during a run at all.** It is served over HTTP, so any
+  run that decoded even one `.ktx2` would have to fetch it.
+- The archive contains twelve `.ktx2` *and* twelve `.jpg`, and the manifest lists both as separate
+  assets with distinct guids. `scripts/Scenario.js` asks for `stars_panorama.jpg`.
+
+So the `.ktx2` files are carried, catalogued, and never referenced. The platform's KTX2 wiring is
+correct and simply unexercised; **the fix belongs in ScenarioCreator**, which should point the
+scenario at the compressed variants it emits. `verify:ktx2` continues to prove the files
+themselves are well-formed and supercompressed.
+
 ## Explicitly not planned
 
 Unchanged from `roadmap.md`: no users/roles/courses, no MinIO until presigned URLs or

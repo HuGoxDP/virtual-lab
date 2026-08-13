@@ -45,3 +45,9 @@ Thumbs.db
 coverage/
 /frontend/.angular/
 /frontend/node_modules/
+
+# Playwright — run artifacts, not sources
+/e2e/test-results/
+/e2e/playwright-report/
+/e2e/blob-report/
+/e2e/.cache/

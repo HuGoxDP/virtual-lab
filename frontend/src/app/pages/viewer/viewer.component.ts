@@ -303,8 +303,32 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     if (token !== this.loadToken) return;
     this.setState('running', 100, '');
 
+    this.enforceDiagnosticsPolicy();
+
     // Only count a launch that actually reached a running scene.
     void this.telemetry.startSession(this.scenarioId);
+  }
+
+  /**
+   * Closes the profiler overlay if the scenario opened it without `?diag=1`.
+   *
+   * A scenario is arbitrary engine code and can call `MemoryProfiler.showOverlay()`
+   * itself — `solar-system` does, so students were being shown a developer
+   * overlay of FPS and VRAM counters on the platform's flagship scenario. The
+   * gating on the button cannot prevent that: it only governs the platform's own
+   * control, not what the content does once it is running.
+   *
+   * Whether the overlay belongs in a scenario at all is ScenarioCreator's
+   * question. Whether students see it is this platform's, so it is decided here
+   * rather than assumed.
+   */
+  private enforceDiagnosticsPolicy(): void {
+    if (this.diagnosticsEnabled()) return;
+
+    if (MemoryProfiler.isOverlayVisible) {
+      MemoryProfiler.hideOverlay();
+      console.warn('[ViewerComponent] Scenario opened the profiler overlay; closed it (no ?diag=1).');
+    }
   }
 
   // ==================== VIEWER CONTROLS ====================
