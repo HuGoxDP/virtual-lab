@@ -55,6 +55,7 @@ Three containers behind one port (`docker-compose.yml`):
 ```
 browser → nginx :80 ─┬─ /            → Angular SPA (static)
                      ├─ /scenarios/* → archives volume (content-addressed ZIPs)
+                     ├─ /a/*         → assets volume (per-asset store, streaming)
                      └─ /api/*       → backend:3000 (Express)
                                           └─ database:5432 (PostgreSQL)
 ```
@@ -90,6 +91,26 @@ alternative and is deferred until presigned URLs or horizontal scale actually ma
 - Uploads land in `/srv/archives/tmp` first and are committed by rename. Every exit path must
   release the temp file — an early `return` inside the handler's `try` leaked one until it was
   wrapped in `finally`.
+
+**Streaming delivery (the second store, `/a/`).** A scenario can also be served as a *manifest* of
+individually-fetched files rather than one ZIP (`Application.loadScenarioFromManifest`). Populated
+by `npm run import:assets`; proven end to end, not yet wired into the catalog or the viewer.
+
+- Layout: `virtual_lab_assets:/srv/assets` holding `<scenario id>.json` beside
+  `objects/<2 chars>/<sha256>.<ext>`. Two-level sharding, as ScenarioCreator emits.
+- **The manifest must sit one level above `objects/`, and its URLs must stay relative.** The engine
+  *joins* an asset URL onto the manifest's directory as a string — it does not resolve it, and a
+  leading `/` is not treated as absolute. `/a/<id>.json` + `objects/aa/…` → `/a/objects/aa/…`; a
+  manifest in a subdirectory produced `/a/manifests//a/objects/…` and 404s.
+- Release manifests use **two** conventions: `objects/…` at the release root, `../objects/…` for
+  the bench scenes one directory deeper. Normalise both — and note `path.join(dir, '../x')` escapes
+  `dir`, which is how objects first landed outside the store.
+- It cannot reuse `/scenarios/`: that location forces `default_type application/zip`, and a browser
+  refuses to execute an ES module served as one.
+- Assets are addressed by **`path`** (+ optional `guid`), never by `id`. The `"id": "earth_albedo"`
+  shape in `docs/scenario-delivery-migration.md` §3.1 predates the engine and is wrong.
+- `scripts` + `entry` are what make a manifest *runnable*; one listing only assets is a valid asset
+  source but not a scenario.
 
 ## Key components
 
@@ -208,7 +229,8 @@ docker compose -f docker-compose.test.yml up -d   # throwaway Postgres on :55432
 
 # Publishing a ScenarioCreator release into the catalog
 cd backend && npm run publish:release -- --dry-run
-cd backend && npm run verify:ktx2   # checks supercompression from the archive bytes
+cd backend && npm run verify:ktx2    # checks supercompression from the archive bytes
+cd backend && npm run import:assets  # per-asset store for the streaming path (/a/)
 
 docker compose up --build -d      # full stack on ${FRONTEND_PORT}
 docker compose logs -f            # all services
@@ -256,7 +278,7 @@ Summary of the phases and why they were ordered this way:
 | 3 ✅ | Viewer & catalog robustness | Capability checks, context-loss recovery, cancellable downloads, fullscreen/restart, keyboard access. |
 | 4 ✅ | Session telemetry | ✅ done. One `scenario_sessions` table and three endpoints — no users, roles or courses. Duration is computed server-side; sessions survive scenario deletion. |
 | 5 ✅ | Quality gates | 213 unit tests (153 backend, 60 frontend) + 22 Playwright (`e2e/`) + CI. Plan: [`docs/test-plan.md`](docs/test-plan.md); what still needs human eyes: [`docs/manual-browser-checks.md`](docs/manual-browser-checks.md). |
-| 6 ⛔ | Streaming client | Blocked: `StreamingAssetSource` is not in the installed engine build (checked 2026-08-02). Tracked as R8 in the roadmap. |
+| 6 🚧 | Streaming client | Unblocked and half done. A scenario runs from a manifest and renders the same scene as its ZIP (`/a/`, `npm run import:assets`, `e2e/tests/streaming.spec.ts`). Catalog/viewer integration and the latency claim are still open — see [`docs/PLAN.md`](docs/PLAN.md#progress). |
 
 Phases 0–1 are the ones that changed whether this could be deployed at all; 2–3 made it usable by
 someone other than its author; 4–6 are growth. Everything through Phase 5 is done — new work goes

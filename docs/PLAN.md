@@ -301,6 +301,67 @@ correct and simply unexercised; **the fix belongs in ScenarioCreator**, which sh
 scenario at the compressed variants it emits. `verify:ktx2` continues to prove the files
 themselves are well-formed and supercompressed.
 
+### R8 / Phase 6 — the streaming path works; the latency claim is unproven ⏳ 2026-08-13
+
+The cheap proof the plan asked for is done: a scenario served as a manifest of individually
+fetched files **runs, and renders the same scene as its ZIP**. No `scenario_assets` table, no
+manifest endpoint, no viewer change — exactly the order the plan wanted.
+
+- `nginx` serves a per-asset store at `^~ /a/`, with `objects/` immutable and manifests `no-cache`.
+- `virtual_lab_assets` volume, rw in backend and ro in frontend, mirroring the archives volume.
+- `backend/scripts/import-release-assets.mjs` (`npm run import:assets`) imports a release:
+  13 scenarios, **108 unique objects, 52.5 MB after dedup**.
+- `e2e/tests/streaming.spec.ts` runs both paths and compares them.
+
+**Four integration details cost a debugging round each. Two contradict this repo's own notes.**
+
+1. **The engine joins asset URLs onto the manifest's directory as a string — it does not resolve
+   them.** A leading `/` is not treated as absolute: rewriting to `/a/objects/…` produced
+   `GET /a/manifests//a/objects/…` and a 404. So URLs must stay relative, and the manifest must sit
+   one level above `objects/`. `/a/<id>.json` + `objects/aa/…` → `/a/objects/aa/…`, and no caller
+   needs `baseUrl`.
+2. **A release uses two relative conventions.** Manifests at the release root say `objects/aa/…`;
+   the bench scenes under `test/` are a directory deeper and say `../objects/aa/…`. The plan
+   recorded only the second. Both must be normalised — and `path.join(staging, '../objects/…')`
+   escapes the staging directory, which is how the first import silently wrote objects outside the
+   tree and served 404s. Normalising also fixed the dedup key: **124 objects / 59.6 MB became
+   108 / 52.5 MB**, because the same file under two spellings was being stored twice.
+3. Assets really are addressed by `path` + `guid`, never `id` — `scenario-delivery-migration.md`
+   §3.1 remains wrong, and the spec now asserts it.
+4. `/scenarios/` forces `default_type application/zip`, so the store could not reuse it: a browser
+   refuses to execute an ES module served as `application/zip`.
+
+**The latency claim is not demonstrated, and should not be repeated until it is.**
+
+| | ZIP | manifest |
+|---|---|---|
+| first frame, run 1 | 1600 ms | 1764 ms |
+| first frame, run 2 | 2106 ms | 1654 ms |
+| first frame, run 3 | 1803 ms | 1757 ms |
+| textures / VRAM | 19 / **92.8 MB** | 19 / **269.8 MB** |
+
+A 30% spread between runs of the identical pair swamps the effect. Under SwiftShader, first-frame
+time is dominated by shader compilation and software rasterisation rather than by how the bytes
+arrived — **proving a latency win needs a real GPU.** The test asserts same-scene equivalence and a
+loose sanity bound, not an improvement.
+
+There is also a reason to expect little: `solar-system`'s manifest carries differentiated
+priorities (1 critical, 6 high, 11 low), so deferral is available and being declined — the
+scenario's own code loads everything before it first renders. Until scenario code tolerates a late
+asset, this is a delivery change, not a latency one. That is ScenarioCreator's half.
+
+**Open, and worth someone's attention: the manifest path holds ~2.9x the texture memory** — 269.8 MB
+against 92.8 MB for the same 19 textures, reproducible across every run. Every `solar-system` asset
+has exactly one LOD, so it is not a retained ladder. This repo can measure it but not diagnose it;
+it is an engine-side question, and it matters because it is the opposite of what a VRAM budget
+assumes.
+
+**Not done, deliberately:** `scenario_assets`, `GET /api/scenarios/:id/manifest`, and the viewer
+switch. The path is proven; the schema should be designed now that its shape is known rather than
+guessed from §3.1. One practical note for whoever does: the store is written by `docker compose cp`
+as root, so the backend user cannot currently write to `/srv/assets` — an upload endpoint will need
+that fixed.
+
 ## Explicitly not planned
 
 Unchanged from `roadmap.md`: no users/roles/courses, no MinIO until presigned URLs or

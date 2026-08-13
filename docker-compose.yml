@@ -48,6 +48,8 @@ services:
     volumes:
       # Content-addressed archives. Written here, served by nginx.
       - virtual_lab_archives:/srv/archives
+      # Per-asset store for streamed scenarios — the same idea at a finer grain.
+      - virtual_lab_assets:/srv/assets
     depends_on:
       database:
         condition: service_healthy
@@ -75,6 +77,7 @@ services:
     volumes:
       # Read-only: nginx serves archives, Express never streams their bytes.
       - virtual_lab_archives:/srv/archives:ro
+      - virtual_lab_assets:/srv/assets:ro
     depends_on:
       backend:
         condition: service_healthy
@@ -89,3 +92,5 @@ volumes:
     name: virtual_lab_pgdata
   virtual_lab_archives:
     name: virtual_lab_archives
+  virtual_lab_assets:
+    name: virtual_lab_assets

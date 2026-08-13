@@ -12,6 +12,7 @@ The stack must be up **and** have a catalog — the tests open real scenarios.
 ```bash
 docker compose up -d                     # from the repo root
 cd backend && npm run publish:release    # fill the catalog from a ScenarioCreator release
+cd backend && npm run import:assets      # optional: per-asset store, for streaming.spec.ts
 cd ../e2e && npm ci && npx playwright install chromium
 
 set -a && . ../.env && set +a            # ADMIN_TOKEN, used by the admin path
@@ -43,6 +44,11 @@ in `ci.yml` is `workflow_dispatch` with a release directory supplied to it.
   greppable, and `cleanupE2EScenarios()` removes leftovers from an interrupted run.
 - **Bench scenes are unpublished by policy.** `ktx2.spec.ts` publishes
   `benchscene3-solarsystem` for its own duration and restores it after.
+- **`streaming.spec.ts` skips** unless the per-asset store is populated, since that store is
+  filled by a separate command from the catalog.
+- **Timings here do not support performance claims.** SwiftShader put a 30% spread across runs of
+  an identical pair, which is larger than the effects worth measuring. The specs assert
+  equivalence and loose bounds; a latency number needs a real GPU.
 
 ## Reading the engine from a test
 

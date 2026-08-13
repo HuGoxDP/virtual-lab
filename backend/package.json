@@ -9,7 +9,8 @@
     "test:unit": "node --test \"test/unit/*.test.js\"",
     "test:integration": "node --test --test-concurrency=1 \"test/integration/*.test.js\"",
     "publish:release": "node --env-file-if-exists=../.env scripts/publish-release.mjs",
-    "verify:ktx2": "node scripts/verify-ktx2.mjs"
+    "verify:ktx2": "node scripts/verify-ktx2.mjs",
+    "import:assets": "node scripts/import-release-assets.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

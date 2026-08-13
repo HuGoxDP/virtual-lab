@@ -118,6 +118,22 @@ Destination shape:
 an offline `docker compose up` still plays the whole catalog.
 
 ### Stage 1 — Manifest + asset table (format change, behaviour unchanged)
+
+> **Partly done, and this section is partly wrong — corrected 2026-08-13.** The serving half
+> exists: `nginx ^~ /a/`, the `virtual_lab_assets` volume, and `npm run import:assets`, verified by
+> `e2e/tests/streaming.spec.ts`. Corrections from doing it, in
+> [`PLAN.md`](PLAN.md#progress):
+>
+> - **An asset is addressed by `path` (+ optional `guid`), not by an `asset_id`.** The sketch below
+>   predates the engine's implementation; `parseStreamingManifest` rejects that shape.
+> - **The layout is `/a/objects/<2 chars>/<sha256>.<ext>`, not `/a/<sha256>.<ext>`.** Two-level
+>   sharding, matching ScenarioCreator — one release is already ~100 objects.
+> - **The manifest must sit one level above `objects/` with relative URLs.** The engine joins an
+>   asset URL onto the manifest's directory as a string rather than resolving it, so an absolute
+>   `/a/objects/…` becomes `/a/manifests//a/objects/…`.
+> - `priority` and `lods` live on the asset in the manifest; a `lod_level` column would flatten a
+>   ladder the manifest already expresses.
+
 - New table `scenario_assets` (`scenario_id`, `asset_id`, `type`, `lod_level`, `sha256`,
   `bytes`, `priority`, `url`) + `GET /api/scenarios/:id/manifest` returning `scenario.json`.
 - Publish pipeline (ScenarioCreator, later the editor) uploads **individual assets** to

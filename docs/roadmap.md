@@ -99,16 +99,26 @@ to the template only when absent. **This repo's part** is to decide whether to d
 
 ## Later — growth, and one hard dependency
 
-### R8. Streaming client (Phase 6) — **blocked on the engine**
+### R8. Streaming client (Phase 6) — 🚧 path proven 2026-08-13, integration open
 
-Verified 2026-08-02: `StreamingAssetSource` is **not** in the installed engine build
-(`0.1.0-local.1785778939871`). Until the engine ships it (its P1.7 Stages 1–2), the platform can
-prepare manifests but the viewer keeps the single-ZIP path. Do not start this here first.
+No longer blocked: the engine ships `StreamingAssetSource` and `loadScenarioFromManifest`. A
+scenario now **runs from a manifest and renders the same scene as its ZIP** — `nginx ^~ /a/`, the
+`virtual_lab_assets` volume, `npm run import:assets`, and `e2e/tests/streaming.spec.ts`.
 
-The platform-side design is already written:
-[`scenario-delivery-migration.md`](scenario-delivery-migration.md) Stages 1–2 — a
-`scenario_assets` table, `GET /api/scenarios/:id/manifest`, and content-addressed individual
-assets under `/a/<sha256>.<ext>` so a texture shared by two scenarios is stored once.
+Still to do, and now worth designing against what the shape turned out to be rather than the
+sketch in [`scenario-delivery-migration.md`](scenario-delivery-migration.md) §3.1, which
+[`PLAN.md`](PLAN.md#progress) corrects:
+
+- [ ] `scenario_assets` table + `GET /api/scenarios/:id/manifest`.
+- [ ] Viewer calls `loadScenarioFromManifest` when a row has a manifest.
+- [ ] An upload path — the store is currently written by `docker compose cp` as root, so the
+      backend user cannot write to `/srv/assets`.
+
+**Two findings that should shape expectations.** The manifest path is *not* measurably faster to
+first frame here — a 30% run-to-run spread under SwiftShader swamps it, and `solar-system`'s own
+code loads every asset before it first renders, so the priorities in its manifest are being
+declined rather than used. And it holds **~2.9x the texture VRAM** of the ZIP path for the same
+19 textures, which is an engine-side question this repo can measure but not answer.
 
 ### R9. Performance telemetry (~1–2 days) — *optional, decide before building*
 
@@ -145,7 +155,7 @@ R3                           cheap, and stops the next "which build is this?"
 R4                           the biggest real gap in confidence
 R5, R6, R7                   independent, any order
 R10                          after R1; unlocks deleting the Drive code
-R8                           only when the engine ships StreamingAssetSource
+R8                           path proven; catalog + viewer integration next
 R9                           only if the paper needs the numbers
 ```
 
