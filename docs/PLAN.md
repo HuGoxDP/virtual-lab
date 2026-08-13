@@ -1,7 +1,12 @@
 # Virtual Lab — plan
 
 Drafted 2026-08-11, against branch `phases-0-3-hardening` (`2af1c244`).
-Progress log at the bottom: [what has been done](#progress).
+
+> **Everything above [Progress](#progress) is the plan as drafted, and is now history.** It is
+> kept because it records *why* the order was chosen, but several of its statements are no longer
+> true — the catalog no longer serves Drive imports, the KTX2 suspicion it raises was disproven,
+> and the streaming path is no longer blocked on ScenarioCreator. **[Progress](#progress) is the
+> current state**, and where the two disagree, Progress wins.
 
 This is the **sequenced execution plan** given the engine that just landed. It does not restate
 [`roadmap.md`](roadmap.md) — that document owns the item descriptions and the R-numbers, and
@@ -246,7 +251,7 @@ spec, both being browser-dependent, which is what R4 is for. Flagging rather tha
 
 ### R4 — Playwright ✅ 2026-08-13
 
-`e2e/` — 22 tests, ~4.5 min, one skipped by design. Covers both golden paths (§4.11 #97/#98) and
+`e2e/` — 22 tests at the time (35 now, after streaming and CSP), one skipped by design. Covers both golden paths (§4.11 #97/#98) and
 all of `test-plan.md` §7, which is now a table of where each item is covered rather than a list of
 things nobody can check.
 

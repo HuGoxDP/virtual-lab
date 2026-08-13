@@ -1,6 +1,6 @@
 # Browser tests (Playwright)
 
-The layer the 213 unit tests cannot reach: a rendered frame, a focus trap, a lost
+The layer the 218 unit tests cannot reach: a rendered frame, a focus trap, a lost
 WebGL context, a progress ring that actually moves. `docs/test-plan.md` §7 is the
 list of things that used to be verifiable only by hand, and this suite is what
 replaced that list.

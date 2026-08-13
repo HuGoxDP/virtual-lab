@@ -21,15 +21,17 @@ could not be verified without a browser, it is marked ⚠ and listed in §7.
 | B3 | Admin list: all rows incl. unpublished, storage + manifest metadata | `GET /api/admin/scenarios` |
 | B4 | Catalog CRUD with partial update semantics | `POST`/`PUT`/`DELETE /api/catalog` |
 | B5 | `requireAdmin`: bearer token, timing-safe compare, 401/403/503 | `server.js` |
-| B6 | Download proxy addressed by scenario id; legacy flag | `GET /api/proxy-download` |
-| B7 | Proxy hardening: per-hop allowlist, redirect cap, header timeout, size cap, content-type | `fetchAllowlisted`, `streamUpstreamToClient` |
-| B8 | Rate limiting (proxy, telemetry) | `proxyLimiter`, `telemetryLimiter` |
+| ~~B6~~ | ~~Download proxy~~ — deleted 2026-08-13; now only that it stays 404 | `archives-and-telemetry.test.js` |
+| ~~B7~~ | ~~Proxy hardening~~ — the code it guarded is gone | — |
+| B8 | Rate limiting (telemetry) | `telemetryLimiter` |
 | B9 | Content-addressed storage: hash, commit-by-rename, dedup, temp cleanup | `storage.js` |
 | B10 | Archive validation: ZIP, manifest, required fields, entry point, id-mismatch warning | `archive-validation.js` |
-| B11 | Archive upload (multipart) and import-from-source | `POST /api/scenarios/:id/archive[/import]` |
+| B11 | Archive upload (multipart). ~~import-from-source~~ deleted 2026-08-13 | `POST /api/scenarios/:id/archive` |
 | B12 | Migration runner: ordering, idempotence, advisory lock, transactional failure | `migrations.js` |
 | B13 | Telemetry: start, idempotent end, server-computed clamped duration, admin summary | `POST/GET /api/telemetry/*` |
-| B14 | Resilience: `pool.on('error')`, graceful shutdown, health check | `server.js` |
+| B14 | Resilience: `pool.on('error')`, graceful shutdown, health check + API build | `server.js` |
+| B15 | Storage report and garbage collection: refcount, dedup, age grace | `GET`/`POST /api/admin/storage*` |
+| B16 | `manifest_url`: exposed beside `scenario_url`, withdrawable without stranding the row | `GET /api/catalog/:id` |
 
 ### 1.2 Frontend (`frontend/src/app/`)
 
@@ -37,7 +39,7 @@ could not be verified without a browser, it is marked ⚠ and listed in §7.
 |---|---|---|
 | F1 | Catalog state: paging, append vs replace, `total`/`hasMore`, error reset | `services/scenario.service.ts` |
 | F2 | Category mapping: API categories + icon lookup + default, "all" prepended | `scenario.service.ts` |
-| F3 | Download URL resolution: local path direct, external → `?id=` | `resolveDownloadUrl` |
+| F3 | Download URL resolution — now trivial: every archive is same-origin, the proxy fallback is deleted | `resolveDownloadUrl` |
 | F4 | Download with progress + abort mid-stream | `downloadScenarioZip` |
 | F5 | Viewer state machine: `idle→downloading→loading-engine→running` / `error` / `unsupported` | `viewer.component.ts` |
 | F6 | `loadToken` guard: a superseded load cannot overwrite a newer one | `viewer.component.ts` |
@@ -147,25 +149,16 @@ Legend: **[U]** unit · **[I]** integration · **[C]** component · **[E]** E2E.
 22. [I] `ADMIN_TOKEN` unset → 503 on every admin route, while `GET`s stay 200.
 23. [I] All `GET /api/catalog*` remain public with no header.
 
-### 4.3 Download proxy (B6, B7, B8, F3)
+### 4.3 Download proxy — **deleted 2026-08-13, scenarios 24–35 retired**
 
-24. [I] `?url=…` (the old parameter) → 400. The open-relay regression test.
-25. [I] `?id=<unknown>` → 404; `?id=<unpublished>` → 404.
-26. [I] `?id=<drive row>` with a stubbed upstream → 200, body relayed, `Content-Length` preserved.
-27. [U] Redirect to an off-allowlist host → 403 and **no** request to that host.
-28. [U] Redirect chain longer than 5 hops → 502.
-29. [U] Redirect without a `Location` header → 502.
-30. [U] Upstream `Content-Type: text/html` on the final response → 502 (a login page must never be
-    relayed as an archive).
-31. [U] Upstream larger than `MAX_ARCHIVE_BYTES` → stream aborted, connection destroyed; the
-    partial file is **not** committed to storage.
-32. [U] Upstream that stalls before headers → aborted at the header timeout; a slow but progressing
-    **body** is *not* aborted (regression: an `AbortSignal.timeout` over the whole request would
-    kill legitimate multi-minute downloads).
-33. [I] `LEGACY_DRIVE_PROXY=false` → 410 for every request.
-34. [I] Exceeding `PROXY_RATE_LIMIT` → 429 with `RateLimit-*` headers.
-35. [U] `resolveDownloadUrl`: `/scenarios/x.zip` → unchanged; `https://drive…` → `?id=<catalog id>`,
-    with the id URL-encoded.
+The proxy and the import-from-URL endpoint are gone, along with the URL rewriting,
+confirmation-page scraping, host allowlist and redirect follower they were built on. Every catalog
+row is served from local storage, so none of it had a caller.
+
+Scenarios 24–35 covered code that no longer exists. What replaced them is one test that the
+surface **stays** gone — `the server no longer fetches archives from anywhere` asserts both routes
+404 and that upload still works. That is the regression worth keeping: the proxy was an open relay
+once, when it took the upstream URL from the client.
 
 ### 4.4 Storage and archives (B9, B10, B11)
 
@@ -284,7 +277,7 @@ Legend: **[U]** unit · **[I]** integration · **[C]** component · **[E]** E2E.
 |---|---|
 | **Catalog API** | Scenarios 1–16 pass. Unpublished rows are unreachable through any public route. Paging is stable under concurrent writes (no row appears on two pages). |
 | **Auth** | Scenarios 17–23 pass. No route mutates data without a valid token. No timing-based token oracle: comparison is length-guarded and constant-time. |
-| **Download proxy** | Scenarios 24–35 pass. **No request leaves the server to a host outside the allowlist, on any hop.** A response that is not an archive is never relayed. |
+| **Download proxy** | ~~Scenarios 24–35~~ — deleted. The criterion is now absolute: **the server makes no outbound request for an archive at all**, and both retired routes answer 404. |
 | **Storage** | Scenarios 36–46 pass. `objects/` contains only files whose name equals their content hash. `tmp/` is empty after every completed request, success or failure. |
 | **Archive validation** | Scenarios 39–41 pass. Every rejection names its cause. No invalid archive is ever committed. |
 | **Migrations** | Scenarios 47–51 pass. A failed migration leaves the schema untouched and the process refuses to serve traffic. |
@@ -342,7 +335,7 @@ grows.
 
 These were implemented but confirmed only by reading the code and by checking that the production
 build is clean. They were the argument for the Playwright layer, and `e2e/` is now that layer:
-22 tests, one skipped by design.
+35 tests, one skipped by design.
 
 | Item | Where it is now covered |
 |---|---|

@@ -81,13 +81,15 @@ alternative and is deferred until presigned URLs or horizontal scale actually ma
   nginx serves it `immutable, max-age=1y`, and re-uploading identical bytes is free (dedup).
 - The volume is mounted **rw into backend** (uploads) and **ro into frontend** (serving).
   Express must never stream archive bytes; nginx gives Range requests and a real `Content-Length`.
-- `scenarios.storage_kind` is `local` or `drive`; `archive_sha256` / `archive_bytes` carry
-  integrity and size.
-- **The catalog id and the manifest id are different things.** Catalog rows use slugs
-  (`solar-system`); the ZIP's `manifest.json` uses reverse-domain ids
-  (`template.benchscene1.primitives`). The engine never compares them —
-  `loadScenarioFromBuffer` only receives bytes — so upload treats a mismatch as a *warning* and
-  records `manifest_id`. Enforcing equality would reject every archive that exists today.
+- `storage_kind` is `local` for every row and the column is now vestigial: `drive` was the only
+  other value and that path is deleted. Kept because dropping a column is not worth a migration
+  on its own. `archive_sha256` / `archive_bytes` carry integrity and size.
+- **The catalog id and the manifest id are allowed to differ, and currently do not.** Upload
+  records `manifest_id` and treats a mismatch as a *warning*, never a rejection, because the
+  engine does not compare them — `loadScenarioFromBuffer` only receives bytes. Older archives used
+  reverse-domain ids (`template.benchscene1.primitives`) against slug catalog ids; ScenarioCreator
+  now emits the slug, and all 13 rows agree. **Do not turn the warning into an error on that
+  basis** — it would reject any older archive, and nothing at run time needs the two to match.
 - Uploads land in `/srv/archives/tmp` first and are committed by rename. Every exit path must
   release the temp file — an early `return` inside the handler's `try` leaked one until it was
   wrapped in `finally`.
@@ -242,7 +244,7 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 153 tests; needs docker-compose.test.yml up
+cd backend  && npm test           # 158 tests; needs docker-compose.test.yml up
 cd frontend && npx ng test --no-watch   # 60 tests
 cd e2e      && npm test           # 35 Playwright tests; needs the stack up AND a published
                                   # catalog — see e2e/README.md
@@ -300,7 +302,7 @@ Summary of the phases and why they were ordered this way:
 | 2 ✅ | Publishing workflow | Scenarios are currently added with hand-written `curl`. Needed before the editor can publish. |
 | 3 ✅ | Viewer & catalog robustness | Capability checks, context-loss recovery, cancellable downloads, fullscreen/restart, keyboard access. |
 | 4 ✅ | Session telemetry | ✅ done. One `scenario_sessions` table and three endpoints — no users, roles or courses. Duration is computed server-side; sessions survive scenario deletion. |
-| 5 ✅ | Quality gates | 213 unit tests (153 backend, 60 frontend) + 22 Playwright (`e2e/`) + CI. Plan: [`docs/test-plan.md`](docs/test-plan.md); what still needs human eyes: [`docs/manual-browser-checks.md`](docs/manual-browser-checks.md). |
+| 5 ✅ | Quality gates | 218 unit tests (158 backend, 60 frontend) + 35 Playwright (`e2e/`) + CI. Plan: [`docs/test-plan.md`](docs/test-plan.md); what still needs human eyes: [`docs/manual-browser-checks.md`](docs/manual-browser-checks.md). |
 | 6 🚧 | Streaming client | Unblocked and half done. A scenario runs from a manifest and renders the same scene as its ZIP (`/a/`, `npm run import:assets`, `e2e/tests/streaming.spec.ts`). Catalog/viewer integration and the latency claim are still open — see [`docs/PLAN.md`](docs/PLAN.md#progress). |
 
 Phases 0–1 are the ones that changed whether this could be deployed at all; 2–3 made it usable by

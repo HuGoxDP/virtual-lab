@@ -12,6 +12,26 @@ Each item states **why now**, **done when**, and its real dependency. Estimates 
 
 ---
 
+## Status, 2026-08-13
+
+**R1–R7 and R10 are done.** What is left is not blocked on effort here:
+
+| | What remains | Blocked on |
+|---|---|---|
+| **R8** | Catalog and viewer integration exist behind `?stream=1`. The decision to make it the default is open. | **A measurement on a real GPU.** SwiftShader's 30% run-to-run spread is larger than the effect. Nothing else. |
+| **R9** | Performance telemetry. | A decision — it samples students' machines, and the paper may not need it. |
+
+Two findings from this round that constrain future work, both recorded in
+[`PLAN.md`](PLAN.md#progress):
+
+- **Nothing in the catalog loads a `.ktx2`.** The archives ship them; the scenarios ask for the
+  `.jpg` originals. That is ScenarioCreator's to fix, and the CSP now also forbids the transcoder
+  (`'unsafe-eval'`), so adopting KTX2 means two deliberate changes rather than one.
+- **The streamed path holds ~2.9× the texture VRAM** of the ZIP path for the same textures. An
+  engine-side question this repo can measure but not answer.
+
+---
+
 ## Done — see [`PLAN.md`](PLAN.md#progress) for what each one actually turned up
 
 ### R1. Republish the rebuilt scenarios — ✅ 2026-08-13
@@ -43,11 +63,11 @@ build*, rather than smearing one build's identity across the other's endpoint.
 
 ---
 
-## Next — closes real gaps, no external dependency
+## Done (continued)
 
 ### R4. Playwright E2E for the browser-only surface — ✅ 2026-08-13
 
-`e2e/` — 22 tests covering both golden paths and all of [`test-plan.md`](test-plan.md) §7, which
+`e2e/` — 35 tests covering both golden paths and all of [`test-plan.md`](test-plan.md) §7, which
 is now a table of where each item is covered. `manual-browser-checks.md` keeps only what a machine
 genuinely cannot judge: whether a scene *looks* right, real hardware instead of SwiftShader, and a
 real phone.
@@ -92,20 +112,20 @@ basis transcoder needs full `'unsafe-eval'`, because its Emscripten glue evaluat
 costs nothing today — nothing in the catalog loads a `.ktx2` (see R2) — but it is a live constraint
 on adopting them, asserted by a test so it cannot be enabled by accident.
 
-### R7. Real manifest metadata (~0.5 day here, ~0.5 in ScenarioCreator)
+### R7. Real manifest metadata — ✅ resolved upstream, verified here 2026-08-13
 
-Every published archive reports `id: template.<folder>`, `version: 0.0.1-template`,
-`author: Template Author` — `build-package.mjs` hard-codes placeholders. The platform survives it
-(it warns on id mismatch rather than rejecting, by design) but the admin screen shows
-`0.0.1-template` where a version belongs.
+The premise is gone: **no row carries a template placeholder any more.** ScenarioCreator now
+sources metadata per scenario, so archives report real ids, versions and Ukrainian titles — which
+is what made `publish-release.mjs` able to take title, description and version straight from the
+archive instead of duplicating them here.
 
-The fix is in ScenarioCreator: source metadata from a per-scenario `scenario.json`, falling back
-to the template only when absent. **This repo's part** is to decide whether to display
-`manifest_version` at all once it means something.
+This repo's part was "decide whether to display `manifest_version` at all once it means
+something". It does, and it is shown in `/admin` beside `manifest_id` and the engine build the
+archive was compiled against. Nothing left to do.
 
 ---
 
-## Later — growth, and one hard dependency
+## Open, and one hard dependency
 
 ### R8. Streaming client (Phase 6) — 🚧 path proven 2026-08-13, integration open
 

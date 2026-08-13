@@ -125,6 +125,10 @@ an offline `docker compose up` still plays the whole catalog.
 > endpoint, the host allowlist and `LEGACY_DRIVE_PROXY`. The guarantee now holds at first boot
 > too, not just for a running deployment: the seed is gone from `db/init.sql`, and a fresh
 > install starts with an empty catalog filled by `npm run publish:release`.
+>
+> The `storage_kind` discriminator above did its job and is now vestigial — every row is `local`,
+> `drive` is unreachable, and `object` was never implemented. Kept rather than dropped, because a
+> migration to remove one unused column is not worth the churn.
 
 ### Stage 1 — Manifest + asset table (format change, behaviour unchanged)
 
