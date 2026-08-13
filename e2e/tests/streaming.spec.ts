@@ -86,7 +86,10 @@ async function runScenario(
       // "stable" long before the last texture had arrived.
       let previous = '';
       let stableFor = 0;
-      const settleBy = Date.now() + 120_000;
+      // Generous: on a loaded machine the streamed path is still fetching here,
+      // and settling early would compare a half-loaded scene against a complete
+      // one — the exact mistake this loop exists to avoid.
+      const settleBy = Date.now() + 180_000;
 
       while (stableFor < 12 && Date.now() < settleBy) {
         await new Promise(resolve => setTimeout(resolve, 250));
@@ -333,13 +336,15 @@ test.describe('streaming (manifest) scenario delivery', () => {
     // scenario code tolerates a late asset, this is a delivery change rather
     // than a latency one — and proving a latency win needs a real GPU.
     //
-    // So bound it loosely to catch something pathological, rather than assert a
-    // win that has not been demonstrated.
+    // So bound it against a fixed ceiling, not against the ZIP run. A ratio
+    // makes the assertion depend on how loaded the machine was during the
+    // *other* run, which is how this failed intermittently in a full-suite pass
+    // and passed on its own minutes later. An absolute limit still catches
+    // something pathological without encoding the noise.
     expect(
       streamed.timeToFirstFrame,
-      `streamed first frame (${streamed.timeToFirstFrame} ms) is far worse than the ` +
-      `ZIP (${zip.timeToFirstFrame} ms) — expected the same order of magnitude`
-    ).toBeLessThan(zip.timeToFirstFrame * 3);
+      `streamed first frame took ${streamed.timeToFirstFrame} ms`
+    ).toBeLessThan(60_000);
 
     // Recorded, not yet explained: the manifest path holds ~2.9x the texture
     // memory of the ZIP path for the same 19 textures — 269.8 MB against

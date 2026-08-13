@@ -261,16 +261,18 @@ describe('ScenarioService', () => {
       expect(captured.url).toBe('/scenarios/abc.zip');
     });
 
-    it('routes an external archive through the proxy by id, never by URL', async () => {
+    it('does not route anything through a proxy any more', async () => {
       const captured = stubFetch([new Uint8Array([1])], 1);
 
       await service.downloadScenarioZip(
         scenario('drive one', { scenarioUrl: 'https://drive.google.com/file/d/X/view' })
       );
 
-      // Regression for the open relay: the upstream URL must not travel.
-      expect(captured.url).toBe('/api/proxy-download?id=drive%20one');
-      expect(captured.url).not.toContain('drive.google.com');
+      // The proxy that used to relay off-origin archives is deleted along with
+      // the last row that needed it. An off-origin URL is now a misconfigured
+      // row: it fails the fetch visibly instead of being quietly relayed.
+      expect(captured.url).not.toContain('/api/proxy-download');
+      expect(captured.url).toBe('https://drive.google.com/file/d/X/view');
     });
 
     it('reports progress with a real percentage when Content-Length is known', async () => {

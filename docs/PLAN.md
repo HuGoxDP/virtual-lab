@@ -381,6 +381,34 @@ then, against the shape now known rather than §3.1's sketch.
 One practical note for whoever adds an upload endpoint: the store is written by
 `docker compose cp` as root, so the backend user cannot currently write to `/srv/assets`.
 
+### R10 — the Google Drive path is gone ✅ 2026-08-13
+
+R1's precondition held: all 13 catalog rows are `storage_kind = local`, zero rows have an
+off-origin `scenario_url`, and the Drive seed left `db/init.sql` with R1. Nothing referenced the
+Drive code, so it is deleted rather than merely disabled.
+
+Removed: `GET /api/proxy-download` and its rate limiter; `POST /api/scenarios/:id/archive/import`;
+`toGoogleDriveDirectUrl`, the confirmation-page scrapers, `buildConfirmedUrl`, the host allowlist,
+the manual redirect follower, the size limiter and the upstream streamer; `LEGACY_DRIVE_PROXY` and
+`PROXY_RATE_LIMIT`; the admin **Імпорт** button and `AdminService.importArchive`; the frontend's
+proxy fallback. `server.js` lost ~290 lines and three `node:stream` imports.
+
+Worth being plain about **why this is more than tidying**: the proxy fetched a remote URL, followed
+redirects and parsed Google's HTML with regexes. It had already been an open relay once — an
+earlier version took the upstream URL from the client — and the fix was to look the URL up by
+scenario id instead. Code shaped like that with no callers is a liability, not an asset.
+
+The tests that covered it are replaced, not dropped: `the server no longer fetches archives from
+anywhere` asserts both endpoints 404 and that uploading still works, so reintroducing the relay by
+accident fails a test.
+
+**One-way door.** An installation that still has unmigrated Drive rows must import them *before*
+taking this change — the import path is part of what was deleted. This deployment has none.
+
+`Readme.md` now documents first boot as `npm run publish:release` against an empty catalog, which
+is the honest flow: SQL cannot place a file on the archives volume, so a seeded row could never
+have pointed at local storage.
+
 ## Explicitly not planned
 
 Unchanged from `roadmap.md`: no users/roles/courses, no MinIO until presigned URLs or

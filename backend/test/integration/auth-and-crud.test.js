@@ -44,7 +44,6 @@ const GUARDED = [
   ['get', '/api/admin/scenarios'],
   ['get', '/api/telemetry/summary'],
   ['post', '/api/scenarios/solar-system/archive'],
-  ['post', '/api/scenarios/solar-system/archive/import'],
 ];
 
 test('admin routes reject anonymous callers', async t => {

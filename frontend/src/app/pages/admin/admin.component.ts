@@ -218,16 +218,6 @@ export class AdminComponent implements OnInit {
     });
   }
 
-  async importFromSource(scenario: AdminScenario): Promise<void> {
-    this.notice.set(null);
-
-    await this.withBusy(scenario.id, async () => {
-      const result = await this.admin.importArchive(scenario.id);
-      this.reportArchiveResult(scenario.id, result.sha256, result.bytes, result.deduplicated, result.warnings);
-      await this.reload();
-    });
-  }
-
   private reportArchiveResult(
     id: string,
     sha256: string,

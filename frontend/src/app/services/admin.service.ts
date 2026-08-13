@@ -115,16 +115,6 @@ export class AdminService {
     });
   }
 
-  async importArchive(id: string): Promise<ArchiveUploadResult> {
-    return firstValueFrom(
-      this.http.post<ArchiveUploadResult>(
-        `/api/scenarios/${encodeURIComponent(id)}/archive/import`,
-        {},
-        { headers: this.authHeaders() }
-      )
-    );
-  }
-
   /** Turns an API error into the message the server actually sent. */
   static describeError(err: unknown): string {
     if (err instanceof HttpErrorResponse) {

@@ -206,12 +206,6 @@
                     />
                   </label>
 
-                  @if (scenario.storageKind !== 'local' && scenario.scenarioUrl) {
-                    <button class="btn btn-small" [disabled]="busy(scenario.id)" (click)="importFromSource(scenario)">
-                      Імпорт
-                    </button>
-                  }
-
                   <button class="btn btn-small" [disabled]="busy(scenario.id)" (click)="startEdit(scenario)">
                     Змінити
                   </button>

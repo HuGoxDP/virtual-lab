@@ -8,7 +8,6 @@ const assert = require('node:assert/strict');
 const {
   escapeLikePattern,
   tokensMatch,
-  toGoogleDriveDirectUrl,
   parseLimit,
   parseOffset,
 } = require('../../server');
@@ -86,23 +85,6 @@ test('parseOffset defaults to zero', async t => {
   });
 });
 
-test('toGoogleDriveDirectUrl rewrites sharing links', async t => {
-  await t.test('converts the /file/d/ form', () => {
-    assert.equal(
-      toGoogleDriveDirectUrl('https://drive.google.com/file/d/ABC_123-x/view?usp=sharing'),
-      'https://drive.google.com/uc?export=download&id=ABC_123-x'
-    );
-  });
-
-  await t.test('converts the ?id= form', () => {
-    assert.equal(
-      toGoogleDriveDirectUrl('https://drive.google.com/open?id=ABC_123-x'),
-      'https://drive.google.com/uc?export=download&id=ABC_123-x'
-    );
-  });
-
-  await t.test('passes a non-Drive URL through unchanged', () => {
-    const url = 'https://storage.googleapis.com/bucket/object.zip';
-    assert.equal(toGoogleDriveDirectUrl(url), url);
-  });
-});
+// The Google Drive URL rewriting these tests covered is deleted: every archive
+// is served from local storage, so nothing called it. The endpoints that used
+// it are asserted gone in the integration suite.

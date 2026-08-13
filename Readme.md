@@ -4,7 +4,7 @@
 
 Веб-додаток «Віртуальна 3D Лабораторія» для університету. Студенти відкривають каталог навчальних сценаріїв (фізика, біологія, хімія тощо), обирають сценарій і запускають інтерактивну 3D-симуляцію у браузері через WebGL.
 
-Додаток складається з трьох частин: Angular-фронтенд (SPA), Express-бекенд (API + проксі для Google Drive), PostgreSQL (каталог сценаріїв). Все упаковано в Docker Compose — три контейнери, один `docker compose up`.
+Додаток складається з трьох частин: Angular-фронтенд (SPA), Express-бекенд (API), PostgreSQL (каталог сценаріїв). Архіви сценаріїв лежать у власному сховищі й віддаються nginx. Все упаковано в Docker Compose — три контейнери, один `docker compose up`.
 
 ---
 
@@ -28,9 +28,8 @@
 │  │  Angular SPA   │  │  Express :3000     │        │
 │  │  (статичні     │  │                    │        │
 │  │   файли)       │  │  GET /api/catalog  │        │
-│  └────────────────┘  │  GET /api/proxy-   │        │
-│                      │      download      │        │
-│                      │  POST /api/catalog │        │
+│  └────────────────┘  │  POST /api/catalog │        │
+│                      │  POST .../archive  │        │
 │                      └────────┬───────────┘        │
 │                               │                     │
 │                      ┌────────▼───────────┐        │
@@ -45,7 +44,7 @@
 
 1. Браузер відкриває `http://server:80` → nginx віддає Angular SPA (index.html + JS + CSS).
 2. Angular робить `GET /api/catalog` → nginx проксірує на Express → Express робить SELECT з PostgreSQL → повертає JSON.
-3. Студент натискає «Запустити» → Angular завантажує ZIP-сценарій. Якщо ZIP на Google Drive — запит іде через `GET /api/proxy-download?id=...` → Express бере посилання з БД, завантажує файл із Google Drive (обхід CORS) → стрімить клієнту.
+3. Студент натискає «Запустити» → Angular завантажує ZIP-сценарій напряму з `/scenarios/<sha256>.zip`. Це віддає nginx із тому архівів — Express байти архіву не стрімить ніколи.
 4. WebGL-движок (WebEngineTS) розпаковує ZIP і запускає 3D-сцену в браузері.
 
 ---
@@ -163,7 +162,7 @@ cp .env.example .env
 | API_PORT | Порт Express (внутрішній), `3000` |
 | ADMIN_TOKEN | Токен для запису в каталог: `openssl rand -hex 32`. Без нього POST/PUT/DELETE відповідають 503 |
 | FRONTEND_PORT | Зовнішній порт сайту |
-| PROXY_RATE_LIMIT | Необов'язково: скільки завантажень з однієї адреси за 15 хв (за замовчуванням 60) |
+| TELEMETRY_RATE_LIMIT | Необов'язково: скільки телеметричних запитів з однієї адреси за 15 хв (за замовчуванням 300) |
 | MAX_ARCHIVE_BYTES | Необов'язково: максимальний розмір архіву (за замовчуванням 2 GiB) |
 
 ### Безпека для production
@@ -247,19 +246,31 @@ http://localhost:8044/play/solar-system?diag=1
 curl -X POST http://localhost:8044/api/scenarios/solar-system/archive \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -F "archive=@scenario.zip"
-
-# Перенести архів із Google Drive у локальне сховище
-curl -X POST http://localhost:8044/api/scenarios/solar-system/archive/import \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-**Порядок міграції з Google Drive** (потрібен один раз, і після `docker compose down -v`):
+Зазвичай це робиться не вручну, а скриптом — див. «Перший запуск» нижче.
 
-1. `LEGACY_DRIVE_PROXY=true` у `.env`, `docker compose up -d backend`.
-2. Викликати `.../archive/import` для кожного сценарію.
-3. `LEGACY_DRIVE_PROXY=false`, `docker compose up -d backend`.
+**Сервер більше нікуди не ходить по архіви.** Проксі до Google Drive і імпорт за
+зовнішнім посиланням видалені: архіви лише завантажуються в сховище, і завантаження
+сценарію не робить жодного зовнішнього запиту.
 
-Після цього завантаження сценарію не робить жодного зовнішнього запиту.
+### Перший запуск: наповнення каталогу
+
+`db/init.sql` створює **порожній** каталог — це нормально, а не збій. SQL не може покласти
+файл у том архівів, тому засіяти робочий рядок звідти неможливо в принципі.
+
+Каталог наповнюється з релізу ScenarioCreator:
+
+```bash
+cd backend
+npm run publish:release -- --dry-run          # подивитись, що буде зроблено
+npm run publish:release -- --prune-superseded # завести рядки й залити архіви
+
+npm run import:assets    # необов'язково: поштучне сховище для потокової доставки (/a/)
+```
+
+Скрипт бере назву, опис і версію з `manifest.json` усередині архіву, а предмет і
+видимість — з `backend/scripts/catalog-metadata.mjs`. Повторний запуск безпечний.
 
 ### Міграції схеми
 
@@ -301,10 +312,9 @@ docker run --rm -v virtual_lab_archives:/data -v "$PWD:/backup" alpine \
 | DELETE | /api/catalog/:id | **адмін** | Видалити сценарій |
 | GET | /api/admin/scenarios | **адмін** | Усі сценарії, включно з прихованими, зі станом сховища |
 | POST | /api/scenarios/:id/archive | **адмін** | Завантажити ZIP-архів (multipart, поле `archive`) |
-| POST | /api/scenarios/:id/archive/import | **адмін** | Перенести архів із зовнішнього посилання у локальне сховище |
 | GET | /scenarios/&lt;sha256&gt;.zip | публічний | Архів сценарію (віддає nginx, не Express) |
-| GET | /api/proxy-download?id=... | публічний | Legacy-проксі до Google Drive (вимикається `LEGACY_DRIVE_PROXY=false`) |
-| GET | /api/health | публічний | Перевірка стану сервера та БД |
+| GET | /a/&lt;id&gt;.json | публічний | Маніфест сценарію для потокової доставки (nginx) |
+| GET | /api/health | публічний | Стан сервера та БД + збірка API |
 
 Адмін-ендпоінти вимагають заголовок `Authorization: Bearer $ADMIN_TOKEN`.
 Без заголовка — 401, з невірним токеном — 403, якщо `ADMIN_TOKEN` не заданий у `.env` — 503.
@@ -323,7 +333,8 @@ docker run --rm -v virtual_lab_archives:/data -v "$PWD:/backup" alpine \
       "category": "astronomy",
       "categoryLabel": "Астрономія",
       "imageUrl": "https://...",
-      "scenarioUrl": "https://drive.google.com/file/d/.../view",
+      "scenarioUrl": "/scenarios/7110a16f....zip",
+      "manifestUrl": null,
       "version": "1.0.0",
       "author": "HuGox"
     }
@@ -357,7 +368,7 @@ curl -X POST http://localhost/api/catalog \
     "category": "physics",
     "categoryLabel": "Фізика",
     "imageUrl": "https://example.com/image.jpg",
-    "scenarioUrl": "https://drive.google.com/file/d/FILE_ID/view?usp=sharing",
+    "scenarioUrl": "",
     "version": "1.0.0",
     "author": "Автор"
   }'
@@ -365,44 +376,33 @@ curl -X POST http://localhost/api/catalog \
 
 ---
 
-## Завантаження сценаріїв із Google Drive
+## Доставка сценаріїв
 
-> ⚠️ **Тимчасове рішення.** Google Drive буде замінено власним сховищем із
-> контентно-адресованими ассетами. Це потрібно для LOD-стрімінгу, прогресивного
-> завантаження та передзавантаження — монолітний ZIP їх зробити не дозволяє.
-> Поетапний план переходу: [`docs/scenario-delivery-migration.md`](docs/scenario-delivery-migration.md)
-> (рушійна частина — `WebEngineTS/design/asset-streaming-proposal.md`).
+Два способи, обидва з власного сховища. Зовнішніх джерел немає.
 
-### Як це працює
+### ZIP-архів (основний)
 
-Браузер не може завантажити файл напряму з Google Drive через CORS-обмеження. Тому:
+Архів лежить у томі під іменем свого sha256 і віддається nginx-ом за
+`/scenarios/<sha256>.zip`. Браузер завантажує його напряму — бекенд байти не стрімить.
 
-1. Фронтенд бачить, що `scenarioUrl` — зовнішнє посилання (не `/assets/...`).
-2. Замість прямого `fetch()` він викликає бекенд: `GET /api/proxy-download?id=<id сценарію>`.
-   **Посилання не передається з клієнта** — бекенд бере `scenario_url` із БД. Інакше цей
-   ендпоінт був би відкритим релеєм для будь-якого об'єкта на дозволених хостах.
-3. Бекенд перетворює sharing-посилання на пряме посилання для завантаження.
-4. Бекенд завантажує ZIP на сервері (де немає CORS) і стрімить клієнту.
-5. Для великих файлів (>100MB) бекенд автоматично обробляє сторінку підтвердження Google.
+**Google Drive більше не використовується.** Раніше архіви лежали там, а бекенд мав проксі,
+який ходив за посиланням, вручну обробляв редіректи й регулярками розбирав HTML-сторінку
+підтвердження Google. Усе це видалено разом із останнім рядком, якому воно було потрібне:
+проксі, імпорт за зовнішнім посиланням і список дозволених доменів. Архіви тепер тільки
+завантажуються в сховище.
 
-Захист проксі: редіректи обробляються вручну з перевіркою хоста **на кожному кроці** (максимум 5),
-таймаут на заголовки, ліміт розміру відповіді, перевірка `Content-Type` (тільки архіви) та
-обмеження частоти запитів.
+### Маніфест (потокова доставка, `?stream=1`)
 
-### Вимоги до файлів на Google Drive
+Той самий сценарій можна віддати не одним ZIP, а маніфестом окремих файлів: движок сам
+тягне скрипти й ассети в порядку пріоритету. Наповнюється `npm run import:assets`,
+віддається за `/a/<id>.json`.
 
-- Файл **повинен бути публічним** (доступ за посиланням).
-- В базі зберігається звичайне sharing-посилання: `https://drive.google.com/file/d/FILE_ID/view?usp=sharing`.
-- Бекенд автоматично перетворює його в пряме посилання для завантаження.
+**Це не типовий шлях, і вмикається лише прапорцем `?stream=1`.** За наявними вимірами він
+не швидший до першого кадру й тримає приблизно втричі більше текстурної пам'яті, тому
+робити його типовим означало б погіршити те, що бачить студент, заради недоведеного
+виграшу. Подробиці й потрібний замір — [`docs/PLAN.md`](docs/PLAN.md).
 
-### Дозволені домени
-
-З міркувань безпеки проксі дозволяє завантаження тільки з:
-- `drive.google.com`
-- `docs.google.com`
-- `storage.googleapis.com`
-
-Щоб додати інші домени, потрібно змінити масив `allowedDomains` в `backend/server.js`.
+Поетапний план переходу: [`docs/scenario-delivery-migration.md`](docs/scenario-delivery-migration.md).
 
 ---
 
@@ -450,8 +450,8 @@ UPDATE scenarios SET is_published = false WHERE id = 'some-id';
 -- Показати знову
 UPDATE scenarios SET is_published = true WHERE id = 'some-id';
 
--- Змінити посилання на ZIP
-UPDATE scenarios SET scenario_url = 'https://drive.google.com/...' WHERE id = 'solar-system';
+-- Перепризначити архів (зазвичай це робить завантаження через /admin)
+UPDATE scenarios SET scenario_url = '/scenarios/<sha256>.zip' WHERE id = 'solar-system';
 
 -- Додати категорію (просто додати сценарій з новою категорією)
 INSERT INTO scenarios (id, title, category, category_label, description)

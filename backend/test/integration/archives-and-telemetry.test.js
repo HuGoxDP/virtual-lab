@@ -161,57 +161,47 @@ test('archive upload rejects bad input without leaking temp files', async t => {
   });
 });
 
-test('archive import guards', async t => {
+// ══════════════════════════════════════════════════════
+// THE DRIVE PATH IS GONE
+// ══════════════════════════════════════════════════════
+
+test('the server no longer fetches archives from anywhere', async t => {
   if (skipUnlessDb(t)) return;
 
-  await t.test('409 when the archive is already local', async () => {
-    const res = await request(app)
+  // These endpoints existed to pull archives off Google Drive: a proxy that
+  // followed redirects and scraped Google's HTML confirmation page with
+  // regexes, and an admin migration path built on the same code. Every catalog
+  // row is served from local storage now, so both were deleted.
+  //
+  // Asserting they stay gone is the point of this test. The proxy took a URL
+  // from the client at one stage and was an open relay for anything on the
+  // allowlisted hosts; reintroducing it by accident should fail here.
+
+  await t.test('the download proxy is not routed at all', async () => {
+    await request(app).get('/api/proxy-download?id=solar-system').expect(404);
+    await request(app)
+      .get('/api/proxy-download?url=https://storage.googleapis.com/any/object.zip')
+      .expect(404);
+  });
+
+  await t.test('the import-from-source endpoint is not routed at all', async () => {
+    await request(app)
       .post('/api/scenarios/solar-system/archive/import')
-      .set(AUTH)
-      .expect(409);
-    assert.match(res.body.error, /локальному/);
-  });
-
-  await t.test('400 when the row has no source URL', async () => {
-    await request(app)
-      .post('/api/scenarios/tie-b/archive/import')
-      .set(AUTH)
-      .expect(400);
-  });
-
-  await t.test('404 for an unknown scenario', async () => {
-    await request(app)
-      .post('/api/scenarios/nope/archive/import')
       .set(AUTH)
       .expect(404);
   });
-});
 
-// ══════════════════════════════════════════════════════
-// PROXY ADDRESSING
-// ══════════════════════════════════════════════════════
-
-test('download proxy is addressed by id, never by URL', async t => {
-  if (skipUnlessDb(t)) return;
-
-  await t.test('the old ?url= parameter is refused', async () => {
-    // Regression for the open relay: any client could name the upstream.
+  await t.test('uploading an archive still works', async () => {
+    // The replacement path, so the deletion above is not mistaken for a loss of
+    // function: archives arrive by upload, not by the server fetching them.
     const res = await request(app)
-      .get('/api/proxy-download?url=https://storage.googleapis.com/any/object.zip')
-      .expect(400);
-    assert.match(res.body.error, /id/);
-  });
+      .post('/api/scenarios/solar-system/archive')
+      .set(AUTH)
+      .attach('archive', validArchive(), 'scenario.zip')
+      .expect(201);
 
-  await t.test('an unknown id is 404', async () => {
-    await request(app).get('/api/proxy-download?id=does-not-exist').expect(404);
-  });
-
-  await t.test('an unpublished scenario is 404', async () => {
-    await request(app).get('/api/proxy-download?id=drive-legacy').expect(404);
-  });
-
-  await t.test('no id at all is 400', async () => {
-    await request(app).get('/api/proxy-download').expect(400);
+    assert.equal(res.body.id, 'solar-system');
+    assert.match(res.body.url, /^\/scenarios\/[0-9a-f]{64}\.zip$/);
   });
 });
 

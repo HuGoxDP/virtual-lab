@@ -136,20 +136,19 @@ per-session sample — fps, GPU name, texture VRAM — turning the deployment wr
 same anonymous `client_id`), but it is a different kind of collection from "a scenario was
 opened", and the sampling itself costs frames. If the paper does not need the number, skip it.
 
-### R10. Fresh-install bootstrap without Google Drive (~0.5 day)
+### R10. Fresh-install bootstrap without Google Drive — ✅ 2026-08-13
 
-`db/init.sql` seeds Drive URLs, and `docker compose down -v` drops the archives volume with the
-database. A from-scratch install therefore still needs `LEGACY_DRIVE_PROXY=true`, an import pass,
-then the flag off — documented in `Readme.md`, but it means the "zero external requests" guarantee
-holds for a *running* deployment, not for first boot.
+The seed left `db/init.sql` with R1, and the Drive code is now deleted rather than disabled: the
+proxy, the import-from-URL endpoint, the URL rewriting, the confirmation-page scraping, the host
+allowlist and `LEGACY_DRIVE_PROXY` are all gone (~290 lines of `server.js`). The "zero external
+requests" guarantee now holds at first boot, not only for a running deployment.
 
-After R1 the local ZIPs are the source of truth, so the seed can stop carrying Drive links
-entirely: seed metadata only, and let `/admin` supply the archives.
+First boot is `npm run publish:release` against an empty catalog, documented in `Readme.md`.
+An empty catalog on a fresh install is correct: SQL cannot place a file on the archives volume,
+so a seeded row could never have pointed at local storage.
 
-- [ ] Drop `scenario_url` from the seed rows.
-- [ ] Document the first-boot upload step in `Readme.md`.
-- [ ] Then `LEGACY_DRIVE_PROXY=false` can become the default, and the Drive scraping code
-      (`server.js` `toGoogleDriveDirectUrl` / `extractDriveConfirm*`) can finally be deleted.
+**One-way door:** an installation with unmigrated Drive rows must import them *before* taking
+this change, because the import path is part of what was deleted.
 
 ---
 
@@ -160,7 +159,7 @@ R1 ─► R2                     republish, then prove KTX2 works
 R3                           cheap, and stops the next "which build is this?"
 R4                           the biggest real gap in confidence
 R5, R6, R7                   independent, any order
-R10                          after R1; unlocks deleting the Drive code
+R10                          done; Drive code deleted
 R8                           path proven; catalog + viewer integration next
 R9                           only if the paper needs the numbers
 ```

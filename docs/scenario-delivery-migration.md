@@ -23,7 +23,11 @@ the *shape* of the destination.
 
 ---
 
-## 1. Current state
+## 1. Starting state — *historical, superseded 2026-08-13*
+
+> This is what the migration started from, kept because the stages below are written against it.
+> **None of it is true any more:** archives are content-addressed in a local volume served by
+> nginx, and the Drive proxy and its scraping are deleted. See [`PLAN.md`](PLAN.md#progress).
 
 ```
 Editor/ScenarioCreator ──(manual)──> Google Drive (ZIP, "anyone with link")
@@ -117,6 +121,11 @@ Destination shape:
 *Done when:* loading a scenario issues zero external requests; every archive has a checksum;
 an offline `docker compose up` still plays the whole catalog.
 
+> **Done 2026-08-13.** All of that scraping is deleted, together with the import-from-URL
+> endpoint, the host allowlist and `LEGACY_DRIVE_PROXY`. The guarantee now holds at first boot
+> too, not just for a running deployment: the seed is gone from `db/init.sql`, and a fresh
+> install starts with an empty catalog filled by `npm run publish:release`.
+
 ### Stage 1 — Manifest + asset table (format change, behaviour unchanged)
 
 > **Partly done, and this section is partly wrong — corrected 2026-08-13.** The serving half
@@ -185,7 +194,7 @@ uploads only what changed.
 
 Stage 0 is **done** — see [Phase 1 in `implementation-plan.md`](implementation-plan.md) for what
 landed. Archives are content-addressed on a Docker volume served by nginx, the write endpoints are
-behind an admin token, and the Drive proxy is gated by `LEGACY_DRIVE_PROXY`.
+behind an admin token, and as of 2026-08-13 the Drive proxy is not gated but **deleted**.
 
 Next up is **Stage 1** (manifest + `scenario_assets`), which pairs with Phase 2's publishing
 workflow.

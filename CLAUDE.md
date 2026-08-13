@@ -64,9 +64,9 @@ Runtime flow for playing a scenario:
 
 1. Catalog page fetches `GET /api/catalog` → Express → `SELECT` from `scenarios` → JSON.
 2. Student picks a scenario; the viewer resolves it by id (`GET /api/catalog/:id`) and downloads
-   the archive from `scenario_url`. Normally that is `/scenarios/<sha256>.zip`, served straight
-   off the archives volume by nginx. Legacy Drive rows fall back to
-   `GET /api/proxy-download?id=…` (the URL never comes from the client).
+   the archive from `scenario_url` — always `/scenarios/<sha256>.zip`, served straight off the
+   archives volume by nginx. There is no fallback and no proxy: the server never fetches an
+   archive from anywhere. An off-origin `scenario_url` is a misconfigured row.
 3. The ZIP `ArrayBuffer` goes to `Application.loadScenarioFromBuffer`, which unpacks it,
    validates the manifest, and runs the scenario's entry point.
 
@@ -157,11 +157,10 @@ by `npm run import:assets`; proven end to end, not yet wired into the catalog or
   metadata.
 - `POST /api/scenarios/:id/archive` — admin, multipart field `archive`; validates the ZIP
   (`archive-validation.js`), then stores it under its sha256 and repoints the scenario at it.
-- `POST /api/scenarios/:id/archive/import` — admin; pulls the scenario's existing external archive
-  into local storage. This is the migration path off Drive.
-- `GET /api/proxy-download?id=…` — legacy Drive proxy, gated by `LEGACY_DRIVE_PROXY` (410 when
-  off). Takes a **scenario id**, never a URL; redirects are followed manually with the hostname
-  allowlist re-checked on every hop.
+- **There is no download proxy and no import-from-URL endpoint.** Both existed for Google Drive
+  and are deleted, along with the URL rewriting, confirmation-page scraping and host allowlist
+  that backed them. Archives only ever arrive by upload. A test asserts both routes stay 404 —
+  the proxy was an open relay once, and code shaped like that with no callers is a liability.
 - `POST /api/telemetry/session` and `.../:id/end` — public, anonymous session log. The end call
   is a POST so `sendBeacon` can deliver it during unload; duration is computed server-side.
 - `GET /api/telemetry/summary` — admin; launches and median duration per scenario.

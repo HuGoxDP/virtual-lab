@@ -149,22 +149,20 @@ export class ScenarioService {
   // ==================== ZIP DOWNLOAD ====================
 
   /**
-   * Подготавливает URL для скачивания.
+   * The URL to fetch a scenario's archive from.
    *
-   * Локальные архивы (/assets/...) скачиваем напрямую.
+   * Every archive is served from this origin by nginx, so this is the row's own
+   * URL. There used to be a fallback here that routed anything external through
+   * `/api/proxy-download`, because a browser cannot fetch from Google Drive
+   * (CORS) — that path and its server side are gone, along with the last
+   * scenario that needed them.
    *
-   * Браузер НЕ МОЖЕТ скачать напрямую с Google Drive (CORS), поэтому внешние
-   * архивы идут через бекенд. The proxy is addressed **by scenario id** — it
-   * looks the URL up itself, so a client cannot point it at anything else.
+   * An off-origin URL is therefore a misconfigured row, not a supported case:
+   * it is returned as-is and will fail the fetch visibly rather than being
+   * silently relayed.
    */
   private resolveDownloadUrl(scenario: ScenarioCatalogItem): string {
-    const url = scenario.scenarioUrl;
-
-    if (url.startsWith('/') || url.startsWith(window.location.origin)) {
-      return url;
-    }
-
-    return `/api/proxy-download?id=${encodeURIComponent(scenario.id)}`;
+    return scenario.scenarioUrl;
   }
 
   /**

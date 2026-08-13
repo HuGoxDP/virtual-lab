@@ -44,7 +44,6 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       PORT: ${API_PORT}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
-      LEGACY_DRIVE_PROXY: ${LEGACY_DRIVE_PROXY:-true}
     volumes:
       # Content-addressed archives. Written here, served by nginx.
       - virtual_lab_archives:/srv/archives
