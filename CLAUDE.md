@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Shared context (all repos)
+
+Loaded from a directory outside this repository, so every project's session sees the same
+ecosystem map and the same live status. Edit those files rather than duplicating them here.
+
+@../../.claude-shared/ECOSYSTEM.md
+@../../.claude-shared/PAPER-STATUS.md
+@../../.claude-shared/ENGINE-GAPS.md
+
+
 # Virtual Lab
 
 Web platform ("Віртуальна 3D Лабораторія") that hosts interactive 3D learning scenarios for a
