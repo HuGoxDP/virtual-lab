@@ -8,7 +8,6 @@ Loaded from a directory outside this repository, so every project's session sees
 ecosystem map and the same live status. Edit those files rather than duplicating them here.
 
 @../../.claude-shared/ECOSYSTEM.md
-@../../.claude-shared/PAPER-STATUS.md
 @../../.claude-shared/ENGINE-GAPS.md
 
 
@@ -23,7 +22,7 @@ is the working guide**: architecture, conventions, and the rules that are easy t
 
 ## Ecosystem position
 
-This is the **consumer** end of a four-repo ecosystem (all under `C:\Users\Work\WebstormProjects\`):
+This is the **consumer** end of a four-repo ecosystem (all under `C:\Users\HuGox\WebstormProjects\`):
 
 - **WebEngineTS** — the 3D engine, a consumable npm library. Ships here as a packed tarball
   (`frontend/WebEngineTS-0.1.0.tgz`, a `file:` dependency).
@@ -131,7 +130,7 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   coexist — the row does not commit to one delivery path.
 - **The viewer takes this path only with `?stream=1`.** It is measurably *not* faster to first
   frame on the hardware tested and holds ~2.9× the texture VRAM, so defaulting to it would be a
-  student-visible regression for an unproven win (`docs/PLAN.md`). A streamed run keeps no buffer,
+  student-visible regression for an unproven win (`../../.claude-shared/PLAN.md`). A streamed run keeps no buffer,
   so **restart is disabled** for it.
 - There is deliberately **no `scenario_assets` table and no `/api/scenarios/:id/manifest`**: the
   manifest already lists every asset and is served statically, so both would duplicate it without
@@ -298,9 +297,9 @@ Service names in compose are `database`, `backend`, `frontend` — `Readme.md` s
 
 ## Roadmap
 
-**What is next: [`docs/roadmap.md`](docs/roadmap.md)** — R1–R6 and R10 all landed 2026-08-13.
+**What is next: [`../../.claude-shared/PLAN.md`](../../.claude-shared/PLAN.md)** — R1–R6 and R10 all landed 2026-08-13.
 What remains: R7 (mostly ScenarioCreator's), R8 (streaming — blocked on a real-GPU measurement,
-not on code), R9 (optional). [`docs/PLAN.md`](docs/PLAN.md#progress) records what each one turned
+not on code), R9 (optional). [`../../.claude-shared/PLAN.md`](../../.claude-shared/PLAN.md) records what each one turned
 up, including several findings that contradict older notes in these docs.
 
 **What already landed and why: [`docs/implementation-plan.md`](docs/implementation-plan.md)** —
@@ -317,8 +316,8 @@ Summary of the phases and why they were ordered this way:
 | 3 ✅ | Viewer & catalog robustness | Capability checks, context-loss recovery, cancellable downloads, fullscreen/restart, keyboard access. |
 | 4 ✅ | Session telemetry | ✅ done. One `scenario_sessions` table and three endpoints — no users, roles or courses. Duration is computed server-side; sessions survive scenario deletion. |
 | 5 ✅ | Quality gates | 218 unit tests (158 backend, 60 frontend) + 35 Playwright (`e2e/`) + CI. Plan: [`docs/test-plan.md`](docs/test-plan.md); what still needs human eyes: [`docs/manual-browser-checks.md`](docs/manual-browser-checks.md). |
-| 6 🚧 | Streaming client | Unblocked and half done. A scenario runs from a manifest and renders the same scene as its ZIP (`/a/`, `npm run import:assets`, `e2e/tests/streaming.spec.ts`). Catalog/viewer integration and the latency claim are still open — see [`docs/PLAN.md`](docs/PLAN.md#progress). |
+| 6 🚧 | Streaming client | Unblocked and half done. A scenario runs from a manifest and renders the same scene as its ZIP (`/a/`, `npm run import:assets`, `e2e/tests/streaming.spec.ts`). Catalog/viewer integration and the latency claim are still open — see [`../../.claude-shared/PLAN.md`](../../.claude-shared/PLAN.md). |
 
 Phases 0–1 are the ones that changed whether this could be deployed at all; 2–3 made it usable by
 someone other than its author; 4–6 are growth. Everything through Phase 5 is done — new work goes
-in [`docs/roadmap.md`](docs/roadmap.md), not here.
+in [`../../.claude-shared/PLAN.md`](../../.claude-shared/PLAN.md), not here.

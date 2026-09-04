@@ -27,7 +27,7 @@ the *shape* of the destination.
 
 > This is what the migration started from, kept because the stages below are written against it.
 > **None of it is true any more:** archives are content-addressed in a local volume served by
-> nginx, and the Drive proxy and its scraping are deleted. See [`PLAN.md`](PLAN.md#progress).
+> nginx, and the Drive proxy and its scraping are deleted. See [`../../../.claude-shared/CHANGELOG.md`](../../../.claude-shared/CHANGELOG.md).
 
 ```
 Editor/ScenarioCreator ──(manual)──> Google Drive (ZIP, "anyone with link")
@@ -135,7 +135,7 @@ an offline `docker compose up` still plays the whole catalog.
 > **Partly done, and this section is partly wrong — corrected 2026-08-13.** The serving half
 > exists: `nginx ^~ /a/`, the `virtual_lab_assets` volume, and `npm run import:assets`, verified by
 > `e2e/tests/streaming.spec.ts`. Corrections from doing it, in
-> [`PLAN.md`](PLAN.md#progress):
+> [`../../../.claude-shared/CHANGELOG.md`](../../../.claude-shared/CHANGELOG.md):
 >
 > - **An asset is addressed by `path` (+ optional `guid`), not by an `asset_id`.** The sketch below
 >   predates the engine's implementation; `parseStreamingManifest` rejects that shape.
