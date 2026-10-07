@@ -1,0 +1,39 @@
+# docker-compose.editor.yml
+# The scenario editor, served beside the catalog at /editor/ on the same port.
+#
+# An override rather than a service in docker-compose.yml, on purpose: the
+# editor is built from a *different repository*, and the platform — which
+# students use — must keep building and deploying without it.
+#
+# Запуск:   docker compose -f docker-compose.yml -f docker-compose.editor.yml up --build -d
+# Без него: docker compose up --build -d   (каталог працює як раніше, /editor/ немає)
+
+services:
+
+  # ── Editor (static, behind the platform's nginx) ────
+  editor:
+    build:
+      # Sibling checkout: WebstormProjects/WebEngineTSEditor.
+      context: ../../WebEngineTSEditor
+    container_name: VirtualLabEditor
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64m
+
+  frontend:
+    volumes:
+      # Mounted, not baked into the image: nginx.conf includes server.d/*.conf,
+      # which matches nothing — and so changes nothing — when this file is absent.
+      - ./nginx/editor.conf:/etc/nginx/server.d/editor.conf:ro
+      - ./nginx/csp-editor.conf:/etc/nginx/csp-editor.conf:ro
+    depends_on:
+      editor:
+        condition: service_healthy
