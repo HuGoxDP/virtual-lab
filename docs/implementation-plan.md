@@ -9,7 +9,7 @@ done-when condition.
 > [`../../../.claude-shared/PLAN.md`](../../../.claude-shared/PLAN.md)**, which picks up the items these phases deliberately left open.
 
 Estimates are focused engineering days for one developer. Phases 0–0.5 are sequential and block a
-public deployment; 1–6 can be resequenced against whatever the thesis needs.
+public deployment; 1–6 can be resequenced as priorities change.
 
 The 2026-08-01 revision added: the open-relay hole in the proxy (Phase 0), the missing
 `.dockerignore` (Phase 0), the zoneless/progress-bar defect and its fallout (new **Phase 0.5**),
@@ -390,7 +390,7 @@ cannot start on the platform side. Tracked as **R8** in [`../../../.claude-share
 - [ ] Show progressive first paint in the viewer: scene visible after critical assets, remaining
       assets streaming behind it.
 - [ ] Measure time-to-first-frame before/after on the same scenario and record it — this is the
-      number the thesis's loading-latency claim wants.
+      number any claim about loading latency needs.
 
 ---
 
