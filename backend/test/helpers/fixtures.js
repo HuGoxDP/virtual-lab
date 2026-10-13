@@ -100,13 +100,19 @@ const VALID_MANIFEST = {
   entryPoint: 'Scenario.js',
 };
 
-/** A ZIP the validator must accept. */
-function validArchive(manifestOverrides = {}) {
+/** A ZIP the validator must accept — or, given bad `extraEntries`, one it must refuse. */
+function validArchive(manifestOverrides = {}, extraEntries = {}) {
   return buildZip({
     'manifest.json': JSON.stringify({ ...VALID_MANIFEST, ...manifestOverrides }),
     'scripts/Scenario.js': 'export default class {}',
     'assets/readme.txt': 'asset',
+    ...extraEntries,
   });
+}
+
+/** A scene file's JSON, as the engine writes one; `version` omitted when undefined. */
+function sceneJson(version) {
+  return JSON.stringify({ name: 'Main', ...(version === undefined ? {} : { version }), roots: [] });
 }
 
 const invalidArchives = {
@@ -120,6 +126,9 @@ const invalidArchives = {
     'sub/scripts/Scenario.js': 'export default class {}',
   }),
   notAZip: () => Buffer.from('this is definitely not a zip file', 'utf8'),
+  // Link mode: the deployed player would load it hollow, silently.
+  sceneVersion2: () => validArchive({}, { 'assets/scenes/main.scene.json': sceneJson(2) }),
+  unknownManifestMajor: () => validArchive({ manifestVersion: '2.0' }),
 };
 
 /** Writes a buffer to a fresh temp file and returns its path. */
@@ -138,4 +147,6 @@ function removeTemp(file) {
   }
 }
 
-module.exports = { buildZip, validArchive, invalidArchives, writeTemp, removeTemp, VALID_MANIFEST };
+module.exports = {
+  buildZip, validArchive, sceneJson, invalidArchives, writeTemp, removeTemp, VALID_MANIFEST,
+};

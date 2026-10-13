@@ -6,8 +6,13 @@
 // bytes — it never sees the catalog row — so nothing at runtime checks that an
 // archive is what the catalog claims. Rejecting a broken archive here is far
 // cheaper than a student hitting an opaque engine error.
+//
+// What the student player can read (manifest and scene/prefab format versions)
+// is stated once, in `player-formats.js`; this file only applies it.
 
 const StreamZip = require('node-stream-zip');
+
+const { isSceneFile, sceneFileProblem, manifestVersionProblem } = require('./player-formats');
 
 const MANIFEST_NAME = 'manifest.json';
 const SCRIPTS_DIR = 'scripts/';
@@ -23,7 +28,8 @@ class ArchiveInvalid extends Error {
 }
 
 /**
- * Reads and checks `manifest.json` inside `filePath`.
+ * Reads and checks `manifest.json` inside `filePath`, and every scene or prefab
+ * file beside it.
  *
  * Returns `{ manifest, entries, warnings }`. Throws `ArchiveInvalid` (status 400)
  * with a specific message when the archive cannot be a scenario.
@@ -42,7 +48,8 @@ async function validateScenarioArchive(filePath, catalogId) {
   }
 
   try {
-    const entries = Object.keys(await zip.entries());
+    const entryMap = await zip.entries();
+    const entries = Object.keys(entryMap);
 
     if (!entries.includes(MANIFEST_NAME)) {
       throw new ArchiveInvalid(`В архіві немає ${MANIFEST_NAME} у корені`);
@@ -60,10 +67,24 @@ async function validateScenarioArchive(filePath, catalogId) {
       throw new ArchiveInvalid(`У ${MANIFEST_NAME} відсутні поля: ${missing.join(', ')}`);
     }
 
+    const versionProblem = manifestVersionProblem(manifest.manifestVersion);
+    if (versionProblem) throw new ArchiveInvalid(versionProblem);
+
     // entryPoint is relative to scripts/ (see IScenarioManifest.entryPoint).
     const entryPath = SCRIPTS_DIR + String(manifest.entryPoint).replace(/^\/+/, '');
     if (!entries.includes(entryPath)) {
       throw new ArchiveInvalid(`Точка входу "${entryPath}" відсутня в архіві`);
+    }
+
+    // The deployed player checks no scene format version, so a newer scene would
+    // load hollow rather than fail. Read one at a time, so peak memory is the
+    // largest file, not their sum; like manifest.json, no file has a size limit
+    // of its own beyond the upload's.
+    for (const entry of Object.values(entryMap)) {
+      if (entry.isDirectory || !isSceneFile(entry.name)) continue;
+
+      const problem = sceneFileProblem(entry.name, await zip.entryData(entry.name));
+      if (problem) throw new ArchiveInvalid(problem);
     }
 
     const warnings = [];

@@ -123,6 +123,8 @@ test('archive upload rejects bad input without leaking temp files', async t => {
     ['invalid JSON', invalidArchives.invalidJson(), /JSON/],
     ['missing fields', invalidArchives.missingFields(), /manifestVersion/],
     ['missing entry point', invalidArchives.missingEntryPoint(), /Scenario\.js/],
+    ['scene in a format the player cannot read', invalidArchives.sceneVersion2(), /main\.scene\.json.*версії 2/],
+    ['manifestVersion major the player does not know', invalidArchives.unknownManifestMajor(), /manifestVersion "2\.0"/],
   ];
 
   for (const [label, buffer, pattern] of cases) {
