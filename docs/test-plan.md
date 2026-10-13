@@ -103,6 +103,9 @@ could not be verified without a browser, it is marked ⚠ and listed in §7.
 - **`fixtures/no-manifest.zip`**, **`invalid-json.zip`**, **`missing-fields.zip`**,
   **`missing-entrypoint.zip`**, **`not-a-zip.bin`**, **`zip-with-nested-manifest.zip`**
   (`sub/manifest.json` only — must be rejected, the manifest has to be at the root).
+- **`sceneVersion2`** (a `*.scene.json` with `version: 2`) and **`unknownManifestMajor`**
+  (`manifestVersion: "2.0"`) — both refused with 400 and nothing stored; built by
+  `test/helpers/fixtures.js`, like the rest.
 - **Seed**: 3 published + 2 unpublished scenarios across 2 categories, so paging, filtering and
   the published/unpublished split are all observable.
 

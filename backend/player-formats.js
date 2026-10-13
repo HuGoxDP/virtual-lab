@@ -51,9 +51,17 @@ const STREAMING_SCHEMA_VERSIONS = Object.freeze([1]);
 
 const SCENE_FILE = /\.(scene|prefab)\.json$/i;
 
-/** Whether an archive entry or asset path is a scene or prefab file. Directories never are. */
+/** macOS Archive Utility's resource-fork copies: `__MACOSX/…` and `._<name>`. Binary, never read. */
+const APPLE_DOUBLE = /(^|\/)(__MACOSX\/|\._[^/]*$)/;
+
+/**
+ * Whether an archive entry or asset path is a scene or prefab file. The anchored
+ * extension already excludes a directory entry (it ends in "/"), and AppleDouble
+ * copies are skipped: the engine never reads them, and refusing a valid archive
+ * zipped on a Mac over one would name a file its author never made.
+ */
 function isSceneFile(name) {
-  return typeof name === 'string' && !name.endsWith('/') && SCENE_FILE.test(name);
+  return typeof name === 'string' && SCENE_FILE.test(name) && !APPLE_DOUBLE.test(name);
 }
 
 /** A value as a message shows it: strings quoted, so "2" and 2 read differently. */
@@ -95,12 +103,12 @@ function sceneFileProblem(name, data) {
 
   if (!Number.isInteger(version)) {
     return `У файлі ${kind} "${name}" поле version має бути цілим числом, а не ${shown(version)}; ` +
-      `програвач платформи читає ${readsOnly(SCENE_FORMAT_VERSIONS)}`;
+      `вʼюер платформи читає ${readsOnly(SCENE_FORMAT_VERSIONS)}`;
   }
 
   if (!SCENE_FORMAT_VERSIONS.includes(version)) {
     return `Файл ${kind} "${name}" має формат версії ${version}, ` +
-      `а програвач платформи читає ${readsOnly(SCENE_FORMAT_VERSIONS)}`;
+      `а вʼюер платформи читає ${readsOnly(SCENE_FORMAT_VERSIONS)}`;
   }
 
   return null;
@@ -124,7 +132,7 @@ function manifestVersionProblem(value) {
   const major = Number(match[1]);
   if (!MANIFEST_MAJOR_VERSIONS.includes(major)) {
     return `manifest.json має manifestVersion ${shown(value)}, ` +
-      `а програвач платформи читає ${readsOnly(MANIFEST_MAJOR_VERSIONS, '.x')}`;
+      `а вʼюер платформи читає ${readsOnly(MANIFEST_MAJOR_VERSIONS, '.x')}`;
   }
 
   return null;
@@ -143,13 +151,16 @@ async function streamingManifestProblem(manifest, readObject) {
   const where = `маніфесті "${manifest.id}"`;
   const schema = manifest.schema;
 
+  if (schema === undefined) {
+    return `У ${where} поле schema відсутнє; вʼюер платформи читає ${readsOnly(STREAMING_SCHEMA_VERSIONS)}`;
+  }
   if (!Number.isInteger(schema)) {
-    return `У ${where} поле schema має бути цілим числом, а не ${shown(schema ?? null)}; ` +
-      `програвач платформи читає ${readsOnly(STREAMING_SCHEMA_VERSIONS)}`;
+    return `У ${where} поле schema має бути цілим числом, а не ${shown(schema)}; ` +
+      `вʼюер платформи читає ${readsOnly(STREAMING_SCHEMA_VERSIONS)}`;
   }
   if (!STREAMING_SCHEMA_VERSIONS.includes(schema)) {
     return `У ${where} поле schema має значення ${schema}, ` +
-      `а програвач платформи читає ${readsOnly(STREAMING_SCHEMA_VERSIONS)}`;
+      `а вʼюер платформи читає ${readsOnly(STREAMING_SCHEMA_VERSIONS)}`;
   }
 
   for (const asset of Array.isArray(manifest.assets) ? manifest.assets : []) {

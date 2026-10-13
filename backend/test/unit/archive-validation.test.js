@@ -147,7 +147,17 @@ test('scene and prefab files the player reads are accepted', async t => {
   });
 
   await t.test('a directory whose name looks like a scene is not read', async () => {
+    // The anchored ".json" extension is what excludes it: a directory entry ends in "/".
     await validate(withFiles({ 'assets/odd.scene.json/': '' }));
+  });
+
+  await t.test('macOS AppleDouble copies are not read', async () => {
+    const resourceFork = Buffer.from([0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00]);
+    await validate(withFiles({
+      'assets/scenes/main.scene.json': sceneJson(1),
+      '__MACOSX/assets/scenes/._main.scene.json': resourceFork,
+      'assets/scenes/._main.scene.json': resourceFork,
+    }));
   });
 
   await t.test('other JSON is not a scene, whatever its version', async () => {
@@ -247,6 +257,8 @@ test('manifestVersion: a major the player reads', async t => {
     ['0.9', /manifestVersion "0\.9"/],
     [2, /manifestVersion 2,/],
     ['v1', /на зразок "1\.0", а не "v1"/],
+    ['1.0abc', /на зразок "1\.0", а не "1\.0abc"/],
+    ['1.0.0-rc1', /на зразок "1\.0", а не "1\.0\.0-rc1"/],
     [true, /а не true/],
   ]) {
     await t.test(`refuses ${JSON.stringify(value)}`, async () => {
@@ -260,4 +272,16 @@ test('manifestVersion: a major the player reads', async t => {
     assert.match((await rejection(invalidArchives.unknownManifestMajor())).message, /manifestVersion "2\.0"/);
     assert.match((await rejection(invalidArchives.sceneVersion2())).message, /версії 2/);
   });
+});
+
+test('a scene entry that cannot be decompressed is refused as invalid, by name', async () => {
+  const name = 'assets/scenes/main.scene.json';
+  const zip = withFiles({ [name]: sceneJson(1) });
+  // The first occurrence of the name is the local header; the deflated data follows it.
+  const at = zip.indexOf(Buffer.from(name)) + Buffer.byteLength(name);
+  for (let i = 0; i < 4; i++) zip[at + i] ^= 0xff;
+
+  const err = await rejection(zip);
+  assert.equal(err.status, 400);
+  assert.match(err.message, /"assets\/scenes\/main\.scene\.json" не читається з архіву/);
 });

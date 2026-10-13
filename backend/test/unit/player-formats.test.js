@@ -56,6 +56,9 @@ test('isSceneFile', async t => {
     'assets/main.scene.json.bak',
     'assets/main.scenes.json',
     'manifest.json',
+    '__MACOSX/assets/scenes/._main.scene.json',
+    'assets/scenes/._main.scene.json',
+    '._main.scene.json',
     undefined,
   ]) {
     await t.test(`${name} is not`, () => assert.equal(isSceneFile(name), false));
@@ -136,7 +139,8 @@ test('streamingManifestProblem', async t => {
   for (const [schema, pattern] of [
     [2, /поле schema має значення 2/],
     ['1', /цілим числом, а не "1"/],
-    [undefined, /цілим числом, а не null/],
+    [undefined, /поле schema відсутнє/],
+    [null, /цілим числом, а не null/],
   ]) {
     await t.test(`refuses schema ${JSON.stringify(schema)}`, async () => {
       const { read, asked } = objects({ 'objects/bb/scene.json': '{"version":1}' });

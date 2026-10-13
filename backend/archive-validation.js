@@ -83,7 +83,13 @@ async function validateScenarioArchive(filePath, catalogId) {
     for (const entry of Object.values(entryMap)) {
       if (entry.isDirectory || !isSceneFile(entry.name)) continue;
 
-      const problem = sceneFileProblem(entry.name, await zip.entryData(entry.name));
+      let data;
+      try {
+        data = await zip.entryData(entry.name);
+      } catch {
+        throw new ArchiveInvalid(`Файл "${entry.name}" не читається з архіву (пошкоджений або стиснений непідтримуваним методом)`);
+      }
+      const problem = sceneFileProblem(entry.name, data);
       if (problem) throw new ArchiveInvalid(problem);
     }
 
