@@ -37,6 +37,11 @@
 // served no-cache — so rewriting it is not a lie about its identity. It is what a
 // `GET /api/scenarios/:id/manifest` endpoint would have to do anyway.
 //
+// A manifest the student player cannot read (its `schema`, or a scene or prefab
+// file in a format version the player does not know) is refused before anything
+// of it is staged — the same rules an archive upload applies, from
+// `player-formats.js`.
+//
 // Usage:
 //   node scripts/import-release-assets.mjs [--release <dir>] [--only <id,id>]
 //                                          [--out <dir>] [--stage-only]
@@ -47,6 +52,8 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { promisify } from 'node:util';
+
+import { streamingManifestProblem } from '../player-formats.js';
 
 const run = promisify(execFile);
 const HERE = import.meta.dirname;
@@ -188,6 +195,19 @@ async function main() {
     // rather than failing later — so flag it here instead of importing quietly.
     if (!manifest.entry || !manifest.scripts?.length) {
       problems.push(`${manifest.id}: no entry/scripts — an asset source, not a runnable scenario`);
+      continue;
+    }
+
+    const formatProblem = await streamingManifestProblem(manifest, async url => {
+      try {
+        return await readFile(path.resolve(path.dirname(file), url));
+      } catch (err) {
+        if (err.code === 'ENOENT') return null; // reported as a missing object below
+        throw err;
+      }
+    });
+    if (formatProblem) {
+      problems.push(`${manifest.id}: refused, the player cannot read it — ${formatProblem}`);
       continue;
     }
 

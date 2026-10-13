@@ -37,6 +37,7 @@ import { CATALOG_METADATA, DEFAULTS } from './catalog-metadata.mjs';
 
 const require = createRequire(import.meta.url);
 const StreamZip = require('node-stream-zip');
+const { validateScenarioArchive } = require('../archive-validation');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -285,6 +286,16 @@ async function main() {
     seen.add(id);
     const size = (await stat(file)).size;
 
+    // The server validates every upload too, but only after the row has been
+    // created or updated. Checking first leaves the catalog untouched when the
+    // archive would be refused, and makes a dry run report it.
+    try {
+      await validateScenarioArchive(file, id);
+    } catch (err) {
+      problems.push(`${name} (${id}): the platform would refuse it — ${err.message}`);
+      continue;
+    }
+
     try {
       const result = await publishOne(api, {
         file, manifest, meta, existing: byId.get(id), dryRun: args.dryRun,
@@ -303,8 +314,9 @@ async function main() {
   }
 
   // ── superseded rows ───────────────────────────────
+  // Only a scenario that was actually published supersedes anything.
   const superseded = [];
-  for (const id of seen) {
+  for (const { id } of results) {
     for (const old of CATALOG_METADATA[id].supersedes ?? []) {
       if (byId.has(old)) superseded.push({ old, replacedBy: id });
     }
