@@ -103,6 +103,11 @@ alternative and is deferred until presigned URLs or horizontal scale actually ma
   reverse-domain ids (`template.benchscene1.primitives`) against slug catalog ids; ScenarioCreator
   now emits the slug, and all 13 rows agree. **Do not turn the warning into an error on that
   basis** — it would reject any older archive, and nothing at run time needs the two to match.
+- **Nothing the student player would misread is stored.** Upload, `publish:release` and
+  `import:assets` refuse a `*.scene.json` / `*.prefab.json` whose `version` the player does not read
+  (only 1; the player checks none, so a version-2 "link mode" scene would load hollow), and a
+  `manifestVersion` major or streaming `schema` it does not know. What it reads, and when to raise
+  it, is stated once in `backend/player-formats.js`.
 - Uploads land in `/srv/archives/tmp` first and are committed by rename. Every exit path must
   release the temp file — an early `return` inside the handler's `try` leaked one until it was
   wrapped in `finally`.
@@ -163,7 +168,7 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   that lives inside the ZIP. The engine never sees this model.
 - `src/environments/environment.ts` — `catalogUrl`, currently `/api/catalog`.
 
-**Backend** (`backend/`, Express 4 — `server.js` plus two small modules)
+**Backend** (`backend/`, Express 4 — `server.js` plus a few small modules)
 - `GET /api/catalog`, `GET /api/catalog/:id` — published scenarios only (`is_published = true`).
   The catalog response also carries the distinct `categories` in use.
 - `POST /api/catalog`, `PUT /api/catalog/:id`, `DELETE /api/catalog/:id` — catalog mutation,
@@ -176,7 +181,8 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   means one object may back several rows. Objects younger than `GC_MIN_AGE_MS` are spared, because
   `commitArchive` stores an object before the row that points at it.
 - `POST /api/scenarios/:id/archive` — admin, multipart field `archive`; validates the ZIP
-  (`archive-validation.js`), then stores it under its sha256 and repoints the scenario at it.
+  (`archive-validation.js`, with the formats from `player-formats.js`), then stores it under its
+  sha256 and repoints the scenario at it.
 - **There is no download proxy and no import-from-URL endpoint.** Both existed for Google Drive
   and are deleted, along with the URL rewriting, confirmation-page scraping and host allowlist
   that backed them. Archives only ever arrive by upload. A test asserts both routes stay 404 —
@@ -257,7 +263,7 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 158 tests; needs docker-compose.test.yml up
+cd backend  && npm test           # 232 tests; needs docker-compose.test.yml up
 cd frontend && npx ng test --no-watch   # 60 tests
 cd e2e      && npm test           # 35 Playwright tests; needs the stack up AND a published
                                   # catalog — see e2e/README.md

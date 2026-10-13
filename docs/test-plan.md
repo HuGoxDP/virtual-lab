@@ -25,7 +25,7 @@ could not be verified without a browser, it is marked ⚠ and listed in §7.
 | ~~B7~~ | ~~Proxy hardening~~ — the code it guarded is gone | — |
 | B8 | Rate limiting (telemetry) | `telemetryLimiter` |
 | B9 | Content-addressed storage: hash, commit-by-rename, dedup, temp cleanup | `storage.js` |
-| B10 | Archive validation: ZIP, manifest, required fields, entry point, id-mismatch warning | `archive-validation.js` |
+| B10 | Archive validation: ZIP, manifest, required fields, entry point, id-mismatch warning; scene/prefab format and `manifestVersion` major the player reads, also at `import:assets` and `publish:release` | `archive-validation.js`, `player-formats.js` |
 | B11 | Archive upload (multipart). ~~import-from-source~~ deleted 2026-08-13 | `POST /api/scenarios/:id/archive` |
 | B12 | Migration runner: ordering, idempotence, advisory lock, transactional failure | `migrations.js` |
 | B13 | Telemetry: start, idempotent end, server-computed clamped duration, admin summary | `POST/GET /api/telemetry/*` |
