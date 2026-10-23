@@ -1,6 +1,7 @@
 // backend/test/integration/catalog.test.js
 //
-// Covers test-plan scenarios 1–16 (catalog read) and 87 (publish round-trip).
+// Covers test-plan scenarios 1–16 (catalog read) and 87 (publish round-trip);
+// the Nocturne additions (icons, counts, sort, related) are in catalog-api.test.js.
 // Runs against a real Postgres: the queries use ILIKE ... ESCAPE and a
 // COUNT over the same predicate, neither of which a mock would exercise.
 
@@ -51,9 +52,12 @@ test('GET /api/catalog returns only published scenarios', async t => {
   });
 
   await t.test('carries the distinct published categories', () => {
-    const keys = res.body.categories.map(c => c.category).sort();
-    // physics exists only on unpublished rows, so it must not appear.
-    assert.deepEqual(keys, ['astronomy', 'biology']);
+    // physics exists only on unpublished rows, so it must not appear. Order is
+    // the category's sort_order, and each entry carries its icon and published count.
+    assert.deepEqual(res.body.categories, [
+      { category: 'astronomy', categoryLabel: 'Астрономія', icon: 'planet', count: 1 },
+      { category: 'biology', categoryLabel: 'Біологія', icon: 'dna', count: 3 },
+    ]);
   });
 });
 

@@ -163,7 +163,7 @@ cp .env.example .env
 | ADMIN_TOKEN | Токен для запису в каталог: `openssl rand -hex 32`. Без нього POST/PUT/DELETE відповідають 503 |
 | FRONTEND_PORT | Зовнішній порт сайту |
 | TELEMETRY_RATE_LIMIT | Необов'язково: скільки телеметричних запитів з однієї адреси за 15 хв (за замовчуванням 300) |
-| MAX_ARCHIVE_BYTES | Необов'язково: максимальний розмір архіву (за замовчуванням 2 GiB) |
+| MAX_ARCHIVE_BYTES | Необов'язково: максимальний розмір архіву в байтах (за замовчуванням 209715200 = 200 MiB). Більший архів — відповідь 413. nginx приймає до 512 MiB (`client_max_body_size`), тож піднімаючи ліміт вище, змініть і nginx |
 
 ### Content Security Policy
 
@@ -348,10 +348,11 @@ docker run --rm -v virtual_lab_archives:/data -v "$PWD:/backup" alpine \
 
 | Метод | URL | Доступ | Опис |
 |-------|-----|--------|------|
-| GET | /api/catalog | публічний | Опубліковані сценарії. Параметри: `category`, `q`, `limit` (макс. 100), `offset` |
-| GET | /api/catalog/:id | публічний | Один сценарій за ID |
+| GET | /api/catalog | публічний | Опубліковані сценарії. Параметри: `category`, `q`, `sort` (`new` за замовчуванням або `title`), `limit` (макс. 100), `offset` |
+| GET | /api/catalog/:id | публічний | Один сценарій за ID + `related` (до 2 схожих) |
+| GET | /api/config | публічний | `{ "maxArchiveBytes": ... }` — ліміт розміру архіву |
 | POST | /api/catalog | **адмін** | Додати новий сценарій |
-| PUT | /api/catalog/:id | **адмін** | Оновити сценарій (у т.ч. `isPublished`) |
+| PUT | /api/catalog/:id | **адмін** | Оновити сценарій (у т.ч. `isPublished`, `features`) |
 | DELETE | /api/catalog/:id | **адмін** | Видалити сценарій |
 | GET | /api/admin/scenarios | **адмін** | Усі сценарії, включно з прихованими, зі станом сховища |
 | POST | /api/scenarios/:id/archive | **адмін** | Завантажити ZIP-архів (multipart, поле `archive`) |
@@ -381,12 +382,19 @@ docker run --rm -v virtual_lab_archives:/data -v "$PWD:/backup" alpine \
       "scenarioUrl": "/scenarios/7110a16f....zip",
       "manifestUrl": null,
       "version": "1.0.0",
-      "author": "HuGox"
+      "author": "HuGox",
+      "uploadDate": "2026-01-05T00:00:00.000Z",
+      "archiveBytes": 52428800,
+      "updatedAt": "2026-01-05T00:00:00.000Z",
+      "features": [
+        { "icon": "atom", "title": "Заголовок", "subtitle": "Підзаголовок" }
+      ]
     }
   ],
   "categories": [
-    { "category": "astronomy", "categoryLabel": "Астрономія" }
+    { "category": "astronomy", "categoryLabel": "Астрономія", "icon": "planet", "count": 1 }
   ],
+  "summary": { "scenarios": 4, "categories": 2 },
   "total": 4,
   "limit": 24,
   "offset": 0
@@ -395,9 +403,16 @@ docker run --rm -v virtual_lab_archives:/data -v "$PWD:/backup" alpine \
 
 `total` — скільки сценаріїв відповідає фільтру загалом (для пагінації).
 
-`categories` — це різні категорії опублікованих сценаріїв. Фільтри в каталозі будуються з цього
-списку, тому нова категорія з'являється у фільтрах одразу після додавання сценарію, без
-перезбірки фронтенду.
+`categories` — видимі категорії, у яких є хоча б один опублікований сценарій, у порядку
+`sort_order`; `count` — скільки там опублікованих сценаріїв. Нова категорія створюється сама, коли
+POST/PUT вказує невідомий `category` (назва береться з `categoryLabel`, інакше це сам slug; у
+відомої категорії назва не змінюється). `categories` і `summary` не залежать від `category`/`q`.
+
+`features` ("Що всередині") — до 6 елементів `{icon, title, subtitle?}`: `icon` — `a-z0-9-`,
+1–40 символів; `title` — 1–60; `subtitle` — до 90. Інакше 400.
+
+`sort`: `new` — спочатку нові; `title` — за назвою в українському алфавітному порядку. Будь-яке
+інше значення дає `new`.
 
 ### Додавання сценарію (POST /api/catalog)
 

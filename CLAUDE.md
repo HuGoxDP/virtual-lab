@@ -169,8 +169,17 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
 - `src/environments/environment.ts` — `catalogUrl`, currently `/api/catalog`.
 
 **Backend** (`backend/`, Express 4 — `server.js` plus a few small modules)
-- `GET /api/catalog`, `GET /api/catalog/:id` — published scenarios only (`is_published = true`).
-  The catalog response also carries the distinct `categories` in use.
+- `GET /api/catalog?category&q&sort=new|title&limit&offset`, `GET /api/catalog/:id` — published
+  scenarios only (`is_published = true`). Each item carries `archiveBytes`, `updatedAt` and
+  `features` ("Що всередині"); the list also returns `categories` (visible, with `icon` and published
+  `count`, by `categories.sort_order`) and an unfiltered `summary`; the by-id route adds `related`
+  (<=2, same category first). `categories.label` is canonical over `scenarios.category_label`; a POST/PUT
+  with an unknown slug creates the category (`ensureCategory`), a known slug keeps its label. Admin
+  `features` are validated by `catalog-input.js` (<=6 items, icon `^[a-z0-9-]{1,40}$`, title 1-60,
+  subtitle <=90).
+- `GET /api/config` — public, `{maxArchiveBytes}`. The cap is `MAX_ARCHIVE_BYTES` (default 200 MiB,
+  read once at load); an oversize upload is a 413. multer's limit is set to cap + 1 because busboy fires
+  on *reaching* `fileSize`, not exceeding it. nginx's `client_max_body_size` (512m) must stay above it.
 - `POST /api/catalog`, `PUT /api/catalog/:id`, `DELETE /api/catalog/:id` — catalog mutation,
   **admin only** (`Authorization: Bearer $ADMIN_TOKEN`).
 - `GET /api/admin/scenarios` — admin; every row including unpublished, with storage and manifest
@@ -263,7 +272,7 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 232 tests; needs docker-compose.test.yml up
+cd backend  && npm test           # 348 tests; needs docker-compose.test.yml up
 cd frontend && npx ng test --no-watch   # 60 tests
 cd e2e      && npm test           # 35 Playwright tests; needs the stack up AND a published
                                   # catalog — see e2e/README.md

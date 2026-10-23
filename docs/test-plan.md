@@ -119,10 +119,13 @@ Legend: **[U]** unit · **[I]** integration · **[C]** component · **[E]** E2E.
 
 **Happy path**
 1. [I] `GET /api/catalog` → 200, only published rows, `total` equals their count.
-2. [I] Response carries `categories` = distinct published categories, sorted by label.
+2. [I] Response carries `categories` = visible categories with at least one published scenario,
+   each `{category, categoryLabel, icon, count}`, in `sort_order` (changed by Nocturne release 1;
+   see §4.12 #100-101).
 3. [I] `?limit=2&offset=0` and `?limit=2&offset=2` return disjoint sets covering the page,
    stably across repeated calls (regression for §6.2).
-4. [I] `?category=astronomy` narrows `scenarios` and `total` but **not** `categories`.
+4. [I] `?category=astronomy` narrows `scenarios` and `total` but **not** `categories` or `summary`
+   (the unfiltered counts; see §4.12 #101).
 5. [I] `?q=соняч` matches case-insensitively on title and on description.
 6. [U] `ScenarioService.loadCatalog` replaces the held list; `loadMore` appends.
 
@@ -175,7 +178,8 @@ once, when it took the upstream URL from the client.
     original spec would have rejected every real archive).
 41. [U] ZIP signature check accepts `PK\x03\x04`, `PK\x05\x06`, `PK\x07\x08`; rejects a text file
     renamed to `.zip`.
-42. [I] Upload exceeding multer's `fileSize` → 413/400, no temp file left behind.
+42. [I] Upload exceeding `MAX_ARCHIVE_BYTES` → 413 (Ukrainian message), no temp file left behind;
+    exactly the limit is accepted (see §4.12 #107).
 43. [I] `…/archive/import` on a row already `local` → 409.
 44. [I] `…/archive/import` on a row with empty `scenario_url` → 400.
 45. [U] `cleanStaleTemp` removes files older than the cutoff and leaves fresh ones (an in-flight
@@ -264,6 +268,40 @@ once, when it took the upstream URL from the client.
     `node_modules` tree.
 95. [Static] `git ls-files` contains no `.env`; `.env.example` holds only placeholders.
 96. [Static] `nginx -t` passes.
+
+### 4.12 Nocturne release 1: catalog data and API (phase 1)
+
+Specs: `catalog-api.test.js`, `archive-limit.test.js`, unit `catalog-input.test.js`.
+
+99. [I] Migration 006 applied twice: one category per distinct scenarios.category, prototype
+    icons (folder otherwise), sort_order = Ukrainian label order x 10, features defaults [].
+100. [I] Catalog item carries archiveBytes (number, null without an archive), updatedAt,
+    features; categories.label beats the scenario's own label; categories are
+    {category, categoryLabel, icon, count} in sort_order; summary present.
+101. [I] summary and category count do not change with category/q; a category with
+    is_visible = false or only unpublished rows is absent from categories and
+    summary.categories, while its published scenarios still list.
+102. [I] sort=title orders Ґанок, Єнот, Іграшка, Їжак, Яблуко (and Latin titles) correctly;
+    sort=new is created_at DESC, id DESC; no sort equals new.
+103. [I] limit 0/1/100/101 and offset past the end under both sorts; pages disjoint and
+    complete; sort=, sort=DROP, sort[]=a&sort[]=b and similar fall back to new; q with
+    % / _ stays literal (a title containing 100% is found by 100%; this caught a
+    pre-existing ESCAPE clause that SQL read as an empty string).
+104. [I] related: same category first, newest first, at most 2, never itself, never unpublished,
+    topped up from other categories; empty for a one-scenario catalog.
+105. [I] GET /api/catalog/:id for an unpublished, unknown or %2F id -> 404.
+106. [I] GET /api/config -> 209715200 by default (fresh process), MAX_ARCHIVE_BYTES honoured,
+    junk value falls back to the default.
+107. [I] Archive of exactly the limit accepted; limit + 1 byte -> 413 and an empty temp dir; the row is
+    untouched; no token -> 401 before any size check; other multer failures -> 400.
+108. [I] Admin features accepted: 6 items, title 60, subtitle 90, subtitle absent, icon 40 chars;
+    PUT replaces, a PUT without features keeps them; admin list returns them.
+109. [I] Admin features rejected with 400: 7 items, icon Atom / ../x / 41 chars, empty or
+    61-char title, 91-char subtitle, non-array, item null; nothing is written.
+110. [I] An unknown slug creates its category (label from categoryLabel, else the slug) at max + 10;
+    a known slug keeps its label; a 404 or 409 leaves no category behind; non-array stored
+    features reads []; a slug without a category row still lists (no chip).
+111. [U] validateFeatures, parseSort (incl. __proto__/constructor), parseMaxArchiveBytes.
 
 ### 4.11 Golden paths (E2E)
 

@@ -1,6 +1,8 @@
 # Plan: Release 1 — the public site on Nocturne
 **Created:** 2026-10-23
-**Status:** ready
+**Status:** in-progress
+**Started:** 2026-10-23 12:00
+**Current Phase:** 1
 **Complexity:** complex
 **Review cadence:** 2
 **Check-ins:** checkpoints
@@ -390,6 +392,17 @@ keyboard-only walk through catalog → scenario → play → exit.
 ## Decided During Build
 _Filled by /code-foundations:build — one row per decision an agent made or question it raised:_
 | # | Phase | Decision or question | Source | Status |
+|---|---|---|---|---|
+| 1 | 1 | `sort=title` and the migration seed use `COLLATE "uk-x-icu"` (verified by test: Ґ<Є<І<Ї<Я, Latin before Cyrillic); a DB without ICU would 500 on `sort=title` | assumption verified | assumed |
+| 2 | 1 | Max stored `archive_bytes` not checked (dev DB down); 200 MiB default stays overridable — run `SELECT max(archive_bytes) FROM scenarios` before deploy | assumption fallback | assumed |
+| 3 | 1 | Public `archiveBytes` cast `::float8` (number); admin list still returns it as a string as before | default | assumed |
+| 4 | 1 | Categories auto-created by POST/PUT get icon `folder`, `sort_order` = max + 10; only the migration seed maps prototype icons | plan | assumed |
+| 5 | 1 | Category upsert and scenario write share one transaction (409/404 leaves no stray category) | default | assumed |
+| 6 | 1 | `summary.categories` = number of chips; `summary.scenarios` counts all published incl. hidden/row-less categories | plan | assumed |
+| 7 | 1 | Admin `features`: unknown keys dropped, title trimmed, `null` subtitle stored as absent | default | assumed |
+| 8 | 1 | multer limit = cap + 1 (busboy fires on reaching `fileSize`); nginx `client_max_body_size` 512m untouched | discovered | assumed |
+| 9 | 1 | Search `ESCAPE ''` bug fixed — `%`/`_` in `q` now match literally (behaviour change) | discovered | assumed |
+| 10 | 1 | PUT now rejects non-string/empty `category` and non-string `categoryLabel` with 400 | default | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_
