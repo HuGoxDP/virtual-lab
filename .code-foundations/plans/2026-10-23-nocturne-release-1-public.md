@@ -2,7 +2,7 @@
 **Created:** 2026-10-23
 **Status:** in-progress
 **Started:** 2026-10-23 12:00
-**Current Phase:** 1
+**Current Phase:** 3
 **Complexity:** complex
 **Review cadence:** 2
 **Check-ins:** checkpoints
@@ -403,6 +403,21 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 | 8 | 1 | multer limit = cap + 1 (busboy fires on reaching `fileSize`); nginx `client_max_body_size` 512m untouched | discovered | assumed |
 | 9 | 1 | Search `ESCAPE ''` bug fixed — `%`/`_` in `q` now match literally (behaviour change) | discovered | assumed |
 | 10 | 1 | PUT now rejects non-string/empty `category` and non-string `categoryLabel` with 400 | default | assumed |
+| 11 | 2 | "No light-theme rules" test scans `styles.scss` + `src/styles/**`; the catalog's own `dark-theme` toggle is Phase 3's to remove | file scope | assumed |
+| 12 | 2 | Old reset `*{margin:0;padding:0}` kept at specificity 0 in `_base.scss` for legacy pages; Phase 3/4 may delete it | DW-2.6 | assumed |
+| 13 | 2 | Card `open`/`launch` are `output<string>()` emitting the scenario id; launch stops propagation | default | assumed |
+| 14 | 2 | `ICON_NAMES` (133 icons) lives in `scripts/build-icons.mjs`; generated file exports `ICON_NAMES`+`ICON_PATHS`; fallback icon `folder`; release 2's picker may filter UI-only icons | default | assumed |
+| 15 | 2 | Inter ships cyrillic-ext, cyrillic, latin at 400/500 only (latin-ext/greek/vietnamese omitted) | default | assumed |
+| 16 | 2 | `e2e/helpers/api.ts` (outside scope, orchestrator-allowed): `E2E_SMALL_ARCHIVE` override, then both workspace layouts and `Benchscene1_primitives`/`Benchscene1_N100` | env fix | assumed |
+| 17 | 2 | Element typography neutralised for `app-admin, app-viewer, app-catalog` via `:where()` (viewer scss is out of scope); global scrollbar and accent `:focus-visible` ring are accepted drift; catalog's `.card-title` inherits global props until Phase 3 | deviation | assumed |
+| 18 | 2 | Footer: "ZIP-архів зі сценарієм, до {limit}" (no number without a limit); `SITE.department` = "Кафедра інформатики, програмної інженерії та економічної кібернетики" | default | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_
+
+### Phase 1: Catalog data and API (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete
+- [x] REVIEW: Verification passed
+- [x] Committed
+Commit: 8940004
+Summary: Migration 006 (categories with icon/sort_order/is_visible, scenarios.features) plus `/api/catalog` (archiveBytes, updatedAt, features, categories with icon+count, summary, whitelisted `sort=new|title` in uk-x-icu), `/api/catalog/:id` with `related`, `GET /api/config {maxArchiveBytes}` (200 MiB default, oversize → 413) and validated admin `features`; backend suite 348 green.

@@ -6,6 +6,7 @@
 // and must never collide with real content — hence the `e2e-` id prefix and the
 // timestamp. A leaked row would show up in the student catalog.
 
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -24,11 +25,27 @@ export function uniqueScenarioId(label: string): string {
   return `${E2E_ID_PREFIX}${label}-${Date.now()}`;
 }
 
-/** The smallest archive in the release — enough to prove upload without the wait. */
-export const SMALL_ARCHIVE = path.resolve(
-  HERE,
-  '../../../../ScenarioCreator/ReleaseScenarios/test/Benchscene1_primitives.zip'
-);
+/**
+ * The smallest archive in the release - enough to prove upload without the wait.
+ *
+ * `E2E_SMALL_ARCHIVE` wins. Otherwise ScenarioCreator is looked up in both checkouts
+ * (`WebEngine/virtual-lab` and the older `testv/virtual-lab`) and under both names the small
+ * bench archive has had; the first one that exists is used. Nothing found falls back to the old
+ * path, so the failure message still names the file that was expected.
+ */
+export const SMALL_ARCHIVE = resolveSmallArchive();
+
+function resolveSmallArchive(): string {
+  const override = process.env.E2E_SMALL_ARCHIVE;
+  if (override) return path.resolve(override);
+
+  const releases = ['../../../ScenarioCreator', '../../../../ScenarioCreator']
+    .map(root => path.resolve(HERE, root, 'ReleaseScenarios/test'));
+  const candidates = releases.flatMap(dir =>
+    ['Benchscene1_primitives.zip', 'Benchscene1_N100.zip'].map(name => path.join(dir, name))
+  );
+  return candidates.find(file => existsSync(file)) ?? path.join(releases[1], 'Benchscene1_primitives.zip');
+}
 
 async function call(method: string, endpoint: string, init: RequestInit = {}): Promise<Response> {
   return fetch(`${BASE_URL}${endpoint}`, {
