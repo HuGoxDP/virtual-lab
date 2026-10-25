@@ -371,6 +371,31 @@ Specs: `catalog-query.spec.ts`, `platform-config.service.spec.ts`, `scenario.ser
      blocked; server 400 shown and nothing created (DW-3.8, DW-3.10).
 137. [E] Catalog empty state and error state with retry against the real stack (DW-3.3).
 
+#### Viewer — loading screen and HUD (release 1, phase 4)
+
+138. [U] `viewer-format.spec.ts`: the byte line — known total ("3,2 з 48,2 МБ"), unknown total (0 / null /
+     NaN gives "X МБ"), loaded greater than total (total dropped, never "5 з 3"), no archive (empty);
+     `readFlag` (`?diag` / `?stream` parsing, moved out of `ViewerComponent` unchanged) (DW-4.1, DW-4.7).
+139. [U] `viewer-loading.component.spec.ts`: inputs → percent, title, byte line, stage, bar and ring offset
+     (percent clamped, NaN → 0); byte line hidden without a download; "Скасувати" emits `cancel`
+     (DW-4.1, DW-4.7).
+140. [U] `viewer-hud.component.spec.ts`: exit, title, restart / fullscreen with Ukrainian `aria-label`s; FPS
+     slot only when `fps` is a number (0 counts); pause button and the "Space — пауза" hint only with
+     `canPause` (label swaps while paused); every button fires its output; restart disabled, not
+     hidden, without `canRestart`; **Space does nothing in the page** (pause arrives with player-isolation
+     phase 5) (DW-4.2, DW-4.4, DW-4.7).
+141. [E] `viewer.spec.ts`: loading screen (ring percent, title, "Завантаження архіву — X з Y МБ", stage,
+     "Скасувати") then the HUD; "Скасувати" aborts the archive `fetch` and lands on `/scenario/:id`
+     (DW-4.1).
+142. [E] `viewer.spec.ts`: HUD at 1440 px — aria-labels, no pause button and no FPS slot, hints without
+     Space, "Вийти" → `/scenario/:id`; at 390 px the hints are hidden and exit / title / buttons stay
+     inside the viewport without overlapping (DW-4.2).
+143. [E] `viewer.spec.ts`: restart on a ZIP run is enabled and re-runs from the buffer (second telemetry
+     launch, one archive request); `streaming.spec.ts`: disabled with `?stream=1` (DW-4.4).
+144. [E] `viewer.spec.ts`: unknown scenario → Nocturne error panel with its way back; no WebGL 2 → Nocturne
+     panel (Inter, `--color-bg`); forced context loss → panel with "Перезавантажити" (existing test, F7)
+     (DW-4.5).
+
 ### 4.11 Golden paths (E2E)
 
 97. **Student**: open `/` → filter by category → search → open the scenario page (`/scenario/:id`) →
@@ -473,7 +498,10 @@ Two things the browser layer found immediately, neither of which any unit test c
 
 Note on the progress ring: it is **not** one continuous 0→100 ramp, and asserting that was wrong.
 `progressPercent` is shared by two phases — the archive download, then the engine unpacking it —
-and restarts between them. The test asserts monotonicity within each phase.
+and restarts between them. The test asserts monotonicity within each phase (told apart by the stage
+label: "Отримання даних із сервера" vs "Ініціалізація сцени"). Release 1 phase 4: the HUD no longer
+has a diagnostics button, so the old "button toggles the overlay" test became "no button, and with
+`?diag=1` the scenario's own overlay is left open".
 
 ---
 

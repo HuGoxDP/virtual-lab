@@ -18,9 +18,13 @@ import { Subject, takeUntil } from 'rxjs';
 import { Application, BuildInfo, MemoryProfiler, Texture2D } from 'WebEngineTS';
 import type { IScenarioLoadProgress } from 'WebEngineTS';
 
+import { IconComponent } from '../../ui/icon/icon.component';
 import { ScenarioService, DownloadProgress } from '../../services/scenario.service';
 import { TelemetryService } from '../../services/telemetry.service';
 import { ScenarioCatalogItem } from '../../models/scenario.model';
+import { STAGE_ENGINE, STAGE_FETCH, readFlag } from './viewer-format';
+import { ViewerHudComponent } from './viewer-hud.component';
+import { ViewerLoadingComponent } from './viewer-loading.component';
 
 /**
  * Viewer states for the loading UI.
@@ -30,6 +34,7 @@ type ViewerState = 'idle' | 'downloading' | 'loading-engine' | 'running' | 'erro
 @Component({
   selector: 'app-viewer',
   standalone: true,
+  imports: [ViewerHudComponent, ViewerLoadingComponent, IconComponent],
   templateUrl: './viewer.component.html',
   styleUrls: ['./viewer.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -70,12 +75,18 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   /** Catalog id of the scenario currently loaded, for telemetry attribution. */
   private scenarioId = '';
 
+  /** The id in the URL; the exit target even when the lookup failed and `scenarioId` was never set. */
+  private routeId = '';
+
   // UI state. Signals, not plain fields: the app is zoneless, so a signal write
   // is what notifies the change-detection scheduler. Mutating a field from an
   // async callback would never repaint.
   readonly state = signal<ViewerState>('idle');
   readonly progressPercent = signal(0);
-  readonly progressLabel = signal('');
+  /** Archive bytes received / announced by the server (0 = unknown); `null` = no archive download. */
+  readonly loadedBytes = signal<number | null>(null);
+  readonly totalBytes = signal<number | null>(null);
+  readonly stage = signal('');
   readonly errorMessage = signal<string | null>(null);
   readonly scenarioTitle = signal('');
   readonly contextLost = signal(false);
@@ -116,9 +127,6 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   readonly canRestart = computed(
     () => this.state() === 'running' && !this.contextLost() && this.loadedBuffer() !== null
   );
-
-  /** Stroke offset for the progress ring (circumference ≈ 264). */
-  readonly ringOffset = computed(() => 264 - (264 * this.progressPercent() / 100));
 
   /**
    * Which engine build is running, for the diagnostics readout.
@@ -178,13 +186,14 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
     // Read once: these are launch options, not something to toggle mid-run.
     const query = this.route.snapshot.queryParamMap;
-    this.diagnosticsEnabled.set(ViewerComponent.readFlag(query.get('diag')));
-    this.streamingRequested.set(ViewerComponent.readFlag(query.get('stream')));
+    this.diagnosticsEnabled.set(readFlag(query.get('diag')));
+    this.streamingRequested.set(readFlag(query.get('stream')));
 
     this.route.paramMap
       .pipe(takeUntil(this.destroy$))
       .subscribe(params => {
         const id = params.get('id');
+        this.routeId = id ?? '';
         if (id) {
           void this.openScenario(id);
         } else {
@@ -243,7 +252,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    */
   private async openScenario(id: string): Promise<void> {
     const token = ++this.loadToken;
-    this.setState('downloading', 0, 'Отримання даних сценарію...');
+    this.setState('downloading', 0, 'Отримання даних сценарію');
 
     let scenario: ScenarioCatalogItem;
 
@@ -280,7 +289,8 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    this.setState('downloading', 0, 'Завантаження архіву...');
+    this.setState('downloading', 0, STAGE_FETCH);
+    this.loadedBytes.set(0);
 
     this.downloadAbort?.abort();
     const abort = new AbortController();
@@ -293,8 +303,8 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
         (progress: DownloadProgress) => {
           if (token !== this.loadToken) return;
           this.progressPercent.set(progress.percent >= 0 ? progress.percent : 0);
-          const mb = (progress.loaded / (1024 * 1024)).toFixed(1);
-          this.progressLabel.set(`Завантаження: ${mb} MB`);
+          this.loadedBytes.set(progress.loaded);
+          this.totalBytes.set(progress.total);
         },
         abort.signal
       );
@@ -323,7 +333,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    * have to re-fetch, which is a different thing from what the button promises.
    */
   private async startStreaming(manifestUrl: string, token: number): Promise<void> {
-    this.setState('loading-engine', 0, 'Ініціалізація сцени...');
+    this.setState('loading-engine', 0, STAGE_ENGINE);
 
     try {
       if (!this.app) throw new Error('Engine not initialized');
@@ -333,7 +343,6 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
         (progress: IScenarioLoadProgress) => {
           if (token !== this.loadToken) return;
           this.progressPercent.set(Math.round(progress.progress * 100));
-          this.progressLabel.set(progress.currentOperation);
         }
       );
 
@@ -354,7 +363,10 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
   /** Hands an already-downloaded archive to the engine. */
   private async runBuffer(zipBuffer: ArrayBuffer, token: number): Promise<void> {
-    this.setState('loading-engine', 0, 'Ініціалізація сцени...');
+    this.setState('loading-engine', 0, STAGE_ENGINE);
+    // The archive is complete by now; the byte line stays, at "N з N МБ".
+    this.loadedBytes.set(zipBuffer.byteLength);
+    this.totalBytes.set(zipBuffer.byteLength);
 
     if (!this.app) throw new Error('Engine not initialized');
 
@@ -363,7 +375,6 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       (progress: IScenarioLoadProgress) => {
         if (token !== this.loadToken) return;
         this.progressPercent.set(Math.round(progress.progress * 100));
-        this.progressLabel.set(progress.currentOperation);
       }
     );
 
@@ -450,13 +461,6 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     this.diagnosticsVisible.set(MemoryProfiler.isOverlayVisible);
   }
 
-  /** Accepts `1`, `true` or a bare `?flag`; anything else means off. */
-  private static readFlag(raw: string | null): boolean {
-    if (raw === null) return false;
-    const v = raw.toLowerCase();
-    return v === '' || v === '1' || v === 'true';
-  }
-
   /** After a context loss the engine cannot recover in place — reload the page. */
   reloadPage(): void {
     window.location.reload();
@@ -464,10 +468,12 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
   // ==================== UI HELPERS ====================
 
-  private setState(state: ViewerState, percent: number, label: string): void {
+  private setState(state: ViewerState, percent: number, stage: string): void {
     this.state.set(state);
     this.progressPercent.set(percent);
-    this.progressLabel.set(label);
+    this.stage.set(stage);
+    this.loadedBytes.set(null);
+    this.totalBytes.set(null);
     this.errorMessage.set(null);
   }
 
@@ -476,6 +482,12 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     this.errorMessage.set(message);
   }
 
+  /** HUD "Вийти" and the loader's "Скасувати": back to the scenario's own page. */
+  exit(): void {
+    void this.router.navigate(this.routeId ? ['/scenario', this.routeId] : ['/catalog']);
+  }
+
+  /** The error, unsupported and context-lost screens keep their way out: the catalog. */
   goBack(): void {
     void this.router.navigate(['/catalog']);
   }

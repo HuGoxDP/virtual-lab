@@ -1,0 +1,40 @@
+<!-- path: src/app/pages/viewer/viewer-hud.component.html -->
+
+<button type="button" class="btn btn-secondary exit" (click)="exit.emit()">
+  <vl-icon name="arrow-left" size="15" />Вийти
+</button>
+
+@if (title()) {
+  <div class="title-badge">
+    <span class="title-text">{{ title() }}</span>
+    @if (fpsLabel(); as label) {
+      <span class="divider" aria-hidden="true"></span>
+      <span class="text-muted fps">{{ label }}</span>
+    }
+  </div>
+}
+
+<div class="viewer-controls">
+  @if (canPause()) {
+    <button type="button" class="btn btn-icon btn-secondary control-btn pause" [attr.aria-label]="pauseLabel()"
+            [title]="pauseLabel()" (click)="togglePause.emit()">
+      <vl-icon [name]="paused() ? 'play' : 'pause'" size="17" />
+    </button>
+  }
+  <button type="button" class="btn btn-icon btn-secondary control-btn restart" aria-label="Спочатку" title="Спочатку"
+          [disabled]="!canRestart()" (click)="restart.emit()">
+    <vl-icon name="arrows-clockwise" size="17" />
+  </button>
+  <button type="button" class="btn btn-icon btn-secondary control-btn fullscreen" aria-label="На весь екран"
+          title="На весь екран" (click)="fullscreen.emit()">
+    <vl-icon name="corners-out" size="17" />
+  </button>
+</div>
+
+<div class="hints">
+  <span><vl-icon name="mouse-left-click" size="13" />Обертати</span>
+  <span><vl-icon name="mouse-scroll" size="13" />Масштаб</span>
+  @if (canPause()) {
+    <span><vl-icon name="keyboard" size="13" />Space — пауза</span>
+  }
+</div>

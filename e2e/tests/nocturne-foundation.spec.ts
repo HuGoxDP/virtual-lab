@@ -8,6 +8,7 @@
 //   DW-2.2  Inter is self-hosted: served from /assets/fonts/, no off-origin request.
 //   DW-2.6  The old /admin looks the same — characterised against values captured on
 //           the stack *before* the global component classes existed.
+//           (The viewer half was retired in release 1, phase 4: the viewer is Nocturne now.)
 
 import { expect, test, type Page } from '@playwright/test';
 import { BASE_URL } from '../helpers/api';
@@ -69,27 +70,10 @@ async function snapshotAdmin(page: Page) {
   return { ...gate, ...list };
 }
 
-/** Elements of the viewer's "no WebGL 2" screen: its own text, buttons and back link. */
-const VIEWER = ['.back-btn', '.back-btn .back-text', '.error-content .error-icon', '.error-content h3',
-  '.error-content p', '.error-content .retry-btn'];
-
-async function snapshotViewer(page: Page) {
-  await page.addInitScript(() => {
-    const original = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function (type: string, ...rest: unknown[]) {
-      if (type === 'webgl2') return null;
-      return (original as any).apply(this, [type, ...rest]);
-    } as typeof original;
-  });
-  await page.goto('/play/solar-system');
-  await expect(page.getByText('Браузер не підтримує WebGL 2')).toBeVisible();
-  return collect(page, VIEWER);
-}
-
 /**
- * Computed styles of the old /admin and the viewer's error screen, captured on the stack
+ * Computed styles of the old /admin, captured on the stack
  * built from HEAD before any Nocturne stylesheet existed. The characterization the
- * `legacy-admin` scope is held to; regenerate only when those screens change on purpose.
+ * `legacy-admin` scope is held to; regenerate only when that screen changes on purpose.
  */
 const ADMIN_BASELINE: Record<string, Record<string, string>> = {
   "h1": { "display": "block", "justifyContent": "normal", "alignItems": "normal", "columnGap": "normal", "cursor": "auto", "textDecorationLine": "none", "fontFamily": "system-ui, -apple-system, \"Segoe UI\", sans-serif", "fontWeight": "700", "fontSize": "22px", "lineHeight": "33px", "letterSpacing": "normal", "textTransform": "none", "color": "rgb(230, 230, 240)", "backgroundColor": "rgba(0, 0, 0, 0)", "backgroundImage": "none", "opacity": "1", "boxShadow": "none", "borderTopColor": "rgb(230, 230, 240)", "borderTopWidth": "0px", "borderTopStyle": "none", "borderBottomColor": "rgb(230, 230, 240)", "borderBottomWidth": "0px", "borderRadius": "0px", "paddingTop": "0px", "paddingRight": "0px", "paddingBottom": "0px", "paddingLeft": "0px", "marginTop": "4px", "marginRight": "0px", "marginBottom": "0px", "marginLeft": "0px", "height": "33px" },
@@ -122,15 +106,6 @@ const ADMIN_BASELINE: Record<string, Record<string, string>> = {
   ".btn-danger": { "display": "flex", "justifyContent": "normal", "alignItems": "center", "columnGap": "6px", "cursor": "pointer", "textDecorationLine": "none", "fontFamily": "system-ui, -apple-system, \"Segoe UI\", sans-serif", "fontWeight": "400", "fontSize": "13px", "lineHeight": "normal", "letterSpacing": "normal", "textTransform": "none", "color": "rgb(243, 112, 112)", "backgroundColor": "rgb(35, 35, 58)", "backgroundImage": "none", "opacity": "1", "boxShadow": "none", "borderTopColor": "rgba(239, 68, 68, 0.5)", "borderTopWidth": "1px", "borderTopStyle": "solid", "borderBottomColor": "rgba(239, 68, 68, 0.5)", "borderBottomWidth": "1px", "borderRadius": "8px", "paddingTop": "5px", "paddingRight": "10px", "paddingBottom": "5px", "paddingLeft": "10px", "marginTop": "0px", "marginRight": "0px", "marginBottom": "0px", "marginLeft": "0px", "height": "29px" },
 };
 
-const VIEWER_BASELINE: Record<string, Record<string, string>> = {
-  ".back-btn": { "display": "flex", "justifyContent": "normal", "alignItems": "center", "columnGap": "6px", "cursor": "pointer", "textDecorationLine": "none", "fontFamily": "\"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, sans-serif", "fontWeight": "500", "fontSize": "13px", "lineHeight": "normal", "letterSpacing": "normal", "textTransform": "none", "color": "rgba(255, 255, 255, 0.85)", "backgroundColor": "rgba(0, 0, 0, 0.5)", "backgroundImage": "none", "opacity": "1", "boxShadow": "none", "borderTopColor": "rgba(255, 255, 255, 0.1)", "borderTopWidth": "1px", "borderTopStyle": "solid", "borderBottomColor": "rgba(255, 255, 255, 0.1)", "borderBottomWidth": "1px", "borderRadius": "8px", "paddingTop": "8px", "paddingRight": "14px", "paddingBottom": "8px", "paddingLeft": "14px", "marginTop": "0px", "marginRight": "0px", "marginBottom": "0px", "marginLeft": "0px", "height": "39px" },
-  ".back-btn .back-text": { "display": "block", "justifyContent": "normal", "alignItems": "normal", "columnGap": "normal", "cursor": "pointer", "textDecorationLine": "none", "fontFamily": "\"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, sans-serif", "fontWeight": "500", "fontSize": "13px", "lineHeight": "normal", "letterSpacing": "normal", "textTransform": "none", "color": "rgba(255, 255, 255, 0.85)", "backgroundColor": "rgba(0, 0, 0, 0)", "backgroundImage": "none", "opacity": "1", "boxShadow": "none", "borderTopColor": "rgba(255, 255, 255, 0.85)", "borderTopWidth": "0px", "borderTopStyle": "none", "borderBottomColor": "rgba(255, 255, 255, 0.85)", "borderBottomWidth": "0px", "borderRadius": "0px", "paddingTop": "0px", "paddingRight": "0px", "paddingBottom": "0px", "paddingLeft": "0px", "marginTop": "0px", "marginRight": "0px", "marginBottom": "0px", "marginLeft": "0px", "height": "17px" },
-  ".error-content .error-icon": { "display": "block", "justifyContent": "normal", "alignItems": "normal", "columnGap": "normal", "cursor": "auto", "textDecorationLine": "none", "fontFamily": "\"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, sans-serif", "fontWeight": "400", "fontSize": "48px", "lineHeight": "72px", "letterSpacing": "normal", "textTransform": "none", "color": "rgba(255, 255, 255, 0.9)", "backgroundColor": "rgba(0, 0, 0, 0)", "backgroundImage": "none", "opacity": "1", "boxShadow": "none", "borderTopColor": "rgba(255, 255, 255, 0.9)", "borderTopWidth": "0px", "borderTopStyle": "none", "borderBottomColor": "rgba(255, 255, 255, 0.9)", "borderBottomWidth": "0px", "borderRadius": "0px", "paddingTop": "0px", "paddingRight": "0px", "paddingBottom": "0px", "paddingLeft": "0px", "marginTop": "0px", "marginRight": "0px", "marginBottom": "16px", "marginLeft": "0px", "height": "72px" },
-  ".error-content h3": { "display": "block", "justifyContent": "normal", "alignItems": "normal", "columnGap": "normal", "cursor": "auto", "textDecorationLine": "none", "fontFamily": "\"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, sans-serif", "fontWeight": "600", "fontSize": "20px", "lineHeight": "30px", "letterSpacing": "normal", "textTransform": "none", "color": "rgba(255, 255, 255, 0.9)", "backgroundColor": "rgba(0, 0, 0, 0)", "backgroundImage": "none", "opacity": "1", "boxShadow": "none", "borderTopColor": "rgba(255, 255, 255, 0.9)", "borderTopWidth": "0px", "borderTopStyle": "none", "borderBottomColor": "rgba(255, 255, 255, 0.9)", "borderBottomWidth": "0px", "borderRadius": "0px", "paddingTop": "0px", "paddingRight": "0px", "paddingBottom": "0px", "paddingLeft": "0px", "marginTop": "0px", "marginRight": "0px", "marginBottom": "8px", "marginLeft": "0px", "height": "30px" },
-  ".error-content p": { "display": "block", "justifyContent": "normal", "alignItems": "normal", "columnGap": "normal", "cursor": "auto", "textDecorationLine": "none", "fontFamily": "\"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, sans-serif", "fontWeight": "400", "fontSize": "14px", "lineHeight": "22.4px", "letterSpacing": "normal", "textTransform": "none", "color": "rgba(255, 255, 255, 0.6)", "backgroundColor": "rgba(0, 0, 0, 0)", "backgroundImage": "none", "opacity": "1", "boxShadow": "none", "borderTopColor": "rgba(255, 255, 255, 0.6)", "borderTopWidth": "0px", "borderTopStyle": "none", "borderBottomColor": "rgba(255, 255, 255, 0.6)", "borderBottomWidth": "0px", "borderRadius": "0px", "paddingTop": "0px", "paddingRight": "0px", "paddingBottom": "0px", "paddingLeft": "0px", "marginTop": "0px", "marginRight": "0px", "marginBottom": "24px", "marginLeft": "0px", "height": "89.5625px" },
-  ".error-content .retry-btn": { "display": "inline-block", "justifyContent": "normal", "alignItems": "normal", "columnGap": "normal", "cursor": "pointer", "textDecorationLine": "none", "fontFamily": "\"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, sans-serif", "fontWeight": "500", "fontSize": "14px", "lineHeight": "normal", "letterSpacing": "normal", "textTransform": "none", "color": "rgb(255, 255, 255)", "backgroundColor": "rgb(108, 92, 231)", "backgroundImage": "none", "opacity": "1", "boxShadow": "none", "borderTopColor": "rgb(255, 255, 255)", "borderTopWidth": "0px", "borderTopStyle": "none", "borderBottomColor": "rgb(255, 255, 255)", "borderBottomWidth": "0px", "borderRadius": "8px", "paddingTop": "10px", "paddingRight": "24px", "paddingBottom": "10px", "paddingLeft": "24px", "marginTop": "0px", "marginRight": "0px", "marginBottom": "0px", "marginLeft": "0px", "height": "39px" },
-};
-
 test.describe('Nocturne foundation', () => {
   test('DW-2.2 Inter is served from /assets/fonts/ and nothing off-origin is fetched', async ({ page }) => {
     const fontResponses: string[] = [];
@@ -158,9 +133,5 @@ test.describe('Nocturne foundation', () => {
   test('DW-2.6 the old /admin keeps its computed look under the legacy-admin scope', async ({ page }) => {
     const now = await snapshotAdmin(page);
     expect(now).toEqual(ADMIN_BASELINE);
-  });
-
-  test('DW-2.6 the viewer error screen keeps its computed look', async ({ page }) => {
-    expect(await snapshotViewer(page)).toEqual(VIEWER_BASELINE);
   });
 });

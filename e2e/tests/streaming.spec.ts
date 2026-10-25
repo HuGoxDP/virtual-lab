@@ -217,7 +217,7 @@ test.describe('streaming (manifest) scenario delivery', () => {
 
       // A streamed run holds no buffer, so restarting in place is impossible —
       // the control must say so rather than sit there doing nothing.
-      await expect(page.locator('.control-btn[aria-label="Перезапустити сценарій"]')).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Спочатку' })).toBeDisabled();
     });
 
     test('?stream=1 falls back to the ZIP when there is no manifest', async ({ page, request }) => {

@@ -117,9 +117,8 @@ test.describe('student golden path', () => {
       req => /\/api\/telemetry\/session\/[^/]+\/end/.test(req.url()) && req.method() === 'POST'
     );
 
-    await page.locator('.back-btn').click();
-    await expect(page).toHaveURL(/\/(catalog)?(\?.*)?$/);
-    await expect(page.locator('.scenario-card').first()).toBeVisible();
+    await page.getByRole('button', { name: 'Вийти' }).click();
+    await expect(page).toHaveURL(new RegExp(`/scenario/${target.id}$`));
 
     await telemetryEnd;
   });
