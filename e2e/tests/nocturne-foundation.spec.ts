@@ -60,6 +60,11 @@ async function snapshotAdmin(page: Page) {
   await expect(page.locator('.scenario-table tbody tr').first()).toBeVisible();
   await page.locator('.toolbar .btn-primary').click();
   await expect(page.locator('.editor')).toBeVisible();
+  // The pointer still rests on the button just clicked, and the old admin animates `background` on
+  // hover (.15s): measuring mid-transition read an in-between colour. Move away, let every
+  // transition finish, then measure.
+  await page.mouse.move(0, 0);
+  await page.waitForFunction(() => document.getAnimations().length === 0);
   const list = await collect(page, LIST);
   return { ...gate, ...list };
 }
