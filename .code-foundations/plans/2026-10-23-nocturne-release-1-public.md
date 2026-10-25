@@ -2,7 +2,7 @@
 **Created:** 2026-10-23
 **Status:** in-progress
 **Started:** 2026-10-23 12:00
-**Current Phase:** 3
+**Current Phase:** 5
 **Complexity:** complex
 **Review cadence:** 2
 **Check-ins:** checkpoints
@@ -27,7 +27,7 @@ screen), `part01.style.txt` (Nocturne tokens + component classes), `part03.style
 (KSU logo); `vl-design-mockups/text-outline.txt` (all mockups as text).
 
 **Success criteria:** catalog, scenario page and viewer match the prototype at wide and narrow widths; every
-number shown is real; `/scenario/:id` replaces the modal; pause on Space works and restores the previous
+number shown is real; `/scenario/:id` replaces the modal; pause on Space works (delivered through player-isolation Phase 5) and restores the previous
 `Time.timeScale`, and no scenario inherits another's time scale; empty blocks are hidden, never broken;
 backend, frontend and e2e suites are green and updated.
 
@@ -240,59 +240,108 @@ scenario-page keyboard tests), `admin-golden-path.spec.ts`.
 **Difficulty:** MEDIUM
 **Uncertainty:** None.
 
-### Phase 4: Viewer
+### Phase 4: Viewer (presentational HUD)
 **Model:** sonnet
 **Skills:** welc-legacy-code, aposd-verifying-correctness
 **Gate:** Standard
 
-**Goal:** Restyle the viewer as prototype screens 2c (loading) and 2d (running) and add the HUD: real FPS,
-pause on Space, restart, fullscreen, control hints — keeping every behaviour the viewer has today.
+*Amended 2026-10-25 (owner): pause, FPS and the time-scale reset are **not** built in the page. They already
+exist inside the isolated player (`WebEngineTS/player-host`, plan
+`../../../.code-foundations/plans/2026-10-24-player-isolation.md`), whose Phase 5 wires this phase's components
+to `PlayerHost`. Release 1 therefore ships after that plan's Phase 5.*
+
+**Goal:** Restyle the viewer as prototype screens 2c (loading) and 2d (running) as input-only components, and keep
+every behaviour the viewer has today.
 
 **Scope:**
-- IN: loading view (ring, title, "X з Y МБ", stage, "Скасувати"); HUD ("Вийти", title + FPS, pause /
-  restart / fullscreen, hints on wide screens, `?diag=1` button); error, unsupported and context-lost states
-  in Nocturne; the time-scale reset below; the engine-gap entry; unit + e2e tests.
-- OUT: running the scenario in an iframe (release 2 Phase 1); the prototype's decorative orbits/stars.
+- IN: loading view (ring, title, "X з Y МБ", stage, "Скасувати"); HUD ("Вийти", title, an FPS slot, pause /
+  restart / fullscreen buttons, hints on wide screens, `?diag=1` button); error, unsupported and context-lost
+  states in Nocturne; today's actions wired to the current viewer (exit, cancel, restart from buffer, fullscreen); unit + e2e tests; G5's upstream entry.
+- OUT: pause logic, the FPS sampler and any `Time.timeScale` write in the page (player-isolation Phase 5); running
+  the scenario in an iframe (same); the prototype's decorative orbits/stars.
 
 **Constraints:** `?stream=1`, abort on leave, `dispose()`, telemetry, the diagnostics policy and the
 restart-disabled-when-streamed rule behave exactly as now — `ViewerComponent` has no unit spec, so pin them
-first (characterization via sprouted, testable units + `e2e/tests/viewer.spec.ts`). **The engine never
-resets `Time.timeScale`** (`Time._reset()` has no caller; it is a module-level static), so a paused or
-slowed scenario leaks its scale into the next run: first write gap G5's entry in `docs/upstream/webenginets.md`
-(evidence, effect, workaround — the shared index row already exists), then the viewer sets
-`Time.timeScale = 1` before every load and restart and on destroy.
-**Edge cases:** pause saves `Time.timeScale` and resume restores it, whatever the scenario set; restart or a
-new load clears the paused state; Space on a focused HUD button must not toggle twice; unknown
-`Content-Length` → "X МБ" without a total; the FPS sampler stops on destroy and while hidden.
-**Depends on:** Phase 2, Phase 3 | **Unlocks:** release 2 Phase 1
+first (characterization via sprouted, testable units + `e2e/tests/viewer.spec.ts`). With `[fps]` null the FPS slot
+is hidden; with no `(togglePause)` consumer the pause button is not rendered, so nothing student-visible is fake.
+G5 (`Time.timeScale` survives a run, `Time._reset()` has no caller): write its entry in `docs/upstream/webenginets.md`,
+naming the platform's fix as "a fresh player frame per run" (player-isolation), not a page-side reset.
+**Edge cases:** unknown `Content-Length` → "X МБ" without a total; Space does nothing in this phase.
+**Depends on:** Phase 2, Phase 3 | **Unlocks:** player-isolation Phase 5
 **File scope:** `frontend/src/app/pages/viewer/**`, `e2e/tests/viewer.spec.ts`, `docs/test-plan.md`,
 `docs/manual-browser-checks.md`, `docs/upstream/webenginets.md`
-**Produces:** presentational components fed only by inputs, which release 2 re-hosts around the isolated player:
+**Produces:** presentational components fed only by inputs, which player-isolation Phase 5 drives from `PlayerHost`:
 `<vl-viewer-loading [title] [percent] [loadedBytes] [totalBytes] [stage] (cancel)>` and
-`<vl-viewer-hud [title] [fps: number|null] [paused] [canRestart] [diagnosticsEnabled] (exit) (togglePause)
-(restart) (fullscreen) (toggleDiagnostics)>`.
+`<vl-viewer-hud [title] [fps: number|null] [paused] [canPause] [canRestart] (exit) (togglePause) (restart) (fullscreen)>`.
 
 **File hints:** `frontend/src/app/pages/viewer/viewer.component.ts` — lifecycle, token guard, diagnostics
-policy to preserve; `WebEngineTS/src/engine/core/Time.ts:280` — the uncalled `_reset()`.
+policy to preserve; `WebEngineTS/src/engine/core/Time.ts` — the uncalled `_reset()` (for G5's entry).
 
 **Done when:**
 - [ ] DW-4.1: Loading shows the ring + percent, the title, "Завантаження архіву — X з Y МБ", the stage label
   and "Скасувати", which aborts the download and returns to `/scenario/:id`.
-- [ ] DW-4.2: Running shows "Вийти" (→ `/scenario/:id`), title + FPS measured from frames (not a constant),
-  pause/restart/fullscreen buttons with Ukrainian `aria-label`s, and hints on wide screens only; at 390 px the
-  controls stay reachable and the hints are hidden.
-- [ ] DW-4.3: Space and the button pause and resume; `Time.timeScale` is `0` while paused and the previous
-  value afterwards (e2e reads it through `import('WebEngineTS')`).
-- [ ] DW-4.4: Restart re-runs from the buffer at scale 1 and unpaused; leaving while paused and opening another
-  scenario starts it at scale 1; restart stays disabled for a streamed run.
+- [ ] DW-4.2: Running shows "Вийти" (→ `/scenario/:id`), the title, restart/fullscreen buttons with Ukrainian
+  `aria-label`s, and hints on wide screens only; at 390 px the controls stay reachable and the hints are hidden;
+  the FPS slot and pause button render only when their inputs are supplied (unit-tested).
+- [ ] DW-4.4: Restart re-runs from the buffer; restart stays disabled for a streamed run (today's behaviour).
 - [ ] DW-4.5: Error, unsupported-WebGL2 and context-lost states render in Nocturne with their existing actions.
-- [ ] DW-4.6: G5's entry is in `docs/upstream/webenginets.md` with evidence and the workaround, and the shared
+- [ ] DW-4.6: G5's entry is in `docs/upstream/webenginets.md` with evidence and the platform's fix, and the shared
   `ENGINE-GAPS.md` G5 row points at it.
-- [ ] DW-4.7: Unit tests for the sprouted pieces (FPS sampler, pause controller, byte label); e2e viewer spec
-  updated; all suites green.
+- [ ] DW-4.7: Unit tests for the components (inputs → DOM, outputs) and the byte label; e2e viewer spec updated;
+  all suites green.
 
 **Difficulty:** MEDIUM
-**Uncertainty:** A scenario that reads Space itself also pauses — accepted per the prototype (Notes).
+**Uncertainty:** None.
+
+
+### Phase 5: Trim the pages and switch the profiler off
+**Model:** sonnet
+**Skills:** aposd-verifying-correctness
+**Gate:** Standard
+
+*Added 2026-10-25 (owner).*
+
+**Goal:** Remove the catalog hero, the footer's main block, the scenario page's download button and launch note,
+and stop the `MemoryProfiler` overlay from ever starting on the platform (it will be developed separately).
+
+**Scope:**
+- IN:
+  - catalog: delete `<section class="hero">` with its glow, title, lead and facts, plus its styles and any
+    component code only it used;
+  - footer (`ui/site-footer`): delete `<div class="footer-inner">` (brand + about, contacts, "Розробникам" with the
+    admin link and the ZIP note); the copyright bar stays; drop inputs/fetches only that block used
+    (e.g. `[maxArchiveBytes]`), keeping any still used elsewhere;
+  - scenario page: delete the download link (`btn btn-secondary btn-icon download`) and the
+    `text-muted launch-note` line; the launch button and "Копіювати посилання" stay;
+  - profiler off: the viewer sets `MemoryProfiler.diagnosticsAllowed = false` before every load,
+    unconditionally, and hides the overlay after load whatever a scenario called (solar-system calls
+    `enableToggle`/`showOverlay` itself); the HUD has no diagnostics button (Phase 4 already builds it without one; remove any leftover
+    `toggleDiagnostics` path from the viewer); `?diag=1` keeps only the build stamp (`BuildInfo`), never the overlay;
+  - unit + e2e specs updated; `docs/test-plan.md`, `docs/manual-browser-checks.md`, `CLAUDE.md` (viewer and
+    diagnostics wording).
+- OUT: removing the profiler from the engine (it stays engine API); editing scenario content in ScenarioCreator
+  (tracked in `.claude-shared/PLAN.md` §4); the `/api/catalog` `summary` field (left for later use).
+
+**Constraints:** `/admin` stays reachable by URL, only its footer link goes. No student-visible control opens the
+overlay, with or without `?diag=1`, and no keyboard toggle (Backquote) works.
+**Edge cases:** a scenario that calls `showOverlay()`/`enableToggle()` during load or later; `?diag=1` present;
+pressing Backquote in the running scenario.
+**Depends on:** Phase 3, Phase 4 | **Unlocks:** none
+**File scope:** `frontend/src/app/pages/catalog/**`, `frontend/src/app/pages/scenario/**`,
+`frontend/src/app/pages/viewer/**`, `frontend/src/app/ui/site-footer/**`, `e2e/tests/**`, `docs/test-plan.md`,
+`docs/manual-browser-checks.md`, `CLAUDE.md`
+**Produces:** a viewer that never shows the profiler — player-isolation Phase 5 keeps it by always sending `diag: false`.
+
+**Done when:**
+- [ ] DW-5.1: The catalog page has no `.hero`; the footer has no `.footer-inner` and still shows the copyright bar.
+- [ ] DW-5.2: The scenario page has no download link and no `.launch-note`; launch and copy-link still work.
+- [ ] DW-5.3: Running solar-system (which opens the overlay itself), with and without `?diag=1`, shows no profiler
+  overlay, and Backquote does not open it; `?diag=1` still shows the build stamp.
+- [ ] DW-5.4: Unit, e2e and build suites green; docs describe the profiler as off.
+
+**Difficulty:** LOW
+**Uncertainty:** With today's engine the `diagnosticsAllowed` setter is two-way, so the viewer must also re-close
+after load (as `enforceDiagnosticsPolicy` does); the latching setter arrives with the isolation engine release.
 
 ---
 ## Test Coverage
@@ -343,14 +392,20 @@ New scenarios get numbers in `docs/test-plan.md` and are cited in each spec head
 - [ ] e2e student golden path via the scenario page; keyboard: chips `aria-pressed`, sort radios, scenario page tab order to "Запустити"; admin golden path (DW-3.10)
 
 **Phase 4**
-- [ ] FPS sampler: synthetic frame times → expected average; stops on destroy and while `document.hidden` (DW-4.2)
-- [ ] Pause controller: 1 → 0 → 1; scenario-set 0.5 → 0 → 0.5; restart while paused → unpaused at 1 (DW-4.3, DW-4.4)
+- [ ] Unit: HUD hides the FPS slot when `fps` is null and the pause button when `canPause` is false; outputs fire (DW-4.2)
 - [ ] Byte label: known total, unknown total (0), loaded > total (DW-4.1)
-- [ ] Dirty: Space on a focused HUD button toggles once; Space while loading does nothing (DW-4.3)
-- [ ] e2e: loading UI then HUD; cancel during download returns to the scenario page; FPS text changes over time; `aria-label`s present; hints hidden at 390 px (DW-4.1, DW-4.2)
-- [ ] e2e: `Time.timeScale` 0 while paused and restored; pause → exit → open another scenario → scale 1; restart enabled for ZIP, disabled with `?stream=1` (DW-4.3, DW-4.4)
+- [ ] Dirty: Space does nothing in the page (pause arrives with player-isolation Phase 5) (DW-4.2)
+- [ ] e2e: loading UI then HUD; cancel during download returns to the scenario page; `aria-label`s present; hints hidden at 390 px (DW-4.1, DW-4.2)
+- [ ] e2e: restart enabled for ZIP, disabled with `?stream=1` (DW-4.4)
 - [ ] e2e: forced context loss shows the restyled state with "reload"; unsupported state via a WebGL2-less context (DW-4.5)
-- [ ] Review: the upstream entry names `Time.ts:280` and the workaround (DW-4.6)
+- [ ] Review: the upstream entry names `Time._reset()` and the platform's fix (DW-4.6)
+
+**Phase 5**
+- [ ] e2e: no `.hero` on `/`; no `.footer-inner`, copyright bar present (DW-5.1)
+- [ ] e2e: scenario page has no download link and no `.launch-note`; launch and copy-link work (DW-5.2)
+- [ ] e2e: solar-system with and without `?diag=1` → no overlay element; Backquote → still none; `?diag=1` → build stamp visible (DW-5.3)
+- [ ] Dirty unit: viewer sets `diagnosticsAllowed = false` before load even with `?diag=1`; HUD has no diagnostics output (DW-5.3)
+- [ ] All suites (DW-5.4)
 
 **Manual** (`docs/manual-browser-checks.md`, supports DW-3.1, DW-3.4, DW-4.1, DW-4.2): compare catalog, scenario
 page, loading and HUD against the prototype side by side at 1440 px and 390 px in Chrome and Firefox;
@@ -375,7 +430,7 @@ keyboard-only walk through catalog → scenario → play → exit.
 | Sort on the server | Client sort | Paging makes a client sort wrong | 1 |
 | Filters in the URL | Service-held state | Survives reload, back and shared links | 3 |
 | No placeholder copy for missing data | "Опис не заповнено" / "ПРЕВʼЮ НЕМАЄ" from the mockups | Owner chose "hide empty" | 3 |
-| Host resets `Time.timeScale` around runs, gap recorded | Wait for an engine fix | Students would see frozen scenes now; the rule is "record, then work around" | 4 |
+| No page-side pause/FPS/time-scale reset; the player frame owns them *(owner, 2026-10-25)* | Build them in the page, then move them | Already built and tested in the player; a fresh frame per run fixes G5 for the platform | 4 |
 | Phase 4 after Phase 3 (serial) | Parallel with disjoint scopes | The viewer's exit/cancel target `/scenario/:id` is Phase 3's; both edit `docs/test-plan.md` | 4 |
 
 ---
@@ -387,7 +442,7 @@ keyboard-only walk through catalog → scenario → play → exit.
   so no parallel session creates `006_publish_keys.sql`.
 - **Space pauses even when a scenario uses Space** — the prototype states "Space — пауза"; revisit if content complains.
 - The KSU logo, department name, address and `vlab@ksu.ks.ua` come from the prototype and must be confirmed by the owner before deploy.
-- Release 2 Phase 1 re-hosts the viewer on an isolated player; Phase 4's input-only components are what keep that a re-host, not a rewrite.
+- **Release 1 ships after player-isolation Phase 5** (`../../../.code-foundations/plans/2026-10-24-player-isolation.md`), which wires Phase 4's input-only components to `PlayerHost` and supplies pause (Space), FPS and the fresh-frame restart.
 ---
 ## Decided During Build
 _Filled by /code-foundations:build — one row per decision an agent made or question it raised:_
@@ -411,6 +466,28 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 | 16 | 2 | `e2e/helpers/api.ts` (outside scope, orchestrator-allowed): `E2E_SMALL_ARCHIVE` override, then both workspace layouts and `Benchscene1_primitives`/`Benchscene1_N100` | env fix | assumed |
 | 17 | 2 | Element typography neutralised for `app-admin, app-viewer, app-catalog` via `:where()` (viewer scss is out of scope); global scrollbar and accent `:focus-visible` ring are accepted drift; catalog's `.card-title` inherits global props until Phase 3 | deviation | assumed |
 | 18 | 2 | Footer: "ZIP-архів зі сценарієм, до {limit}" (no number without a limit); `SITE.department` = "Кафедра інформатики, програмної інженерії та економічної кібернетики" | default | assumed |
+| 19 | 3 | URL query (`category`, `q`, `sort`; defaults omitted) is the single holder of the catalog filter (`services/catalog-query.ts`) | plan + DW-3.2 | assumed |
+| 20 | 3 | The scenario page's "Каталог" button returns with the last catalog filter, kept in `ScenarioService.filter` | default | assumed |
+| 21 | 3 | Stale catalog responses (incl. errors and `loading`) are dropped by a request ticket in `ScenarioService` | DW-3.2 | assumed |
+| 22 | 3 | `<vl-toast-host>` is mounted once in `AppComponent` (outside file scope, per Phase 2's "mount once in the shell"); Phase 4 must not mount a second | default | assumed |
+| 23 | 3 | A scenario without `scenarioUrl` has no launch button, sticky bar or download; its card's "Запустити" opens the scenario page | plan edge case | assumed |
+| 24 | 3 | Chips and hero counters show unfiltered API numbers (do not change with search) and survive a failed request | default | assumed |
+| 25 | 3 | Catalog error text is always "Не вдалося завантажити каталог"; detail goes to the console | default | assumed |
+| 26 | 3 | Counter pluralises the whole phrase (1 освітній напрям / 2 освітні напрями / 5 освітніх напрямів) | default | assumed |
+| 27 | 3 | Mobile launch bar is CSS-only at `max-width: 859px` (prototype breakpoint); sidebar launch hidden there | default | assumed |
+| 28 | 3 | Test-plan numbers: 112–119 Phase 2 specs, 120–137 Phase 3; scenarios 79–80 retired, not renumbered | binds later phases | assumed |
+| 29 | 3 | No `overflow-x: hidden` on catalog/scenario `:host` (would break sticky); the body scrolls | default | assumed |
+| 30 | 3 | DW-3.9 same-origin check uses a `page.on('request')` listener rather than a recorded HAR | default | assumed |
+| 31 | 3 | Admin's new buttons are `.add-feature`/`.feature-remove` (not `.btn-small`) so the DW-2.6 characterization baseline is undisturbed | deviation | assumed |
+| 32 | 4 | Byte line: loaded > total drops the total ("X МБ"); both figures in МБ with one decimal and a comma (prototype), not `formatBytes`'s per-value units; shown only when `loadedBytes` is supplied (hidden for streaming) | default / prototype | assumed |
+| 33 | 4 | Stage labels "Отримання даних із сервера" (download) and "Ініціалізація сцени" (engine/streaming); the engine's English `currentOperation` is no longer shown | prototype | assumed |
+| 34 | 4 | HUD keeps the `viewer-controls` / `title-badge` classes that existing e2e specs wait on | pattern reuse | assumed |
+| 35 | 4 | Restart button aria-label "Спочатку" (prototype) replaces "Перезапустити сценарій" | prototype | assumed |
+| 36 | 4 | Only the HUD's exit and the loader's cancel go to `/scenario/:id`; error/unsupported/context-lost keep their catalog/reload actions | plan "existing actions" | assumed |
+| 37 | 4 | "Space — пауза" hint renders only with `canPause` | no-fake-controls constraint | assumed |
+| 38 | 4 | HUD has no diagnostics control; `toggleDiagnostics`/`diagnosticsVisible`/`enforceDiagnosticsPolicy` left for Phase 5; e2e now asserts no button and that `?diag=1` leaves solar-system's own overlay open (Phase 5 reverses this) | orchestrator clarification | assumed |
+| 39 | 4 | Viewer half of `nocturne-foundation.spec.ts` retired; `app-viewer` dropped from `_legacy.scss`; test-plan numbers 138–144 used | orchestrator allowance / #28 | assumed |
+| 40 | 4 | `CLAUDE.md` still describes the old viewer diagnostics button — Phase 5 owns `CLAUDE.md`'s viewer/diagnostics wording | file scope | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_
@@ -421,3 +498,29 @@ _To be filled during /code-foundations:build_
 - [x] Committed
 Commit: 8940004
 Summary: Migration 006 (categories with icon/sort_order/is_visible, scenarios.features) plus `/api/catalog` (archiveBytes, updatedAt, features, categories with icon+count, summary, whitelisted `sort=new|title` in uk-x-icu), `/api/catalog/:id` with `related`, `GET /api/config {maxArchiveBytes}` (200 MiB default, oversize → 413) and validated admin `features`; backend suite 348 green.
+
+### Phase 2: Nocturne foundation (Gate: Standard)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete
+- [x] REVIEW: DEFERRED — batch pending (tests green at commit)
+- [x] Committed
+Commit: a1433b0
+Summary: Nocturne tokens/components/keyframes live in `frontend/src/styles/` (ground #161826, light rules gone), Inter 400/500 and a generated 133-icon Phosphor subset are self-hosted; `ui/` provides `<vl-icon>`, `<vl-site-header [brand]>` (slots header-start/header-end), `<vl-site-footer [maxArchiveBytes]>`, `<vl-scenario-card>` (open/launch emit the id), `ToastService` + `<vl-toast-host>`, `formatBytes/formatDate/pluralUk`, `categoryGradient`, and `site.config.ts` `SITE`; old /admin and viewer unchanged in look (legacy scope); unit 136 green, e2e 30 pass / 8 skip.
+- [x] 2026-10-25 Fixed batch review findings — DW-2.6 admin characterization flake (hover transition mid-flight) settled before snapshot (5e73278)
+- Covered by batch review 2026-10-25 (phases 2–3)
+
+### Phase 3: Catalog and scenario page (Gate: Standard)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete
+- [x] REVIEW: DEFERRED — batch pending (tests green at commit)
+- [x] Committed
+Commit: d800252
+Summary: The catalog is prototype 2a on Nocturne (real `summary` counters, icon chips in API order, sort segment, footer limit from `/api/config`) with category/q/sort in the URL query and stale responses dropped; `/scenario/:id` (2b, lazy route, logo-only header with back + breadcrumbs, meta table, features, related, copy link with fallback, sticky launch bar, not-found/error) replaced the modal and theme toggle; the old /admin edits up to six features; `ScenarioService.fetchScenarioById` returns `ScenarioDetail`; the viewer's exit target is still `/catalog` (Phase 4 switches it); unit 226 green, e2e 48 pass / 8 skip.
+- Covered by batch review 2026-10-25 (phases 2–3)
+
+### Phase 4: Viewer (presentational HUD) (Gate: Standard)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete
+- [x] REVIEW: DEFERRED — batch pending (tests green at commit)
+- [x] Committed
+Commit: 9716127
+Summary: The viewer is Nocturne 2c/2d built from input-only `<vl-viewer-loading [title] [percent] [loadedBytes] [totalBytes] [stage] (cancel)>` and `<vl-viewer-hud [title] [fps] [paused] [canPause] [canRestart] (exit) (togglePause) (restart) (fullscreen)>` (FPS slot, pause button and Space hint render only when supplied; no diagnostics control); exit/cancel go to `/scenario/:id`; stream/abort/dispose/telemetry/restart-from-buffer unchanged; the viewer still holds `toggleDiagnostics`/`enforceDiagnosticsPolicy` and the `?diag=1` build stamp for Phase 5 to cut down; G5 entry is `docs/upstream/webenginets.md` §6 and the shared row points at it (uncommitted in `.claude-shared`); unit 250 green, e2e 54 pass / 8 skip.
+
+_2026-10-25 15:30: the main checkout was switched to `main` by another session, discarding this plan's uncommitted edits (owner's Phase 4/5 amendments, decisions #19–40, log entries for Phases 2–4). Restored from the orchestrator's copy and committed; the build continues in `.claude/worktrees/nocturne-release-1`._
