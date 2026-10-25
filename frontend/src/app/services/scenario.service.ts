@@ -4,11 +4,14 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import {
+  CatalogSummary,
+  CategoryFilter,
   ScenarioCatalogItem,
   ScenarioCatalogManifest,
-  CategoryFilter,
+  ScenarioDetail,
 } from '../models/scenario.model';
 import { environment } from '../../environments/environment';
+import { CatalogFilter, DEFAULT_CATALOG_FILTER } from './catalog-query';
 
 /**
  * Download progress event emitted while fetching a scenario ZIP.
@@ -22,29 +25,14 @@ export interface DownloadProgress {
   percent: number;
 }
 
-/**
- * Icons per category key. The set of categories itself comes from the API —
- * this is only a display lookup, so an unknown category still renders.
- */
-const CATEGORY_ICONS: Record<string, string> = {
-  all: '📋',
-  physics: '⚡',
-  biology: '🧬',
-  chemistry: '🧪',
-  history: '🏛️',
-  astronomy: '🔭',
-};
-
-const DEFAULT_CATEGORY_ICON = '📁';
-
 /** Scenarios fetched per request; the catalog appends pages on demand. */
 const PAGE_SIZE = 24;
 
-const ALL_CATEGORIES: CategoryFilter = {
-  id: 'all',
-  label: 'Всі сценарії',
-  icon: CATEGORY_ICONS['all'],
-};
+/** Shown for any catalog failure; the technical detail goes to the console. */
+const CATALOG_ERROR = 'Не вдалося завантажити каталог';
+
+/** The chip that clears the category filter. */
+const ALL_CATEGORIES = { id: 'all', label: 'Усі напрями', icon: 'list-dashes' } as const;
 
 @Injectable({ providedIn: 'root' })
 export class ScenarioService {
@@ -53,97 +41,124 @@ export class ScenarioService {
 
   private readonly _scenarios = signal<ScenarioCatalogItem[]>([]);
   private readonly _apiCategories = signal<CategoryFilter[]>([]);
+  private readonly _summary = signal<CatalogSummary | null>(null);
   private readonly _loading = signal<boolean>(false);
+  private readonly _loaded = signal<boolean>(false);
   private readonly _error = signal<string | null>(null);
   private readonly _total = signal(0);
+  private readonly _filter = signal<CatalogFilter>(DEFAULT_CATALOG_FILTER);
+
+  /**
+   * Identifies the newest request. A response that comes back for an older one is dropped, so a
+   * slow answer for a previous filter can never overwrite the list of the current one.
+   */
+  private latestRequest = 0;
 
   public readonly scenarios = this._scenarios.asReadonly();
   public readonly loading = this._loading.asReadonly();
   public readonly error = this._error.asReadonly();
 
+  /** True once a request has finished (either way): before that, an empty list means "not yet". */
+  public readonly loaded = this._loaded.asReadonly();
+
+  /** Whole-catalog counters; null until the first successful answer. */
+  public readonly summary = this._summary.asReadonly();
+
+  /** The filter of the latest catalog request; the scenario page links back with it. */
+  public readonly filter = this._filter.asReadonly();
+
   /** How many scenarios match the current filter, across all pages. */
   public readonly total = this._total.asReadonly();
   public readonly hasMore = computed(() => this._scenarios().length < this._total());
 
-  /** "Всі сценарії" plus whatever categories the published scenarios actually use. */
-  public readonly categories = computed<CategoryFilter[]>(
-    () => [ALL_CATEGORIES, ...this._apiCategories()]
-  );
+  /** "Усі напрями" plus the API's categories, in the API's order. */
+  public readonly categories = computed<CategoryFilter[]>(() => [
+    { ...ALL_CATEGORIES, count: this._summary()?.scenarios ?? 0 },
+    ...this._apiCategories(),
+  ]);
 
   // ==================== CATALOG ====================
 
   /**
    * Loads the first page for the given filter, replacing what is held.
    *
-   * Filtering and paging both happen server-side — a client-side filter over a
+   * Filtering, ordering and paging all happen server-side — a client-side filter over a
    * paged response would only ever search the page in hand.
    */
-  async loadCatalog(category = 'all', query = ''): Promise<void> {
-    await this.fetchPage(category, query, 0, false);
+  async loadCatalog(filter: CatalogFilter = DEFAULT_CATALOG_FILTER): Promise<void> {
+    await this.fetchPage(filter, 0, false);
   }
 
   /** Appends the next page for the same filter. */
-  async loadMore(category = 'all', query = ''): Promise<void> {
+  async loadMore(filter: CatalogFilter = DEFAULT_CATALOG_FILTER): Promise<void> {
     if (this._loading() || !this.hasMore()) return;
-    await this.fetchPage(category, query, this._scenarios().length, true);
+    await this.fetchPage(filter, this._scenarios().length, true);
   }
 
-  private async fetchPage(
-    category: string,
-    query: string,
-    offset: number,
-    append: boolean
-  ): Promise<void> {
+  private async fetchPage(filter: CatalogFilter, offset: number, append: boolean): Promise<void> {
+    const request = ++this.latestRequest;
     this._loading.set(true);
     this._error.set(null);
+    this._filter.set(filter);
 
     let params = new HttpParams()
       .set('limit', String(PAGE_SIZE))
       .set('offset', String(offset));
 
-    if (category && category !== 'all') params = params.set('category', category);
-    if (query.trim()) params = params.set('q', query.trim());
+    if (filter.category && filter.category !== 'all') params = params.set('category', filter.category);
+    if (filter.q.trim()) params = params.set('q', filter.q.trim());
+    if (filter.sort !== DEFAULT_CATALOG_FILTER.sort) params = params.set('sort', filter.sort);
 
     try {
       const manifest = await firstValueFrom(
         this.http.get<ScenarioCatalogManifest>(environment.catalogUrl, { params })
       );
+      if (request !== this.latestRequest) return;
 
       const page = manifest.scenarios ?? [];
       this._scenarios.set(append ? [...this._scenarios(), ...page] : page);
       this._total.set(manifest.total ?? page.length);
+      this._summary.set(manifest.summary ?? null);
       this._apiCategories.set(
         (manifest.categories ?? []).map(c => ({
           id: c.category,
           label: c.categoryLabel,
-          icon: CATEGORY_ICONS[c.category] ?? DEFAULT_CATEGORY_ICON,
+          icon: c.icon,
+          count: c.count,
         }))
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Не вдалося завантажити каталог';
-      this._error.set(message);
+      console.error('[ScenarioService] Catalog load failed:', err);
+      if (request !== this.latestRequest) return;
+
+      this._error.set(CATALOG_ERROR);
+      // The chips and counters describe the whole catalog and stay; only the list is lost.
       if (!append) {
         this._scenarios.set([]);
-        this._apiCategories.set([]);
         this._total.set(0);
       }
-      console.error('[ScenarioService] Catalog load failed:', err);
     } finally {
-      this._loading.set(false);
+      if (request === this.latestRequest) {
+        this._loading.set(false);
+        this._loaded.set(true);
+      }
     }
   }
 
   /**
-   * Fetches a single scenario straight from the API.
+   * Fetches a single scenario, with its related scenarios, straight from the API.
    *
-   * The viewer uses this instead of an in-memory lookup so that a hard reload
-   * of /play/:id — where the catalog was never loaded — still resolves, and so
+   * The viewer and the scenario page use this instead of an in-memory lookup so that a hard reload
+   * of /play/:id or /scenario/:id — where the catalog was never loaded — still resolves, and so
    * that the archive URL comes from the server rather than from the query string.
+   * Rejects with the `HttpErrorResponse`, so a caller can tell a 404 from a server error.
    */
-  async fetchScenarioById(id: string): Promise<ScenarioCatalogItem> {
-    return firstValueFrom(
-      this.http.get<ScenarioCatalogItem>(`${environment.catalogUrl}/${encodeURIComponent(id)}`)
+  async fetchScenarioById(id: string): Promise<ScenarioDetail> {
+    const detail = await firstValueFrom(
+      this.http.get<ScenarioDetail>(`${environment.catalogUrl}/${encodeURIComponent(id)}`)
     );
+    // Both lists may be missing from an older answer; the page can rely on arrays.
+    return { ...detail, features: detail.features ?? [], related: detail.related ?? [] };
   }
 
   // ==================== ZIP DOWNLOAD ====================

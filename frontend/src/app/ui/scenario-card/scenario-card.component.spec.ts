@@ -1,5 +1,7 @@
 // path: src/app/ui/scenario-card/scenario-card.component.spec.ts
 //
+// Covers test-plan scenario 117.
+//
 // Release 1, phase 2 - DW-2.4: the card opens on click, launches from its button without also
 // opening, falls back to the category gradient, and keeps long text from stretching the grid.
 

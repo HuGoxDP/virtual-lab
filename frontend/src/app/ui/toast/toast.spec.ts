@@ -1,5 +1,7 @@
 // path: src/app/ui/toast/toast.spec.ts
 //
+// Covers test-plan scenario 117.
+//
 // Release 1, phase 2 - DW-2.4: a toast shows, hides by itself, and is announced (aria-live).
 
 import { ComponentFixture, TestBed } from '@angular/core/testing';

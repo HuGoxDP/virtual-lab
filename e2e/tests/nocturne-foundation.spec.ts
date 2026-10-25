@@ -1,5 +1,7 @@
 // e2e/tests/nocturne-foundation.spec.ts
 //
+// Covers test-plan scenarios 114, 119 (DW-2.2, DW-2.6).
+//
 // Nocturne foundation (release 1, phase 2): the design system reached the page
 // without disturbing what it must not touch.
 //

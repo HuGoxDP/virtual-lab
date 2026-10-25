@@ -1,5 +1,7 @@
 // path: src/app/ui/site-footer/site-footer.component.spec.ts
 //
+// Covers test-plan scenario 116.
+//
 // Release 1, phase 2 - DW-2.4: the footer renders the texts of site.config.ts, and the archive limit
 // comes from its input (never a hard-coded number, never a Unity/Drive wording).
 

@@ -1,6 +1,8 @@
 /// <reference types="node" />
 // path: src/styles/nocturne-styles.spec.ts
 //
+// Covers test-plan scenario 112, 113 (DW-2.1, DW-2.2 stylesheet half).
+//
 // Release 1, phase 2 - DW-2.1 (tokens and component classes carry the design file's values, the page
 // ground is #161826, no light theme) and the stylesheet half of DW-2.2 (Inter faces point at files
 // that ship). The design file is outside the repo; `nocturne.fixture.ts` is the committed copy.

@@ -3,8 +3,15 @@
 import { Component, ChangeDetectionStrategy, OnInit, inject, signal } from '@angular/core';
 import { RouterModule } from '@angular/router';
 
-import { AdminScenario } from '../../models/scenario.model';
+import { AdminScenario, ScenarioFeature } from '../../models/scenario.model';
 import { AdminService, ScenarioDraft } from '../../services/admin.service';
+import { ICON_NAMES } from '../../ui/icon/icon.component';
+
+/** The server's own cap on "Що всередині" (backend/catalog-input.js); it still answers 400 above it. */
+export const MAX_FEATURES = 6;
+
+/** Icon given to a freshly added entry. */
+const DEFAULT_FEATURE_ICON = 'cube';
 
 const EMPTY_DRAFT: ScenarioDraft = {
   id: '',
@@ -16,6 +23,7 @@ const EMPTY_DRAFT: ScenarioDraft = {
   imageUrl: '',
   version: '1.0.0',
   author: '',
+  features: [],
 };
 
 @Component({
@@ -37,6 +45,9 @@ export class AdminComponent implements OnInit {
   readonly isLoading = signal(false);
   readonly errorMessage = signal<string | null>(null);
   readonly notice = signal<string | null>(null);
+
+  readonly iconNames = ICON_NAMES;
+  readonly maxFeatures = MAX_FEATURES;
 
   /** Draft being edited; `null` when the form is closed. */
   readonly draft = signal<ScenarioDraft | null>(null);
@@ -118,7 +129,7 @@ export class AdminComponent implements OnInit {
 
   startCreate(): void {
     this.editingId.set(null);
-    this.draft.set({ ...EMPTY_DRAFT });
+    this.draft.set({ ...EMPTY_DRAFT, features: [] });
     this.notice.set(null);
   }
 
@@ -134,6 +145,7 @@ export class AdminComponent implements OnInit {
       imageUrl: scenario.imageUrl ?? '',
       version: scenario.version ?? '',
       author: scenario.author ?? '',
+      features: (scenario.features ?? []).map(feature => ({ ...feature })),
     });
     this.notice.set(null);
   }
@@ -148,9 +160,40 @@ export class AdminComponent implements OnInit {
     this.draft.update(current => (current ? { ...current, [field]: value } : current));
   }
 
+  // ---- "Що всередині" ----
+
+  addFeature(): void {
+    this.draft.update(current =>
+      current && current.features.length < MAX_FEATURES
+        ? { ...current, features: [...current.features, { icon: DEFAULT_FEATURE_ICON, title: '', subtitle: '' }] }
+        : current
+    );
+  }
+
+  removeFeature(index: number): void {
+    this.draft.update(current =>
+      current ? { ...current, features: current.features.filter((_, i) => i !== index) } : current
+    );
+  }
+
+  updateFeature(index: number, field: keyof ScenarioFeature, event: Event): void {
+    const value = (event.target as HTMLInputElement | HTMLSelectElement).value;
+    this.draft.update(current =>
+      current
+        ? { ...current, features: current.features.map((f, i) => (i === index ? { ...f, [field]: value } : f)) }
+        : current
+    );
+  }
+
+  /** An empty subtitle is "no subtitle": the server stores absence, not an empty string. */
+  private static cleanFeatures(features: ScenarioFeature[]): ScenarioFeature[] {
+    return features.map(({ icon, title, subtitle }) => (subtitle ? { icon, title, subtitle } : { icon, title }));
+  }
+
   async saveDraft(): Promise<void> {
-    const draft = this.draft();
-    if (!draft) return;
+    const current = this.draft();
+    if (!current) return;
+    const draft = { ...current, features: AdminComponent.cleanFeatures(current.features) };
 
     if (!draft.id || !draft.title || !draft.category || !draft.categoryLabel) {
       this.errorMessage.set('Обов\'язкові поля: id, назва, категорія, підпис категорії.');

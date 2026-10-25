@@ -1,6 +1,8 @@
 /// <reference types="node" />
 // path: src/app/ui/icon/icon-generator.spec.ts
 //
+// Covers test-plan scenario 115.
+//
 // Release 1, phase 2 - DW-2.3: the committed icon-data.generated.ts is exactly what
 // scripts/build-icons.mjs produces (re-running it is a no-op), and the generator refuses an icon
 // that is not made of plain <path d> elements.

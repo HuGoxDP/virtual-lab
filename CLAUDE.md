@@ -144,9 +144,15 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
 ## Key components
 
 **Frontend** (`frontend/`, Angular 21, standalone components, project name `university-mock`)
-- `src/app/pages/catalog/` — catalog: category filter, search, paging, detail modal, dark mode.
-  **Filtering and paging are server-side** (`?category=&q=&limit=&offset=`) — a client-side filter
-  over a paged response would only ever search the page in hand.
+- `src/app/pages/catalog/` — the Nocturne catalog (hero with real counters, sort segment, icon chips,
+  card grid, footer). **Filtering, search, sorting and paging are server-side**
+  (`?category=&q=&sort=&limit=&offset=`) — a client-side filter over a paged response would only ever
+  search the page in hand. **The URL's query string (`category`, `q`, `sort`; defaults omitted) is the
+  only holder of the filter** (`services/catalog-query.ts`): controls navigate, an effect loads, Back works.
+- `src/app/pages/scenario/` — `/scenario/:id`, which replaced the details modal: fields, "Що всередині",
+  related scenarios, copy link (falls back to a selectable field when the Clipboard API is missing — the
+  server runs plain HTTP), archive download, not-found and error states, a sticky launch bar on narrow
+  screens. The viewer's exit target.
 - `src/app/pages/viewer/` — the 3D host: canvas, load progress, error states, engine lifecycle,
   restart / fullscreen, WebGL2 probe and context-loss handling. The `MemoryProfiler` overlay is a
   **measurement tool, not a student control**: the button only renders with `?diag=1` on the
@@ -155,11 +161,13 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   `solar-system` does exactly that — so the gate on the button is not sufficient.
   `enforceDiagnosticsPolicy()` closes it after load when the flag is absent. Whether the overlay
   belongs in a scenario is ScenarioCreator's question; whether students see it is this repo's.
-- `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit, publish
-  toggle, delete, archive upload with progress. The token lives in `sessionStorage`
+- `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit (including the
+  "Що всередині" editor, up to six entries), publish toggle, delete, archive upload with progress. The token lives in `sessionStorage`
   (`AdminService`), so it dies with the tab.
-- `src/app/services/scenario.service.ts` — catalog state as **signals**, paged fetching, and the
-  streamed ZIP download with progress and abort.
+- `src/app/services/scenario.service.ts` — catalog state as **signals**, paged fetching (a response for an
+  older request is dropped, so the newest filter always wins), `fetchScenarioById` (with `related`), and
+  the streamed ZIP download with progress and abort. `platform-config.service.ts` reads `/api/config`
+  for the footer's archive limit.
 - `src/app/services/admin.service.ts` — admin token + CRUD + upload with progress.
 - `src/app/services/telemetry.service.ts` — anonymous session log; failures are swallowed, since
   telemetry must never break playback.
@@ -273,8 +281,8 @@ Consequences to respect:
 ```bash
 # Tests
 cd backend  && npm test           # 348 tests; needs docker-compose.test.yml up
-cd frontend && npx ng test --no-watch   # 60 tests
-cd e2e      && npm test           # 35 Playwright tests; needs the stack up AND a published
+cd frontend && npx ng test --no-watch   # 226 tests
+cd e2e      && npm test           # 56 Playwright tests (8 skip by design); needs the stack up AND a published
                                   # catalog — see e2e/README.md
 docker compose -f docker-compose.test.yml up -d   # throwaway Postgres on :55432
 

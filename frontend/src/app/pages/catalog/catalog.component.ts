@@ -1,202 +1,209 @@
 // path: src/app/pages/catalog/catalog.component.ts
 
 import {
-  Component,
-  OnInit,
-  OnDestroy,
   ChangeDetectionStrategy,
-  ElementRef,
-  ViewChild,
+  Component,
+  OnDestroy,
+  computed,
+  effect,
   inject,
   signal,
+  untracked,
 } from '@angular/core';
-import { Router, RouterModule } from '@angular/router';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { ActivatedRoute, Router } from '@angular/router';
 
-import { ScenarioCatalogItem } from '../../models/scenario.model';
+import { SITE } from '../../site.config';
+import { AdminService } from '../../services/admin.service';
+import {
+  CatalogFilter,
+  CatalogSort,
+  DEFAULT_CATALOG_FILTER,
+  parseCatalogQuery,
+  sameCatalogFilter,
+  toCatalogQuery,
+} from '../../services/catalog-query';
+import { PlatformConfigService } from '../../services/platform-config.service';
 import { ScenarioService } from '../../services/scenario.service';
-
-/** Inline placeholder for scenarios without a usable preview image. */
-const IMAGE_PLACEHOLDER =
-  'data:image/svg+xml;utf8,' +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400">' +
-    '<rect width="600" height="400" fill="#1e1e36"/>' +
-    '<text x="300" y="205" fill="#9ca3af" font-family="sans-serif" font-size="28" ' +
-    'text-anchor="middle">Без зображення</text></svg>'
-  );
+import { IconComponent } from '../../ui/icon/icon.component';
+import { pluralUk } from '../../ui/format';
+import { ScenarioCardComponent } from '../../ui/scenario-card/scenario-card.component';
+import { SiteFooterComponent } from '../../ui/site-footer/site-footer.component';
+import { SiteHeaderComponent } from '../../ui/site-header/site-header.component';
 
 /** Wait after the last keystroke before querying the server. */
 const SEARCH_DEBOUNCE_MS = 300;
 
+const SCENARIO_FORMS = ['сценарій', 'сценарії', 'сценаріїв'] as const;
+const DIRECTION_FORMS = ['освітній напрям', 'освітні напрями', 'освітніх напрямів'] as const;
+
+/**
+ * The public catalog (prototype screen 2a). The URL's query string (`category`, `q`, `sort`) is the
+ * only holder of the filter: controls navigate, the URL change loads from the server, and the
+ * browser's Back button restores a filter without any extra bookkeeping.
+ */
 @Component({
   selector: 'app-catalog',
   standalone: true,
-  imports: [RouterModule],
+  imports: [
+    IconComponent,
+    ScenarioCardComponent,
+    SiteFooterComponent,
+    SiteHeaderComponent,
+  ],
   templateUrl: './catalog.component.html',
   styleUrls: ['./catalog.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class CatalogComponent implements OnInit, OnDestroy {
+export class CatalogComponent implements OnDestroy {
 
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
   private readonly scenarioService = inject(ScenarioService);
+  private readonly admin = inject(AdminService);
 
-  @ViewChild('modalWindow')
-  modalRef?: ElementRef<HTMLElement>;
-
-  // Theme
-  readonly isDarkMode = signal(false);
+  protected readonly site = SITE;
 
   // Data — read straight off the service's signals; no subscriptions to clean up.
   readonly scenarios = this.scenarioService.scenarios;
   readonly categories = this.scenarioService.categories;
+  readonly summary = this.scenarioService.summary;
   readonly isLoading = this.scenarioService.loading;
+  readonly isLoaded = this.scenarioService.loaded;
   readonly errorMessage = this.scenarioService.error;
   readonly total = this.scenarioService.total;
   readonly hasMore = this.scenarioService.hasMore;
+  private readonly platformConfig = inject(PlatformConfigService);
+  readonly maxArchiveBytes = this.platformConfig.maxArchiveBytes;
 
-  // Filters. Both are applied server-side, so paging stays correct.
-  readonly selectedCategory = signal('all');
-  readonly searchQuery = signal('');
+  /** "Панель" once an admin token is in the session, "Увійти" before. */
+  readonly accountLabel = computed(() => (this.admin.isAuthenticated() ? 'Панель' : 'Увійти'));
+  readonly accountIcon = computed(() => (this.admin.isAuthenticated() ? 'squares-four' : 'sign-in'));
 
+  // Filter, as the URL states it. Equal filters keep the same value, so a redundant emission of the
+  // query map never reloads the list.
+  private readonly queryParams = toSignal(this.route.queryParamMap, { requireSync: true });
+  readonly filter = computed<CatalogFilter>(
+    () => {
+      const map = this.queryParams();
+      return parseCatalogQuery(Object.fromEntries(map.keys.map(key => [key, map.getAll(key)])));
+    },
+    { equal: sameCatalogFilter },
+  );
+
+  /** What the search box shows; runs ahead of the URL while the debounce is pending. */
+  readonly searchText = signal(this.filter().q);
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Modal
-  readonly isModalOpen = signal(false);
-  readonly activeScenario = signal<ScenarioCatalogItem | null>(null);
-  private lastFocused: HTMLElement | null = null;
+  readonly totalLabel = computed(() => {
+    const count = this.summary()?.scenarios;
+    return count == null ? '' : `${count} ${pluralUk(count, SCENARIO_FORMS)} у каталозі`;
+  });
+  readonly directionsLabel = computed(() => {
+    const count = this.summary()?.categories;
+    return count == null ? '' : `${count} ${pluralUk(count, DIRECTION_FORMS)}`;
+  });
+  readonly foundLabel = computed(
+    () => `Знайдено ${this.total()} ${pluralUk(this.total(), SCENARIO_FORMS)}`,
+  );
 
-  ngOnInit(): void {
-    this.applyStoredTheme();
-    void this.scenarioService.loadCatalog();
+  readonly isEmpty = computed(
+    () => this.isLoaded() && !this.isLoading() && !this.errorMessage() && this.scenarios().length === 0,
+  );
+  readonly hasError = computed(() => !!this.errorMessage() && !this.isLoading());
+
+  constructor() {
+    void this.platformConfig.load();
+
+    // One load per distinct filter: on entry, and whenever the URL's query changes.
+    effect(() => {
+      const filter = this.filter();
+      untracked(() => void this.scenarioService.loadCatalog(filter));
+    });
+
+    // The URL changed from outside (Back, a reset, a link): the search box follows it, unless the
+    // user is mid-word and the debounce is about to say something newer.
+    effect(() => {
+      const q = this.filter().q;
+      if (this.searchTimer === null) untracked(() => this.searchText.set(q));
+    });
   }
 
   ngOnDestroy(): void {
-    if (this.searchTimer) clearTimeout(this.searchTimer);
-  }
-
-  // ==================== THEME ====================
-
-  private applyStoredTheme(): void {
-    const dark = localStorage.getItem('theme') === 'dark';
-    this.isDarkMode.set(dark);
-    this.syncThemeClass(dark);
-  }
-
-  toggleTheme(): void {
-    const next = !this.isDarkMode();
-    this.isDarkMode.set(next);
-    localStorage.setItem('theme', next ? 'dark' : 'light');
-    this.syncThemeClass(next);
-  }
-
-  /** Also on <html>, so the viewer and any future page follow the same theme. */
-  private syncThemeClass(dark: boolean): void {
-    document.documentElement.classList.toggle('dark-theme', dark);
+    this.clearSearchTimer();
   }
 
   // ==================== FILTERS ====================
 
   selectCategory(id: string): void {
-    if (this.selectedCategory() === id) return;
-    this.selectedCategory.set(id);
-    void this.reload();
+    this.navigate({ category: id });
+  }
+
+  setSort(sort: CatalogSort): void {
+    this.navigate({ sort });
   }
 
   onSearch(event: Event): void {
-    this.searchQuery.set((event.target as HTMLInputElement).value);
+    this.searchText.set((event.target as HTMLInputElement).value);
+    this.clearSearchTimer();
+    this.searchTimer = setTimeout(() => {
+      this.searchTimer = null;
+      // Typing replaces the history entry: Back should leave the page, not undo letters.
+      this.navigate({ q: this.searchText().trim() }, true);
+    }, SEARCH_DEBOUNCE_MS);
+  }
 
-    if (this.searchTimer) clearTimeout(this.searchTimer);
-    this.searchTimer = setTimeout(() => void this.reload(), SEARCH_DEBOUNCE_MS);
+  clearSearch(): void {
+    this.clearSearchTimer();
+    this.searchText.set('');
+    this.navigate({ q: '' });
+  }
+
+  resetFilters(): void {
+    this.clearSearchTimer();
+    this.searchText.set('');
+    this.navigate({ ...DEFAULT_CATALOG_FILTER });
   }
 
   reload(): Promise<void> {
-    return this.scenarioService.loadCatalog(this.selectedCategory(), this.searchQuery());
+    return this.scenarioService.loadCatalog(this.filter());
   }
 
   loadMore(): Promise<void> {
-    return this.scenarioService.loadMore(this.selectedCategory(), this.searchQuery());
+    return this.scenarioService.loadMore(this.filter());
   }
 
-  // ==================== MODAL ====================
-
-  openModal(scenario: ScenarioCatalogItem, event: Event): void {
-    this.lastFocused = event.currentTarget as HTMLElement;
-    this.activeScenario.set(scenario);
-    this.isModalOpen.set(true);
-
-    // Move focus into the dialog so keyboard users are not left behind it.
-    setTimeout(() => this.modalRef?.nativeElement.focus(), 0);
+  private navigate(change: Partial<CatalogFilter>, replaceUrl = false): void {
+    const next = { ...this.filter(), ...change };
+    if (sameCatalogFilter(next, this.filter())) return;
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: toCatalogQuery(next),
+      replaceUrl,
+    });
   }
 
-  closeModal(): void {
-    this.isModalOpen.set(false);
-    this.lastFocused?.focus();
-    this.lastFocused = null;
-    // Let the closing transition finish before dropping the content.
-    setTimeout(() => this.activeScenario.set(null), 250);
+  private clearSearchTimer(): void {
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.searchTimer = null;
   }
 
-  onOverlayClick(event: MouseEvent): void {
-    if ((event.target as HTMLElement).classList.contains('modal-overlay')) {
-      this.closeModal();
-    }
+  // ==================== NAVIGATION ====================
+
+  openScenario(id: string): void {
+    void this.router.navigate(['/scenario', id]);
   }
 
-  onModalKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.stopPropagation();
-      this.closeModal();
-      return;
-    }
-
-    if (event.key !== 'Tab') return;
-
-    // Focus trap: keep Tab cycling inside the dialog while it is open.
-    const root = this.modalRef?.nativeElement;
-    if (!root) return;
-
-    const focusable = Array.from(
-      root.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), a[href], input, textarea, select, [tabindex]:not([tabindex="-1"])'
-      )
-    ).filter(element => element.offsetParent !== null);
-
-    if (focusable.length === 0) return;
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement as HTMLElement | null;
-
-    if (event.shiftKey && (active === first || active === root)) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault();
-      first.focus();
-    }
+  /**
+   * "Запустити" on a card goes straight to the player. A scenario with no archive cannot run, so it
+   * opens its page instead of a viewer that could only fail.
+   */
+  launchScenario(id: string): void {
+    const scenario = this.scenarios().find(s => s.id === id);
+    void this.router.navigate(scenario?.scenarioUrl ? ['/play', id] : ['/scenario', id]);
   }
 
-  // ==================== LAUNCH ====================
-
-  launchScenario(): void {
-    const scenario = this.activeScenario();
-    if (!scenario?.scenarioUrl) return;
-
-    // Only the id travels — the viewer resolves the archive URL through the API.
-    void this.router.navigate(['/play', scenario.id]);
-  }
-
-  // ==================== HELPERS ====================
-
-  handleImageError(event: Event): void {
-    const img = event.target as HTMLImageElement;
-    if (img.src !== IMAGE_PLACEHOLDER) {
-      img.src = IMAGE_PLACEHOLDER;
-    }
-  }
-
-  hasScenarioUrl(scenario: ScenarioCatalogItem): boolean {
-    return !!scenario.scenarioUrl;
+  goAccount(): void {
+    void this.router.navigate(['/admin']);
   }
 }

@@ -1,5 +1,7 @@
 // path: src/app/ui/format.spec.ts
 //
+// Covers test-plan scenario 118.
+//
 // Release 1, phase 2 - DW-2.5: byte sizes, Kyiv dates with our own month names, Ukrainian plurals.
 
 import { formatBytes, formatDate, pluralUk } from './format';

@@ -14,6 +14,11 @@ export const routes: Routes = [
       import('./pages/catalog/catalog.component').then(m => m.CatalogComponent),
   },
   {
+    path: 'scenario/:id',
+    loadComponent: () =>
+      import('./pages/scenario/scenario.component').then(m => m.ScenarioComponent),
+  },
+  {
     path: 'play/:id',
     loadComponent: () =>
       import('./pages/viewer/viewer.component').then(m => m.ViewerComponent),

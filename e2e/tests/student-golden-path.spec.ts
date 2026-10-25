@@ -1,8 +1,9 @@
 // e2e/tests/student-golden-path.spec.ts
 //
-// test-plan.md §4.11 #97 — the path every student takes.
+// test-plan.md §4.11 #97 and #132 (release 1, phase 3: DW-3.2, DW-3.5, DW-3.10) — the path every
+// student takes.
 //
-// Catalog → filter → search → open a scenario → the ring advances 0→100 → the
+// Catalog → filter → search → scenario page → launch → the ring advances 0→100 → the
 // scene actually renders → back. Plus the telemetry pair, asserted from the
 // network rather than the database: the `end` call goes out through
 // `sendBeacon` during unload, and observing the request is the only way to see
@@ -24,7 +25,7 @@ test.describe('student golden path', () => {
     expect(initialCount).toBeGreaterThan(0);
 
     // ── filter by category ────────────────────────────
-    const chips = page.locator('.filters-bar button');
+    const chips = page.locator('.chips .chip');
     await expect(chips.first()).toBeVisible();
 
     // The second chip is the first real category — the first is "all".
@@ -37,14 +38,16 @@ test.describe('student golden path', () => {
 
     // Filtering is server-side, so every card on the page must match — a
     // client-side filter over a paged response could only ever filter one page.
-    const shownCategories = await page.locator('.scenario-card .category-tag').allTextContents();
+    const shownCategories = await page.locator('.scenario-card .card-kicker').allTextContents();
     expect(shownCategories.length).toBeGreaterThan(0);
     for (const label of shownCategories) {
       expect(subjectLabel).toContain(label.trim());
     }
+    await expect(page).toHaveURL(/[?&]category=/);
 
     // ── search ────────────────────────────────────────
     await chips.first().click();  // back to "all"
+    await expect(page).not.toHaveURL(/category=/);
     await expect(cards.first()).toBeVisible();
 
     const target = await smallestPublishedScenario();
@@ -57,12 +60,22 @@ test.describe('student golden path', () => {
         { message: `search for "${searchTerm}" should narrow the grid` })
       .toEqual(expect.arrayContaining([expect.stringContaining(searchTerm)]));
 
-    // ── open the detail modal ─────────────────────────
+    await expect(page).toHaveURL(/[?&]q=/);
+
+    // ── open the scenario page ────────────────────────
     await page.locator('.scenario-card', { hasText: target.title }).first().click();
 
-    const modal = page.getByRole('dialog');
-    await expect(modal).toBeVisible();
-    await expect(modal).toHaveAttribute('aria-modal', 'true');
+    await expect(page).toHaveURL(new RegExp('/scenario/' + target.id + '$'));
+    await expect(page.locator('h1.title')).toHaveText(target.title);
+    await expect(page).toHaveTitle(new RegExp(target.title));
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    // Browser Back returns to the catalog with the search still in place.
+    await page.goBack();
+    await expect(page).toHaveURL(/[?&]q=/);
+    await expect(page.getByLabel('Пошук сценаріїв')).toHaveValue(searchTerm);
+    await page.locator('.scenario-card', { hasText: target.title }).first().click();
+    await expect(page.locator('h1.title')).toHaveText(target.title);
 
     // ── launch, and watch the ring ────────────────────
     // The progress percentage lives in a signal; before the zoneless fix it sat
@@ -71,7 +84,7 @@ test.describe('student golden path', () => {
       req => req.url().includes('/api/telemetry/session') && req.method() === 'POST'
     );
 
-    await modal.locator('.launch-btn').click();
+    await page.locator('.side .launch').click();
     await expect(page).toHaveURL(new RegExp(`/play/${target.id}`));
 
     await telemetryStart;
@@ -105,7 +118,7 @@ test.describe('student golden path', () => {
     );
 
     await page.locator('.back-btn').click();
-    await expect(page).toHaveURL(/\/(catalog)?$/);
+    await expect(page).toHaveURL(/\/(catalog)?(\?.*)?$/);
     await expect(page.locator('.scenario-card').first()).toBeVisible();
 
     await telemetryEnd;

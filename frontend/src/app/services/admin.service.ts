@@ -4,7 +4,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpEventType, HttpHeaders } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 
-import { AdminScenario, ArchiveUploadResult } from '../models/scenario.model';
+import { AdminScenario, ArchiveUploadResult, ScenarioFeature } from '../models/scenario.model';
 
 /** Editable fields of a catalog row. */
 export interface ScenarioDraft {
@@ -17,6 +17,8 @@ export interface ScenarioDraft {
   imageUrl: string;
   version: string;
   author: string;
+  /** "Що всередині"; the server accepts at most six. */
+  features: ScenarioFeature[];
 }
 
 const TOKEN_KEY = 'adminToken';

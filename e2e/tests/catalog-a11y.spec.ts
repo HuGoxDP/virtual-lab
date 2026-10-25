@@ -1,23 +1,14 @@
 // e2e/tests/catalog-a11y.spec.ts
 //
-// test-plan.md §7 — the catalog half: F10 (modal focus trap, Esc, focus
-// restoration) and F9 (portrait layout), plus keyboard operability from §4.8.
+// test-plan.md §7 — the catalog half: F9 (portrait layout) and keyboard operability from §4.8.
+// Release 1, phase 3 (#133, DW-3.10) replaced the modal's focus-trap tests (#79, retired with the
+// modal) with keyboard tests of what took its place: the category chips, the sort segment and the
+// scenario page.
 //
-// None of this is assertable in a unit test: a focus trap is only real against
-// a live document with actual layout, because the implementation filters on
-// `offsetParent !== null` to skip hidden controls.
+// None of this is assertable in a unit test: focus order is only real against a live document with
+// actual layout.
 
 import { expect, test } from '@playwright/test';
-
-/** Where focus currently is, as something readable in a failure message. */
-async function focusDescriptor(page: import('@playwright/test').Page): Promise<string> {
-  return page.evaluate(() => {
-    const el = document.activeElement as HTMLElement | null;
-    if (!el) return '(none)';
-    const label = el.getAttribute('aria-label') ?? el.textContent?.trim().slice(0, 30) ?? '';
-    return `${el.tagName.toLowerCase()}.${el.className.split(' ')[0]}[${label}]`;
-  });
-}
 
 test.describe('catalog accessibility', () => {
   test.beforeEach(async ({ page }) => {
@@ -25,97 +16,100 @@ test.describe('catalog accessibility', () => {
     await expect(page.locator('.scenario-card').first()).toBeVisible();
   });
 
-  test('a card is reachable and openable from the keyboard', async ({ page }) => {
-    const firstCard = page.locator('.scenario-card').first();
+  test('a card is reachable and openable from the keyboard (#78)', async ({ page }) => {
+    const title = page.locator('.scenario-card .open-button').first();
 
-    await firstCard.focus();
-    await expect(firstCard).toBeFocused();
+    await title.focus();
+    await expect(title).toBeFocused();
 
-    // The card is a <button>, so Enter must open it — a div with a click handler
-    // would pass a mouse test and fail this one.
+    // The title is a real <button>: Enter opens the scenario page. A div with a click handler would
+    // pass a mouse test and fail this one.
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page).toHaveURL(/\/scenario\/[^/]+$/);
+    await expect(page.locator('h1.title')).toBeVisible();
   });
 
-  test('opening the modal moves focus into it, Esc restores it (F10)', async ({ page }) => {
-    const firstCard = page.locator('.scenario-card').first();
-    await firstCard.focus();
+  test('the card\'s "Запустити" button is reachable by Tab and plays', async ({ page }) => {
+    const launch = page.locator('.scenario-card .launch').first();
+    await launch.focus();
+    await expect(launch).toBeFocused();
     await page.keyboard.press('Enter');
-
-    const modal = page.getByRole('dialog');
-    await expect(modal).toBeVisible();
-
-    // Focus must land inside the dialog, or a keyboard user is left behind it.
-    await expect
-      .poll(async () => modal.evaluate((node, _) => node.contains(document.activeElement), null),
-        { message: `focus stayed outside the dialog: ${await focusDescriptor(page)}` })
-      .toBe(true);
-
-    await page.keyboard.press('Escape');
-    await expect(modal).toBeHidden();
-
-    // And it must come back to the card that opened it.
-    await expect(firstCard).toBeFocused();
+    await expect(page).toHaveURL(/\/play\/[^/]+$/);
   });
 
-  test('Tab cycles inside the dialog rather than escaping it (F10)', async ({ page }) => {
-    await page.locator('.scenario-card').first().click();
+  test('chips are buttons with aria-pressed, operable by Enter and Space (DW-3.10)', async ({ page }) => {
+    const chips = page.locator('.chips .chip');
+    await expect(chips.first()).toHaveAttribute('aria-pressed', 'true');
 
-    const modal = page.getByRole('dialog');
-    await expect(modal).toBeVisible();
+    const second = chips.nth(1);
+    await second.focus();
+    await page.keyboard.press('Enter');
+    await expect(second).toHaveAttribute('aria-pressed', 'true');
+    await expect(chips.first()).toHaveAttribute('aria-pressed', 'false');
+    await expect(page).toHaveURL(/[?&]category=/);
 
-    const insideAfterTabs: boolean[] = [];
-    for (let i = 0; i < 8; i++) {
+    await chips.first().focus();
+    await page.keyboard.press('Space');
+    await expect(chips.first()).toHaveAttribute('aria-pressed', 'true');
+    await expect(page).not.toHaveURL(/category=/);
+  });
+
+  test('the sort segment is a radio group: arrow keys switch it and the order is requested (DW-3.10)', async ({ page }) => {
+    const byName = page.getByRole('radio', { name: 'За назвою' });
+    const byNew = page.getByRole('radio', { name: 'Нові' });
+    await expect(byNew).toBeChecked();
+
+    await byNew.focus();
+    const request = page.waitForRequest(r => r.url().includes('/api/catalog?') && r.url().includes('sort=title'));
+    await page.keyboard.press('ArrowRight');
+    await request;
+
+    await expect(byName).toBeChecked();
+    await expect(page).toHaveURL(/sort=title/);
+
+    // Ukrainian collation: the grid is ordered by title, case-insensitively.
+    await expect.poll(async () => {
+      const titles = (await page.locator('.scenario-card .card-title').allTextContents()).map(t => t.trim());
+      return titles.join('|') === [...titles].sort((x, y) => x.localeCompare(y, 'uk')).join('|');
+    }, { message: 'the grid should settle in title order' }).toBe(true);
+
+    await page.keyboard.press('ArrowLeft');
+    await expect(byNew).toBeChecked();
+    await expect(page).not.toHaveURL(/sort=/);
+  });
+
+  test('on the scenario page Tab reaches "Запустити симуляцію" and Enter plays (DW-3.10)', async ({ page }) => {
+    await page.locator('.scenario-card .open-button').first().click();
+    await expect(page.locator('h1.title')).toBeVisible();
+
+    const launch = page.locator('.side .launch');
+    const stops: string[] = [];
+    for (let i = 0; i < 20; i++) {
       await page.keyboard.press('Tab');
-      insideAfterTabs.push(
-        await modal.evaluate(node => node.contains(document.activeElement))
-      );
+      stops.push(await page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null;
+        return el ? `${el.tagName.toLowerCase()}.${el.className.split(' ')[0]}` : '(none)';
+      }));
+      if (await launch.evaluate(node => node === document.activeElement)) break;
     }
+    expect(stops.at(-1), `tab stops: ${stops.join(' > ')}`).toBe('button.btn');
+    await expect(launch).toBeFocused();
 
-    expect(
-      insideAfterTabs.every(Boolean),
-      `focus left the dialog on tab #${insideAfterTabs.indexOf(false) + 1}`
-    ).toBe(true);
+    // The back button is the first stop: header order matches visual order.
+    expect(stops[0]).toBe('a.btn');
+
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/\/play\/[^/]+$/);
   });
 
-  test('Shift+Tab wraps backwards inside the dialog (F10)', async ({ page }) => {
-    await page.locator('.scenario-card').first().click();
-
-    const modal = page.getByRole('dialog');
-    await expect(modal).toBeVisible();
-
-    for (let i = 0; i < 4; i++) {
-      await page.keyboard.press('Shift+Tab');
-      expect(
-        await modal.evaluate(node => node.contains(document.activeElement)),
-        `focus left the dialog backwards on press #${i + 1}`
-      ).toBe(true);
-    }
-  });
-
-  test('clicking the backdrop closes, clicking the panel does not', async ({ page }) => {
-    await page.locator('.scenario-card').first().click();
-
-    const modal = page.getByRole('dialog');
-    await expect(modal).toBeVisible();
-
-    // Inside the panel: must stay open.
-    await modal.locator('.modal-title').click();
-    await expect(modal).toBeVisible();
-
-    // The overlay itself: only the backdrop closes, so aim at its corner.
-    await page.locator('.modal-overlay').click({ position: { x: 5, y: 5 } });
-    await expect(modal).toBeHidden();
-  });
-
-  test('search is labelled and filters server-side', async ({ page }) => {
+  test('search is labelled and filters server-side; an empty result says so (#126)', async ({ page }) => {
     const search = page.getByLabel('Пошук сценаріїв');
     await expect(search).toBeVisible();
 
     await search.fill('zzzz-no-such-scenario');
 
-    // An empty result must say so rather than render an empty grid.
     await expect(page.locator('.empty-state')).toBeVisible();
+    await expect(page.locator('.empty-state')).toContainText('Нічого не знайдено');
     await expect(page.locator('.scenario-card')).toHaveCount(0);
   });
 

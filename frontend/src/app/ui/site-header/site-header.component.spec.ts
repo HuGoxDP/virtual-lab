@@ -1,5 +1,7 @@
 // path: src/app/ui/site-header/site-header.component.spec.ts
 //
+// Covers test-plan scenario 116.
+//
 // Release 1, phase 2 - DW-2.4: the header renders the texts of site.config.ts, and its two brand
 // modes put the logo and the projected slots in the order the catalog and scenario pages need.
 

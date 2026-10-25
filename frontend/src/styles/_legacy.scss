@@ -3,7 +3,7 @@
 // Scope for the pages that are not on Nocturne yet. DELETE this file with them:
 //   * `.legacy-admin` (the old /admin) goes in release 2;
 //   * `app-viewer` goes when the viewer is rebuilt (release 1, phase 4);
-//   * `app-catalog` goes when the catalog is rebuilt (release 1, phase 3).
+//   * (the catalog left this list in release 1, phase 3)
 //
 // The old admin defines its own `.btn`, `.btn-primary`, `.btn-ghost` and `.tag` in a component
 // stylesheet. A component rule is (0,2,0) and always beats a global class, but it only sets the
@@ -13,7 +13,7 @@
 // component rule — it only ever fills the gaps with the value the old page had.
 
 $legacy-font: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-$legacy-hosts: 'app-admin, app-viewer, app-catalog';
+$legacy-hosts: 'app-admin, app-viewer';
 
 // Pages used to inherit these from the old body; Nocturne's body is Inter 15px/1.55.
 :where(#{$legacy-hosts}) {

@@ -1,5 +1,7 @@
 // path: src/app/ui/icon/icon.component.spec.ts
 //
+// Covers test-plan scenario 115.
+//
 // Release 1, phase 2 - DW-2.3: <vl-icon> draws every hosted icon from the generated path data,
 // inherits colour and size, and falls back (never throws) for names it does not know.
 

@@ -45,9 +45,10 @@ could not be verified without a browser, it is marked ⚠ and listed in §7.
 | F6 | `loadToken` guard: a superseded load cannot overwrite a newer one | `viewer.component.ts` |
 | F7 | WebGL2 probe, context-loss handling | `viewer.component.ts` |
 | F8 | Restart from in-memory buffer (no re-download) | `restart()` |
-| F9 | Catalog UI: debounced search, load-more, placeholder fallback | `catalog.component.ts` |
-| F10 | Modal a11y: focus trap, Esc, focus restore | `onModalKeydown`, `openModal`/`closeModal` |
-| F11 | Theme persisted and applied to `<html>` | `catalog.component.ts` |
+| F9 | Catalog UI: debounced search, load-more, URL-backed filters, empty/error states | `catalog.component.ts` |
+| ~~F10~~ | ~~Modal a11y~~ — the modal is gone (release 1, phase 3); its job is done by the scenario page, F14 | — |
+| ~~F11~~ | ~~Theme persisted~~ — dark theme only; the test is now that no `theme` key is written | — |
+| F14 | Scenario page `/scenario/:id`: fields, hidden blocks, not-found/error, copy link | `pages/scenario/` |
 | F12 | Admin: token in `sessionStorage`, list/create/edit/publish/delete, upload progress | `admin.component.ts`, `admin.service.ts` |
 | F13 | Telemetry client: client id, start on running, end via `sendBeacon` | `telemetry.service.ts` |
 
@@ -236,11 +237,12 @@ once, when it took the upstream URL from the client.
 
 75. [C] Typing fires **one** request after the debounce window, not one per keystroke.
 76. [C] Changing category resets paging to offset 0.
-77. [C] Image error → placeholder; a failing placeholder does not loop.
-78. [E] Card is reachable by Tab and activates on Enter and Space.
-79. [E] Modal open moves focus into the dialog; Tab cycles within it; Shift+Tab from the first
-    element wraps to the last; Esc closes; focus returns to the originating card.
-80. [C] Theme persists across reload and toggles `dark-theme` on `<html>`.
+77. [C] Image error → fallback. Now: the card falls back to the category gradient
+    (`scenario-card.component.spec.ts`, #117), the scenario page likewise (#128).
+78. [E] Card title is reachable by Tab and opens the scenario page on Enter.
+79. ~~Modal focus trap~~ — **retired 2026-10-24 with the modal**; keyboard coverage of what replaced
+    it is #133.
+80. ~~Theme persists~~ — **retired with the theme toggle**; replaced by #127 (no `theme` key).
 
 ### 4.9 Admin (F12)
 
@@ -303,10 +305,76 @@ Specs: `catalog-api.test.js`, `archive-limit.test.js`, unit `catalog-input.test.
     features reads []; a slug without a category row still lists (no chip).
 111. [U] validateFeatures, parseSort (incl. __proto__/constructor), parseMaxArchiveBytes.
 
+### 4.13 Nocturne release 1: foundation (phase 2)
+
+Numbered in phase 3, which owns this document. Specs: `frontend/src/styles/nocturne-styles.spec.ts`,
+`frontend/src/app/ui/**`, `e2e/tests/nocturne-foundation.spec.ts`.
+
+112. [U] Tokens, component classes and keyframes carry the design file's values; the page ground is
+     #161826; no light theme rules remain (DW-2.1).
+113. [U] Every Inter face in the stylesheet points at a file that ships (DW-2.2, stylesheet half).
+114. [E] Inter is served from `/assets/fonts/`; no request leaves the origin (DW-2.2).
+115. [C] `<vl-icon>` draws every hosted icon from the generated path data, inherits colour and size,
+     falls back for an unknown name; the committed data equals what the generator produces (DW-2.3).
+116. [C] `<vl-site-header>` (both brand modes, slot order) and `<vl-site-footer>` (texts from
+     `site.config.ts`, limit line) (DW-2.4).
+117. [C] `<vl-scenario-card>` (open vs launch, gradient fallback), toast service and host (announced,
+     self-hiding), `categoryGradient` (stable per slug) (DW-2.4).
+118. [U] `formatBytes`, `formatDate` (Kyiv, own month names), `pluralUk` (DW-2.5).
+119. [E] The old `/admin` and the viewer error screen keep their computed look under the legacy scope
+     (DW-2.6).
+
+### 4.14 Nocturne release 1: catalog and scenario page (phase 3)
+
+Specs: `catalog-query.spec.ts`, `platform-config.service.spec.ts`, `scenario.service.spec.ts`,
+`catalog.component.spec.ts`, `scenario.component.spec.ts`, `admin.component.spec.ts`;
+`catalog-scenario-page.spec.ts`, `catalog-a11y.spec.ts`, `student-golden-path.spec.ts`,
+`admin-golden-path.spec.ts`.
+
+120. [U] The URL query ↔ filter conversion round-trips; defaults are dropped from the URL; junk,
+     repeats, unknown `sort`, over-long `q` fall back (DW-3.2).
+121. [U] `ScenarioService`: `sort=title` sent only when non-default; summary and chips with icon and
+     count in API order; chips survive a failed request; load more keeps the query (DW-3.1, DW-3.2).
+122. [U] Responses resolving out of order: the newest filter wins, an older failure shows no error,
+     an older answer does not end `loading`, a stale append is dropped (DW-3.2).
+123. [U] `PlatformConfigService`: limit from `/api/config`, shared request, retry after failure,
+     malformed answers ignored (DW-3.1).
+124. [C] Catalog: header "Увійти"/"Панель", hero (department from config, counters from `summary`,
+     plural forms), chips (icon, count, order, `aria-pressed`), "Знайдено N", card grid, footer limit
+     or format only (DW-3.1).
+125. [C] Catalog: sort segment drives `sort`; deep link → request; chip/sort/search write the URL
+     (search replaces history after the debounce); the search box is not overwritten mid-word; Back
+     and return from a scenario page reload the filter; load more keeps the query (DW-3.1, DW-3.2).
+126. [C] Catalog: no results → "Нічого не знайдено" (not flashed before the first answer), reset
+     clears the URL and the box; 500 → error state, retry reloads the same filter (DW-3.3).
+127. [C] Catalog: no dialog, no theme toggle, no `theme` key; card → `/scenario/:id`, "Запустити" →
+     `/play/:id` by id alone; a scenario without an archive opens its page (DW-3.6).
+128. [C] Scenario page: every field, meta table rows (version, author, size, updated, ID), features,
+     related links, breadcrumbs, `document.title`, logo-only header with back and crumbs; features
+     `[]`, related `[]`, no `scenarioUrl`, missing fields → their blocks absent; id with `/` and
+     Cyrillic encoded (DW-3.4).
+129. [C] Scenario page: 404 → not-found, 500 / network → error and retry, loading state, an answer for
+     an id the visitor left is dropped; "Каталог" returns with the filter (DW-3.4, DW-3.2).
+130. [C] Copy link: clipboard ok → absolute URL + toast; Clipboard API missing or rejected → readonly
+     selected input, no toast; download `href` equals `scenarioUrl` (DW-3.5).
+131. [C] `/admin` editor: add up to six entries (seventh blocked), icons from `ICON_NAMES`, edit and
+     remove, empty subtitle dropped on save, existing entries copied not shared, server 400 shown
+     (DW-3.8).
+132. [E] Student golden path through the scenario page (filter → search → page → Back keeps the query
+     → launch → viewer); real counters equal the API; URL round trip and Back (DW-3.1, DW-3.2, DW-3.10).
+133. [E] Keyboard: chips are buttons with `aria-pressed` (Enter, Space); sort radios (arrows) request
+     the order; Tab on the scenario page reaches "Запустити симуляцію" (DW-3.10).
+134. [E] 390 × 844: no horizontal page scroll on either page, chips scroll on their own, the scenario
+     page's launch bar stays in view (DW-3.7).
+135. [E] Loading the catalog and a scenario page makes no off-origin request (DW-3.9).
+136. [E] Admin golden path with a "Що всередині" entry that reaches the scenario page; seventh entry
+     blocked; server 400 shown and nothing created (DW-3.8, DW-3.10).
+137. [E] Catalog empty state and error state with retry against the real stack (DW-3.3).
+
 ### 4.11 Golden paths (E2E)
 
-97. **Student**: open `/` → filter by category → search → open a scenario → progress ring advances
-    from 0 to 100 → scene renders → back to catalog. Assert a telemetry row was created and closed.
+97. **Student**: open `/` → filter by category → search → open the scenario page (`/scenario/:id`) →
+    launch → progress ring advances from 0 to 100 → scene renders → back to catalog. Assert a telemetry row was created and closed.
 98. **Teacher/admin**: `/admin` → enter token → create scenario → upload archive → publish →
     it appears in the public catalog and plays → delete.
 
@@ -384,7 +452,7 @@ build is clean. They were the argument for the Playwright layer, and `e2e/` is n
 | WebGL2-unavailable message (F7) | `viewer.spec.ts` — `getContext('webgl2')` stubbed to null |
 | Context-loss overlay after `WEBGL_lose_context` (F7) | `viewer.spec.ts` |
 | Fullscreen toggle and the `MemoryProfiler` overlay (F8) | `viewer.spec.ts` |
-| Modal focus trap, Esc, focus restoration (F10) | `catalog-a11y.spec.ts` |
+| ~~Modal focus trap, Esc, focus restoration (F10)~~ | modal removed; `catalog-a11y.spec.ts` now tests chips, sort radios and the scenario page (#133) |
 | Orientation hint on a portrait viewport (F9) | `viewer.spec.ts`, `catalog-a11y.spec.ts` |
 | The `/admin` screen itself (F12) | `admin-golden-path.spec.ts` |
 | `sendBeacon` firing on tab close (F13) | `student-golden-path.spec.ts` — asserted on the request |

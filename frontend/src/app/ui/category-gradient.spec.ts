@@ -1,5 +1,7 @@
 // path: src/app/ui/category-gradient.spec.ts
 //
+// Covers test-plan scenario 117.
+//
 // Release 1, phase 2 - DW-2.4: a card without a preview has a cover; it is stable per category.
 
 import { categoryGradient } from './category-gradient';
