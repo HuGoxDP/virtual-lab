@@ -1,7 +1,9 @@
 # Plan: Release 1 — the public site on Nocturne
 **Created:** 2026-10-23
-**Status:** in-progress
+**Status:** complete
 **Started:** 2026-10-23 12:00
+**Completed:** 2026-10-26 10:45
+**Duration:** ~3 days wall clock (interrupted by session limits and a branch switch)
 **Current Phase:** 5
 **Complexity:** complex
 **Review cadence:** 2
@@ -529,6 +531,7 @@ Summary: The catalog is prototype 2a on Nocturne (real `summary` counters, icon 
 Commit: 9716127
 Summary: The viewer is Nocturne 2c/2d built from input-only `<vl-viewer-loading [title] [percent] [loadedBytes] [totalBytes] [stage] (cancel)>` and `<vl-viewer-hud [title] [fps] [paused] [canPause] [canRestart] (exit) (togglePause) (restart) (fullscreen)>` (FPS slot, pause button and Space hint render only when supplied; no diagnostics control); exit/cancel go to `/scenario/:id`; stream/abort/dispose/telemetry/restart-from-buffer unchanged; the viewer still holds `toggleDiagnostics`/`enforceDiagnosticsPolicy` and the `?diag=1` build stamp for Phase 5 to cut down; G5 entry is `docs/upstream/webenginets.md` §6 and the shared row points at it (uncommitted in `.claude-shared`); unit 250 green, e2e 54 pass / 8 skip.
 - [x] 2026-10-26 Fixed batch review findings — unit coverage of the viewer's load/restart/exit/canRestart paths incl. DW-4.4's streamed clause, via a `createApplication()` seam (dd827b6)
+- Covered by batch review 2026-10-26 (phases 4–5)
 
 _2026-10-25 15:30: the main checkout was switched to `main` by another session, discarding this plan's uncommitted edits (owner's Phase 4/5 amendments, decisions #19–40, log entries for Phases 2–4). Restored from the orchestrator's copy and committed; the build continues in `.claude/worktrees/nocturne-release-1`._
 
@@ -539,3 +542,4 @@ _2026-10-25 15:30: the main checkout was switched to `main` by another session, 
 Commit: 51bcaec
 Summary: The catalog has no hero, the footer is the copyright bar only, the scenario page has no download link or launch note; the viewer locks `MemoryProfiler.diagnosticsAllowed` before every load/restart and re-closes the overlay after load and every second, so no student ever sees it (`?diag=1` shows only the BuildInfo stamp); `PlatformConfigService` deleted; CLAUDE.md describes the profiler as off; unit 242 green, e2e green after re-running two flakes (F5 progress peak, admin fixture path inside the worktree).
 - [x] 2026-10-26 Fixed batch review findings — unit coverage of the profiler lock and 1000 ms guard; the guard now starts at load start and destroy invalidates an in-flight load (a352fae)
+- Covered by batch review 2026-10-26 (phases 4–5)
