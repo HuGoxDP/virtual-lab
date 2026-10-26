@@ -418,6 +418,25 @@ Specs: `viewer-profiler.spec.ts`, `viewer.component.spec.ts`, `viewer-hud.compon
      `diagnosticsAllowed = false` on init without and **with** `?diag=1`, `?diag=1` renders only the build
      stamp, no `toggleDiagnostics`, destroy leaves it shut; HUD: no diagnostics output (DW-5.3).
 
+#### Viewer — load pipeline and restart, unit (release 1, phase 4 fix-forward)
+
+`viewer-lifecycle.spec.ts`, with the engine (`createApplication` seam, `supportsWebGL2` stub) and
+`ScenarioService` / `TelemetryService` replaced by doubles.
+
+149. [U] `exit()`: `/scenario/:id` with a route id (also after a failed lookup), `/catalog` without one; the
+     loader's "Скасувати" exits and destroying the view aborts the archive download without showing an error
+     (DW-4.1, DW-4.2).
+150. [U] `canRestart` and the HUD restart button: ZIP run enabled; streamed run (`?stream=1`) disabled, and
+     `restart()` there does nothing; `?stream=1` without a `manifestUrl` falls back to the ZIP; false after
+     context loss and while a restart is loading (DW-4.4).
+151. [U] `restart()`: same buffer re-run, one download, second telemetry launch; engine failure → error screen
+     (Error and non-Error); no-op before an archive has loaded (DW-4.4).
+152. [U] `setState` byte-signal reset and the loader feed: fetch stage with bytes and ring percent, "N з N" in the
+     engine stage, everything reset on running; unknown total; streamed run keeps the byte signals null
+     (DW-4.1).
+153. [U] Failures and stale loads: lookup failure, missing archive, failed download, ZIP and streamed engine
+     failure (no telemetry launch), a superseded restart cannot overwrite a newer result (DW-4.5).
+
 ### 4.11 Golden paths (E2E)
 
 97. **Student**: open `/` → filter by category → search → open the scenario page (`/scenario/:id`) →

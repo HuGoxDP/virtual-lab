@@ -171,7 +171,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     // The engine's game loop is a plain requestAnimationFrame loop and never
     // touches change detection — the app is zoneless, so no NgZone dance is
     // needed (or possible: the injected NgZone would be a no-op).
-    this.app = new Application(canvas);
+    this.app = this.createApplication(canvas);
 
     // KTX2 textures are transcoded by a WASM module the *host* serves, not the
     // engine bundle. Angular publishes src/assets at /assets, so the engine's
@@ -230,6 +230,11 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       this.app.dispose();
       this.app = null;
     }
+  }
+
+  /** Test seam: jsdom has no WebGL2, so a spec swaps the engine out here. Behaviour is `new Application`. */
+  protected createApplication(canvas: HTMLCanvasElement): Application {
+    return new Application(canvas);
   }
 
   /** Cheap feature probe; the context is released immediately. */
