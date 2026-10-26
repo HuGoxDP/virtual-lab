@@ -488,6 +488,12 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 | 38 | 4 | HUD has no diagnostics control; `toggleDiagnostics`/`diagnosticsVisible`/`enforceDiagnosticsPolicy` left for Phase 5; e2e now asserts no button and that `?diag=1` leaves solar-system's own overlay open (Phase 5 reverses this) | orchestrator clarification | assumed |
 | 39 | 4 | Viewer half of `nocturne-foundation.spec.ts` retired; `app-viewer` dropped from `_legacy.scss`; test-plan numbers 138–144 used | orchestrator allowance / #28 | assumed |
 | 40 | 4 | `CLAUDE.md` still describes the old viewer diagnostics button — Phase 5 owns `CLAUDE.md`'s viewer/diagnostics wording | file scope | assumed |
+| 41 | 5 | Profiler locked at init, before each load and restart, re-enforced once after load and every 1 s until destroy (two-way setter in the installed engine); the interval can go when the latching setter lands | plan uncertainty + engine d.ts | assumed |
+| 42 | 5 | `diagnosticsEnabled` renamed `buildStampVisible`; query flags read before the WebGL probe, so the stamp also shows on the unsupported screen | default | assumed |
+| 43 | 5 | `PlatformConfigService` + spec deleted (no consumer); `GET /api/config` stays; `summary` signal and API field stay | orchestrator allowance | assumed |
+| 44 | 5 | `site.config.ts` untouched; now unused by the UI: `about`, `address`, `email`, `department`, `university`, `universityShort`, `logo` (still used: `name`, `copyright`) | orchestrator allowance | assumed |
+| 45 | 5 | Test-plan #145–148 added, #123 retired; e2e relies on the engine's overlay id `#webengine-profiler` | default | assumed |
+| 46 | 5 | The "lock before load even with `?diag=1`" unit test checks init (jsdom has no WebGL2); per-load locking is covered by e2e | deviation | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_
@@ -524,3 +530,10 @@ Commit: 9716127
 Summary: The viewer is Nocturne 2c/2d built from input-only `<vl-viewer-loading [title] [percent] [loadedBytes] [totalBytes] [stage] (cancel)>` and `<vl-viewer-hud [title] [fps] [paused] [canPause] [canRestart] (exit) (togglePause) (restart) (fullscreen)>` (FPS slot, pause button and Space hint render only when supplied; no diagnostics control); exit/cancel go to `/scenario/:id`; stream/abort/dispose/telemetry/restart-from-buffer unchanged; the viewer still holds `toggleDiagnostics`/`enforceDiagnosticsPolicy` and the `?diag=1` build stamp for Phase 5 to cut down; G5 entry is `docs/upstream/webenginets.md` §6 and the shared row points at it (uncommitted in `.claude-shared`); unit 250 green, e2e 54 pass / 8 skip.
 
 _2026-10-25 15:30: the main checkout was switched to `main` by another session, discarding this plan's uncommitted edits (owner's Phase 4/5 amendments, decisions #19–40, log entries for Phases 2–4). Restored from the orchestrator's copy and committed; the build continues in `.claude/worktrees/nocturne-release-1`._
+
+### Phase 5: Trim the pages and switch the profiler off (Gate: Standard)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete
+- [x] REVIEW: DEFERRED — batch pending (tests green at commit)
+- [x] Committed
+Commit: 51bcaec
+Summary: The catalog has no hero, the footer is the copyright bar only, the scenario page has no download link or launch note; the viewer locks `MemoryProfiler.diagnosticsAllowed` before every load/restart and re-closes the overlay after load and every second, so no student ever sees it (`?diag=1` shows only the BuildInfo stamp); `PlatformConfigService` deleted; CLAUDE.md describes the profiler as off; unit 242 green, e2e green after re-running two flakes (F5 progress peak, admin fixture path inside the worktree).
