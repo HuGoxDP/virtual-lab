@@ -7,9 +7,9 @@
 // CSP: "WebEngineTS" stops resolving and every scenario fails, while the header
 // looks perfectly correct in a curl.
 //
-// Every directive was measured against the running app rather than guessed —
-// notably `script-src blob:`, without which no scenario runs at all, because the
-// engine executes a scenario's scripts from blob URLs.
+// Player isolation (phase 5): the platform page runs NO scenario code. Scenarios run in a sandboxed frame
+// with its own policy, so this page's `script-src` is `'self'` alone - no `blob:`, no nonce - and
+// `index.html` has no import map. (/editor/ keeps both; that is editor-csp.spec.ts.)
 
 import { expect, test } from '@playwright/test';
 import { smallestPublishedScenario } from '../helpers/api';
@@ -51,39 +51,29 @@ test.describe('content security policy', () => {
       expect(csp, `missing directive: ${directive}`).toContain(directive);
     }
 
-    // Without blob: the engine cannot execute a scenario's scripts at all.
-    expect(csp, 'script-src must allow blob:').toMatch(/script-src[^;]*\bblob:/);
+    // The page executes no scenario scripts, so neither blob: nor a nonce may be granted.
+    const scriptSrc = csp.split(';').map((d: string) => d.trim()).find((d: string) => d.startsWith('script-src '));
+    expect(scriptSrc, 'script-src is exactly the page origin').toBe(`script-src 'self'`);
+    expect(csp, 'frame-src names the player frame only').toContain(`frame-src 'self'`);
 
     // Absent on purpose — see nginx/csp.conf. Present would mean someone
     // enabled KTX2 transcoding without revisiting the decision.
     expect(csp, `'unsafe-eval' is deliberately absent`).not.toContain(`'unsafe-eval'`);
   });
 
-  test('the import map is allowed by a nonce that changes per response', async ({ request }) => {
-    // The engine is resolved through an inline import map, which 'self' alone
-    // would block. It has to be a nonce rather than a hash: Chromium matches
-    // import maps by nonce only. If these ever stop agreeing, "WebEngineTS"
-    // stops resolving and every scenario fails — while the header still looks
-    // correct in a curl, which is why this is asserted rather than eyeballed.
-    const nonces = new Set<string>();
-
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await request.get('/', { headers: { 'cache-control': 'no-cache' } });
+  test('DW-5.3 the page has no import map, no nonce and no inline script, response after response', async ({ request }) => {
+    for (const path of ['/', '/index.html', '/play/solar-system']) {
+      const res = await request.get(path, { headers: { 'cache-control': 'no-cache' } });
       const csp = res.headers()['content-security-policy'];
       const html = await res.text();
 
-      const fromHeader = csp.match(/'nonce-([A-Za-z0-9+/=_-]+)'/)?.[1];
-      const fromTag = html.match(/<script type="importmap" nonce="([A-Za-z0-9+/=_-]+)"/)?.[1];
-
-      expect(fromHeader, 'the CSP should carry a nonce for the import map').toBeTruthy();
-      expect(fromTag, 'nginx should stamp that nonce onto the import map tag').toBeTruthy();
-      expect(fromTag, 'the tag and the header must agree within one response').toBe(fromHeader);
-
-      nonces.add(fromHeader!);
+      expect(html, `${path} must be the SPA shell`).toContain('<app-root');
+      expect(html, `${path}: no import map`).not.toContain('importmap');
+      expect(html, `${path}: no nonce attribute`).not.toMatch(/ nonce=/);
+      expect(csp, `${path}: no nonce in the CSP`).not.toContain(`'nonce-`);
+      expect(csp, `${path}: no blob: in script-src`).not.toMatch(/script-src[^;]*blob:/);
+      expect(html.match(/<script(?![^>]* src=)[^>]*>/g) ?? [], `${path}: no inline script`).toEqual([]);
     }
-
-    // A fixed nonce is no better than 'unsafe-inline'.
-    expect(nonces.size, 'the nonce must differ between responses').toBe(2);
   });
 
   test('applies to archives and manifests too', async ({ request }) => {
@@ -135,8 +125,8 @@ test.describe('content security policy', () => {
     await page.goto(`/play/${id}`);
     await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
 
-    // The whole point: not that the header is present, but that the engine
-    // still resolved through the import map and drew a frame under it.
+    // The whole point: not that the header is present, but that the engine still drew a frame - inside the
+    // sandboxed player, under the player's own policy - while the page's policy is this strict.
     const snapshot = await waitForFrames(page);
     expect(snapshot.drawCalls, 'the scenario must still render under the CSP').toBeGreaterThan(0);
 

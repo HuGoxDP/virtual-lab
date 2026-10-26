@@ -1,0 +1,44 @@
+# e2e/editor-csp-harness/docker-compose.yml
+#
+# A self-contained, throwaway stack for DW-5.6 (editor-csp.spec.ts): does `/editor/` still get its import
+# map stamped with the CSP nonce, now that the `sub_filter` lives in nginx/editor.conf's
+# `location ^~ /editor/` and no longer at server level?
+#
+# It runs the REAL frontend image (Dockerfile.frontend) with the REAL nginx/editor.conf and
+# nginx/csp-editor.conf mounted exactly as docker-compose.editor.yml mounts them, in front of two stubs:
+#   editor   - nginx serving one page under /editor/ with an inline import map (the real editor is built
+#              from the WebEngineTSEditor repo, which this harness does not need)
+#   backend  - answers /api/health and /api/catalog just enough for e2e/global-setup.ts
+# Nothing is shared with any other stack: its own compose project name, its own network, no volumes, and a
+# port of its own (default 8046; never 8044/8045).
+#
+#   up:    docker compose -p vl-editor-csp -f e2e/editor-csp-harness/docker-compose.yml up --build -d
+#   test:  cd e2e && ADMIN_TOKEN=x E2E_BASE_URL=http://localhost:8046 npx playwright test editor-csp
+#   down:  docker compose -p vl-editor-csp -f e2e/editor-csp-harness/docker-compose.yml down --remove-orphans --rmi local
+
+name: vl-editor-csp
+
+services:
+  frontend:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "${EDITOR_CSP_PORT:-8046}:80"
+    volumes:
+      - ../../nginx/editor.conf:/etc/nginx/server.d/editor.conf:ro
+      - ../../nginx/csp-editor.conf:/etc/nginx/csp-editor.conf:ro
+    depends_on:
+      - editor
+      - backend
+
+  editor:
+    image: nginx:alpine
+    volumes:
+      - ./editor-stub.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./editor-index.html:/usr/share/nginx/html/editor/index.html:ro
+
+  backend:
+    image: nginx:alpine
+    volumes:
+      - ./backend-stub.conf:/etc/nginx/conf.d/default.conf:ro

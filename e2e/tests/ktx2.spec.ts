@@ -18,7 +18,8 @@
 
 import { expect, test } from '@playwright/test';
 import { adminScenarios, updateScenario } from '../helpers/api';
-import { MB, readEngineSnapshot, waitForFrames } from '../helpers/engine';
+import { smallestPublishedScenario } from '../helpers/api';
+import { ENGINE_URL, MB, playerFrame, readEngineSnapshot, waitForFrames } from '../helpers/engine';
 
 /** The only archive in the release that ships .ktx2 at all. */
 const KTX2_SCENARIO = 'benchscene3-solarsystem';
@@ -62,6 +63,35 @@ test.describe('KTX2 textures', () => {
     // the override in ViewerComponent has quietly stopped being load-bearing
     // and this test would no longer be testing anything.
     expect((await request.get('/basis/basis_transcoder.js')).status()).toBe(404);
+  });
+
+  test('DW-5.5 the player is pointed at the transcoder and can fetch it from its opaque origin', async ({ page }) => {
+    // DW-1.3 recorded KTX2 as working in the player, so the viewer sends `transcoderPath`. Nothing in the
+    // catalog references a .ktx2 yet (see below), so the render check cannot switch itself on; what can be
+    // proven today is the whole path a transcode would take: the engine inside the frame carries the
+    // platform's transcoder path, and the frame (origin "null", CSP connect-src = the host origin) can
+    // actually fetch both transcoder files from it.
+    const { id } = await smallestPublishedScenario();
+    await page.goto(`/play/${id}`);
+    await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
+    await waitForFrames(page);
+
+    const frame = await playerFrame(page);
+    const probe = await frame.evaluate(async ([engine, base]) => {
+      const { Texture2D } = await import(engine);
+      const fetched: Record<string, number> = {};
+      for (const file of ['basis_transcoder.js', 'basis_transcoder.wasm']) {
+        const res = await fetch(base + file);
+        fetched[file] = res.ok ? (await res.arrayBuffer()).byteLength : -res.status;
+      }
+      return { path: Texture2D.ktx2TranscoderPath as string, origin: window.origin, fetched };
+    }, [new URL(ENGINE_URL, page.url()).href, new URL('/assets/basis/', page.url()).href]);
+
+    expect(probe.origin, 'the frame is opaque').toBe('null');
+    expect(probe.path).toBe(new URL('/assets/basis/', page.url()).href);
+    for (const [file, bytes] of Object.entries(probe.fetched)) {
+      expect(bytes, `${file} reachable from the frame`).toBeGreaterThan(1000);
+    }
   });
 
   test('a scenario that loads .ktx2 transcodes it instead of expanding it', async ({ page }) => {

@@ -16,7 +16,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 import { adminScenarios, smallestPublishedScenario } from '../helpers/api';
-import { loseWebGLContext, readEngineBuild, waitForFrames } from '../helpers/engine';
+import { loseWebGLContext, playerFrame, playerFrames, profilerState, readEngineBuild, waitForFrames } from '../helpers/engine';
 
 /** The largest published scenario — the only one whose download is slow enough to watch. */
 async function largestPublishedId(): Promise<string> {
@@ -118,24 +118,14 @@ test.describe('viewer', () => {
 
     await expect(page.getByText('Графічний контекст втрачено')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Перезавантажити' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'До каталогу' })).toBeVisible();
   });
 
   test.describe('the profiler never runs on the platform (F8; test-plan 145)', () => {
-    /** The overlay's own DOM node, and the engine's view of it. */
-    async function profilerState(page: Page) {
-      return page.evaluate(async () => {
-        const { MemoryProfiler } = await import('WebEngineTS');
-        return {
-          element: document.getElementById('webengine-profiler') !== null,
-          visible: MemoryProfiler.isOverlayVisible,
-          allowed: MemoryProfiler.diagnosticsAllowed,
-        };
-      });
-    }
-
     async function expectProfilerOff(page: Page, when: string): Promise<void> {
       await expect.poll(() => profilerState(page).then(s => s.element || s.visible),
         { message: `no profiler overlay ${when}` }).toBe(false);
+      await expect(page.locator('#webengine-profiler'), 'nothing in the host page either').toHaveCount(0);
       // And not a moment later either: a scenario can call showOverlay() again at will.
       await page.waitForTimeout(2500);
       expect(await profilerState(page)).toEqual({ element: false, visible: false, allowed: false });
@@ -160,9 +150,9 @@ test.describe('viewer', () => {
 
       await expectProfilerOff(page, 'without ?diag=1');
 
+      // Keyboard focus is in the frame, where a scenario's own Backquote hotkey would live.
       await page.keyboard.press('Backquote');
       await page.waitForTimeout(500);
-      await expect(page.locator('#webengine-profiler')).toHaveCount(0);
       expect((await profilerState(page)).visible).toBe(false);
     });
 
@@ -173,7 +163,8 @@ test.describe('viewer', () => {
 
       const build = await readEngineBuild(page);
       expect(build.isBuild, 'a packed bundle should report isBuild').toBe(true);
-      await expect(page.locator('.build-badge')).toBeVisible();
+      // The stamp is asked of the player once the scenario runs; it arrives about a second later.
+      await expect(page.locator('.build-badge')).toBeVisible({ timeout: 15_000 });
       await expect(page.locator('.build-badge')).toContainText(build.version);
 
       await expect(page.locator('.control-btn[aria-label="Показати діагностику"]')).toHaveCount(0);
@@ -181,7 +172,7 @@ test.describe('viewer', () => {
 
       await page.keyboard.press('Backquote');
       await page.waitForTimeout(500);
-      await expect(page.locator('#webengine-profiler')).toHaveCount(0);
+      expect((await profilerState(page)).visible).toBe(false);
     });
 
     test('DW-5.3 a scenario that re-opens the gate and the overlay after load is shut again', async ({ page }) => {
@@ -189,11 +180,12 @@ test.describe('viewer', () => {
       await page.goto(`/play/${id}`);
       await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
 
-      await page.evaluate(async () => {
-        const { MemoryProfiler } = await import('WebEngineTS');
-        MemoryProfiler.diagnosticsAllowed = true; // what hostile scenario code could do on today's engine
+      // What hostile scenario code could do, from inside the frame: the engine's gate latches shut.
+      await (await playerFrame(page)).evaluate(async url => {
+        const { MemoryProfiler } = await import(url);
+        MemoryProfiler.diagnosticsAllowed = true;
         MemoryProfiler.showOverlay();
-      });
+      }, new URL('/assets/WebEngineTS.standalone.js', page.url()).href);
 
       await expectProfilerOff(page, 'after a scenario re-opened it');
     });
@@ -205,12 +197,13 @@ test.describe('viewer', () => {
     await page.goto(`/play/${id}`);
     await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
 
+    // The fullscreen element is the host's container (frame + HUD), not the frame: the frame has no permission.
     const fullscreenButton = page.locator('.control-btn[aria-label="На весь екран"]');
     await fullscreenButton.click();
 
     await expect
-      .poll(() => page.evaluate(() => document.fullscreenElement !== null),
-        { message: 'requestFullscreen should take effect' })
+      .poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains('viewer-container') ?? false),
+        { message: 'requestFullscreen should take effect on the viewer container' })
       .toBe(true);
 
     // Exit through the same control, not Escape: headless Chromium does not wire
@@ -289,6 +282,7 @@ test.describe('viewer', () => {
     // An SPA route change keeps the document, so the flag set by the abort listener is still readable.
     expect(await page.evaluate(() => (window as unknown as { __archiveAborted: boolean }).__archiveAborted))
       .toBe(true);
+    expect(playerFrames(page), 'no frame was ever started for a cancelled download').toHaveLength(0);
   });
 
   test('DW-4.2 the HUD has Ukrainian aria-labels, and "Вийти" returns to the scenario page', async ({ page }) => {
@@ -299,9 +293,9 @@ test.describe('viewer', () => {
 
     await expect(page.getByRole('button', { name: 'Спочатку' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'На весь екран' })).toBeVisible();
-    // Pause and the FPS slot belong to the isolated player host: nothing student-visible is faked.
-    await expect(page.getByRole('button', { name: 'Пауза' })).toHaveCount(0);
-    await expect(page.locator('vl-viewer-hud .fps')).toHaveCount(0);
+    // Pause and the FPS slot are driven by the player over the protocol.
+    await expect(page.getByRole('button', { name: 'Пауза' })).toBeVisible();
+    await expect(page.locator('vl-viewer-hud .fps')).toHaveText(/^\d+ FPS$/, { timeout: 15_000 });
 
     await page.getByRole('button', { name: 'Вийти' }).click();
     await expect(page).toHaveURL(new RegExp(`/scenario/${target.id}$`));
@@ -317,8 +311,7 @@ test.describe('viewer', () => {
     await expect(hints).toBeVisible();
     await expect(hints).toContainText('Обертати');
     await expect(hints).toContainText('Масштаб');
-    // Space does nothing in the page yet, so it must not be advertised.
-    await expect(hints).not.toContainText('Space');
+    await expect(hints).toContainText('Space');
 
     await page.setViewportSize({ width: 390, height: 780 });
     await expect(hints).toBeHidden();
@@ -336,7 +329,7 @@ test.describe('viewer', () => {
     await page.getByRole('button', { name: 'На весь екран' }).click({ trial: true });
   });
 
-  test('DW-4.4 restart re-runs the scenario from the buffer, with no second archive download', async ({ page }) => {
+  test('DW-5.2 restart re-runs the scenario in a fresh frame from the retained Blob, with no second archive download', async ({ page }) => {
     const target = await smallestPublishedScenario();
     let archiveRequests = 0;
     let sessions = 0;
@@ -349,6 +342,7 @@ test.describe('viewer', () => {
     await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
     await expect.poll(() => sessions).toBe(1);
 
+    const oldFrame = await playerFrame(page);
     const restart = page.getByRole('button', { name: 'Спочатку' });
     await expect(restart).toBeEnabled();
     await restart.click();
@@ -356,7 +350,9 @@ test.describe('viewer', () => {
     // A second launch is counted only once a scene reached running again — proof the run happened.
     await expect.poll(() => sessions, { timeout: 80_000 }).toBe(2);
     await expect(page.locator('.viewer-controls')).toBeVisible();
-    expect(archiveRequests, 'restart must reuse the buffer').toBe(1);
+    expect(archiveRequests, 'restart must reuse the Blob').toBe(1);
+    expect(oldFrame.isDetached(), 'the old frame is gone').toBe(true);
+    expect(playerFrames(page)).toHaveLength(1);
   });
 
   test('DW-4.5 an unknown scenario shows the Nocturne error state with its way out', async ({ page }) => {

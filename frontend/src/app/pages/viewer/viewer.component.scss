@@ -14,10 +14,10 @@
   background: #07080f;
 }
 
-// ==================== CANVAS ====================
+// ==================== PLAYER FRAME ====================
 
-.webgl-canvas {
-  display: block;
+// PlayerHost appends its iframe here and sizes it to 100% x 100%.
+.player-host {
   width: 100%;
   height: 100%;
 }

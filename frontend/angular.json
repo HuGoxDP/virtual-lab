@@ -39,9 +39,6 @@
             ],
             "styles": [
               "src/styles.scss"
-            ],
-            "externalDependencies": [
-              "WebEngineTS"
             ]
           },
           "configurations": {

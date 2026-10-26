@@ -18,6 +18,7 @@
 
 import { expect, test } from '@playwright/test';
 import { BASE_URL } from '../helpers/api';
+import { readEngineSnapshot, waitForFrames } from '../helpers/engine';
 
 /** Where `import-release-assets.mjs` publishes manifests. */
 const manifestUrl = (id: string) => `/a/${id}.json`;
@@ -37,98 +38,56 @@ interface RunResult {
 }
 
 /**
- * Runs a scenario inside the page and reports what the engine measured.
+ * Runs a scenario through the viewer (the sandboxed player) and reports what the engine measured.
  *
- * Done on a bare page rather than through the viewer: the viewer owns one
- * Application bound to its own lifecycle, and this needs to run two scenarios
- * back to back and compare them. `/` is used only because it carries the import
- * map that resolves "WebEngineTS".
+ * The page holds no engine any more, so the measurement is taken inside the player frame via the helpers
+ * in engine.ts. `timeToFirstFrame` is the host's own stopwatch from navigation to the player reporting
+ * "running" - the same on both paths, which is what the comparison needs.
  */
 async function runScenario(
   page: import('@playwright/test').Page,
-  how: { manifest: string } | { zip: string }
+  how: { id: string; stream: boolean }
 ): Promise<RunResult> {
-  return page.evaluate(async source => {
-    const { Application, MemoryProfiler, Texture2D } = await import('WebEngineTS');
+  const startedAt = Date.now();
+  try {
+    await page.goto(`/play/${how.id}${how.stream ? '?stream=1' : ''}`);
+    await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 120_000 });
+    const timeToFirstFrame = Date.now() - startedAt;
+    const first = await waitForFrames(page, 120_000);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = 1280;
-    canvas.height = 800;
-    canvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh';
-    document.body.appendChild(canvas);
-
-    // Same override the viewer applies — the transcoder is served by the host,
-    // and the engine's default of /basis/ 404s here.
-    Texture2D.ktx2TranscoderPath = '/assets/basis/';
-
-    const app = new Application(canvas);
-
-    try {
-      const scenario = 'manifest' in source
-        ? await app.loadScenarioFromManifest(source.manifest)
-        : await app.loadScenarioFromBuffer(await (await fetch(source.zip)).arrayBuffer());
-
-      // timeToFirstFrame is -1 until a frame has actually reached the screen.
-      const deadline = Date.now() + 180_000;
-      while (scenario.timeToFirstFrame < 0 && Date.now() < deadline) {
-        await new Promise(resolve => requestAnimationFrame(() => resolve(null)));
-      }
-
-      const atFirstFrame = MemoryProfiler.snapshot().renderStats?.drawCalls ?? 0;
-
-      // Then wait for loading to stop. On the manifest path the remaining
-      // assets are still arriving at this point — that is the whole design —
-      // so comparing the two paths at first frame would compare a half-loaded
-      // scene against a complete one.
-      //
-      // Settle on the *asset* counters, not on draw calls: this scene animates,
-      // so draw calls move with frustum culling every frame and would report
-      // "stable" long before the last texture had arrived.
-      let previous = '';
-      let stableFor = 0;
-      // Generous: on a loaded machine the streamed path is still fetching here,
-      // and settling early would compare a half-loaded scene against a complete
-      // one — the exact mistake this loop exists to avoid.
-      //
-      // Six seconds of no change, not three. The request queue is bounded at
-      // six in flight, so a stall while the rasteriser hogs the main thread
-      // looks exactly like "finished" for a short window — which is how this
-      // reported a partly-loaded scene in about one full-suite run in three.
-      const settleBy = Date.now() + 180_000;
-
-      while (stableFor < 24 && Date.now() < settleBy) {
-        await new Promise(resolve => setTimeout(resolve, 250));
-        const sample = MemoryProfiler.snapshot().renderer;
-        const current = `${sample?.textures ?? 0}/${sample?.estimatedTextureVramBytes ?? 0}`;
-        stableFor = current === previous ? stableFor + 1 : 0;
-        previous = current;
-      }
-
-      const report = MemoryProfiler.snapshot();
-
-      return {
-        ok: scenario.timeToFirstFrame >= 0,
-        timeToFirstFrame: scenario.timeToFirstFrame,
-        drawCallsAtFirstFrame: atFirstFrame,
-        drawCallsSettled: report.renderStats?.drawCalls ?? 0,
-        trianglesSettled: report.renderStats?.triangles ?? 0,
-        textureVramBytes: report.renderer?.estimatedTextureVramBytes ?? 0,
-        textureCount: report.renderer?.textures ?? 0,
-      };
-    } catch (err) {
-      return {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        timeToFirstFrame: -1,
-        drawCallsAtFirstFrame: 0, drawCallsSettled: 0,
-        trianglesSettled: 0, textureVramBytes: 0, textureCount: 0,
-      };
-    } finally {
-      // Without this the WebGL context leaks and a few runs exhaust the limit.
-      app.dispose();
-      canvas.remove();
+    // Wait for loading to stop. On the manifest path the remaining assets are still arriving here -
+    // that is the whole design - so comparing at first frame would compare a half-loaded scene with a
+    // complete one. Settle on the *asset* counters, not draw calls (this scene animates). Six seconds of
+    // no change: the request queue is bounded, so a short stall looks exactly like "finished".
+    let previous = '';
+    let stableFor = 0;
+    const settleBy = Date.now() + 180_000;
+    while (stableFor < 24 && Date.now() < settleBy) {
+      await page.waitForTimeout(250);
+      const sample = await readEngineSnapshot(page);
+      const current = `${sample.textureCount ?? 0}/${sample.textureVramBytes ?? 0}`;
+      stableFor = current === previous ? stableFor + 1 : 0;
+      previous = current;
     }
-  }, how);
+    const settled = await readEngineSnapshot(page);
+    return {
+      ok: true,
+      timeToFirstFrame,
+      drawCallsAtFirstFrame: first.drawCalls ?? 0,
+      drawCallsSettled: settled.drawCalls ?? 0,
+      trianglesSettled: settled.triangles ?? 0,
+      textureVramBytes: settled.textureVramBytes ?? 0,
+      textureCount: settled.textureCount ?? 0,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      timeToFirstFrame: -1,
+      drawCallsAtFirstFrame: 0, drawCallsSettled: 0,
+      trianglesSettled: 0, textureVramBytes: 0, textureCount: 0,
+    };
+  }
 }
 
 test.describe('streaming (manifest) scenario delivery', () => {
@@ -215,9 +174,8 @@ test.describe('streaming (manifest) scenario delivery', () => {
       expect(seen.usedManifest(), 'the flag should select the manifest').toBe(true);
       expect(seen.usedZip(), 'and skip the archive entirely').toBe(false);
 
-      // A streamed run holds no buffer, so restarting in place is impossible —
-      // the control must say so rather than sit there doing nothing.
-      await expect(page.getByRole('button', { name: 'Спочатку' })).toBeDisabled();
+      // The player restarts any source in a fresh frame, so a streamed run can restart too.
+      await expect(page.getByRole('button', { name: 'Спочатку' })).toBeEnabled();
     });
 
     test('?stream=1 falls back to the ZIP when there is no manifest', async ({ page, request }) => {
@@ -254,9 +212,7 @@ test.describe('streaming (manifest) scenario delivery', () => {
 
   test('a script-only scenario runs from a manifest', async ({ page }) => {
     test.setTimeout(180_000);
-    await page.goto('/');
-
-    const result = await runScenario(page, { manifest: manifestUrl('molecules') });
+    const result = await runScenario(page, { id: 'molecules', stream: true });
 
     expect(result.error ?? '', 'manifest load should not throw').toBe('');
     expect(result.ok, 'the scenario should reach its first frame').toBe(true);
@@ -281,17 +237,13 @@ test.describe('streaming (manifest) scenario delivery', () => {
     const zipUrl: string = detail.scenarioUrl;
     expect(zipUrl, 'solar-system should have a stored archive').toBeTruthy();
 
-    await page.goto('/');
-
     // ZIP first: it warms nothing the manifest run benefits from, since the two
     // fetch entirely different URLs.
-    const zip = await runScenario(page, { zip: zipUrl });
+    const zip = await runScenario(page, { id: 'solar-system', stream: false });
     expect(zip.error ?? '', 'ZIP load should not throw').toBe('');
     expect(zip.ok, 'the ZIP run should reach its first frame').toBe(true);
 
-    await page.goto('/');   // fresh Application, fresh engine state
-
-    const streamed = await runScenario(page, { manifest: manifestUrl('solar-system') });
+    const streamed = await runScenario(page, { id: 'solar-system', stream: true });
     expect(streamed.error ?? '', 'manifest load should not throw').toBe('');
     expect(streamed.ok, 'the streamed run should reach its first frame').toBe(true);
     expect(streamed.drawCallsSettled, 'the streamed run should draw').toBeGreaterThan(0);

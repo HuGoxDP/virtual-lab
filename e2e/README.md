@@ -52,10 +52,35 @@ in `ci.yml` is `workflow_dispatch` with a release directory supplied to it.
 
 ## Reading the engine from a test
 
-`helpers/engine.ts` does `await import('WebEngineTS')` inside the page. The import
-map in `index.html` applies to dynamic imports too, so a test holds the very same
-module instance the app is using — no test hook in production code, nothing hung
-off `window`.
+The page holds no engine (player isolation): the scenario runs in a sandboxed `<iframe>` on an opaque
+origin. `helpers/engine.ts` therefore evaluates inside that frame (`playerFrame(page)`) and
+`import()`s the engine bundle by its absolute URL, which gives the very same module instance the scenario
+uses - no test hook in production code, nothing hung off `window`.
 
-That is what makes "did it render?" a direct question (`renderStats.drawCalls`)
-rather than a screenshot diff, which under SwiftShader would be slow and flaky.
+That is what makes "did it render?" a direct question (`renderStats.drawCalls`) rather than a screenshot
+diff, which under SwiftShader would be slow and flaky.
+
+## Specs that build their own scenario
+
+`hostile-archive.spec.ts` (an escape attempt) and `ktx2-render.spec.ts` (a cube textured from a `.ktx2`)
+build their ZIP in the test with `helpers/zip.ts`, upload it as an `e2e-` row, play it and delete it.
+`fixtures/test.ktx2` is a copy of `WebEngineTS/scripts/player-smoke/fixtures/test.ktx2` (test data, not
+scenario content).
+
+## `/editor/` and its import-map nonce (`editor-csp.spec.ts`)
+
+The platform page has no import map; the editor still does, and `nginx/editor.conf` stamps the CSP nonce on
+it. The spec needs a stack that serves `/editor/`, and skips on the normal one. A self-contained harness
+runs the real frontend image with the real `editor.conf` and `csp-editor.conf` in front of stub editor and
+backend containers - own compose project, network and port (8046), no volumes:
+
+```bash
+# from the repository root
+docker compose -p vl-editor-csp -f e2e/editor-csp-harness/docker-compose.yml up --build -d
+cd e2e && ADMIN_TOKEN=x E2E_BASE_URL=http://localhost:8046 npx playwright test editor-csp   # 2 passed
+cd .. && docker compose -p vl-editor-csp -f e2e/editor-csp-harness/docker-compose.yml down --remove-orphans --rmi local
+```
+
+`EDITOR_CSP_PORT` changes the port. Against the real editor stack
+(`docker-compose.editor.yml`, which needs the WebEngineTSEditor checkout) the same spec runs with
+`E2E_BASE_URL` pointing at it.

@@ -1,18 +1,20 @@
 // e2e/helpers/engine.ts
 //
-// Reads the engine's own instrumentation from inside the page.
+// Reads the engine's own instrumentation from INSIDE the sandboxed player frame.
 //
-// The trick that makes this possible: `index.html` carries an import map
-// pointing "WebEngineTS" at /assets/WebEngineTS.standalone.js, and an import map
-// applies to dynamic imports in the main world too. So a test can
-// `await import('WebEngineTS')` and hold the very same module instance the app
-// is using — no test hook in production code, and nothing hung off `window`.
+// Since player-isolation the platform page holds no engine and has no import map: the scenario runs in
+// an `<iframe sandbox>` on an opaque origin (/player/player.html). The frame itself imports the engine
+// by absolute URL, so a test running code in that frame can `import()` the very same URL and receive the
+// very same module instance the scenario uses - no test hook in production code, nothing hung on `window`.
+// (Playwright evaluates in the frame's own context; the page's CSP/sandbox does not restrict it.)
 //
-// This matters because the alternative for "did it render?" is screenshot
-// diffing, which under SwiftShader is both slow and flaky. `drawCalls` from the
-// engine's own profiler is a direct answer.
+// `drawCalls` from the engine's own profiler is a direct answer to "did it render?", where the alternative
+// is screenshot diffing, which under SwiftShader is slow and flaky.
 
-import type { Page } from '@playwright/test';
+import type { Frame, Page } from '@playwright/test';
+
+export const ENGINE_URL = '/assets/WebEngineTS.standalone.js';
+export const PLAYER_PATH = '/player/player.html';
 
 export interface EngineSnapshot {
   drawCalls: number | null;
@@ -28,26 +30,40 @@ export interface EngineBuild {
   isBuild: boolean;
 }
 
-/** What the engine bundle in this page calls itself. */
+/** The player frames currently attached to the page. */
+export function playerFrames(page: Page): Frame[] {
+  return page.frames().filter(f => f.url().includes(PLAYER_PATH));
+}
+
+/** The (single) live player frame; waits for it to exist. */
+export async function playerFrame(page: Page, timeout = 30_000): Promise<Frame> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const frames = playerFrames(page);
+    if (frames.length > 0) return frames[frames.length - 1];
+    await page.waitForTimeout(100);
+  }
+  throw new Error('no player frame appeared');
+}
+
+/** What the engine bundle running in the player calls itself. */
 export async function readEngineBuild(page: Page): Promise<EngineBuild> {
-  return page.evaluate(async () => {
-    const { BuildInfo } = await import('WebEngineTS');
+  const frame = await playerFrame(page);
+  return frame.evaluate(async url => {
+    const { BuildInfo } = await import(url);
     return { version: BuildInfo.version, builtAt: BuildInfo.builtAt, isBuild: BuildInfo.isBuild };
-  });
+  }, new URL(ENGINE_URL, page.url()).href);
 }
 
 /**
- * One `MemoryProfiler` sample.
- *
- * Note this does **not** open the profiler overlay: `snapshot()` is a plain
- * read, so it does not create the rAF loop the overlay owns and cannot perturb
- * what it is measuring.
+ * One `MemoryProfiler` sample, taken inside the frame. `snapshot()` is a plain read: it does not open the
+ * overlay or create the rAF loop the overlay owns, so it cannot perturb what it measures.
  */
 export async function readEngineSnapshot(page: Page): Promise<EngineSnapshot> {
-  return page.evaluate(async () => {
-    const { MemoryProfiler } = await import('WebEngineTS');
+  const frame = await playerFrame(page);
+  return frame.evaluate(async url => {
+    const { MemoryProfiler } = await import(url);
     const report = MemoryProfiler.snapshot();
-
     return {
       drawCalls: report.renderStats?.drawCalls ?? null,
       triangles: report.renderStats?.triangles ?? null,
@@ -55,33 +71,47 @@ export async function readEngineSnapshot(page: Page): Promise<EngineSnapshot> {
       textureCount: report.renderer?.textures ?? null,
       gpu: report.gpu ?? null,
     };
-  });
+  }, new URL(ENGINE_URL, page.url()).href);
 }
 
 /**
  * Waits until the engine has actually drawn something.
  *
- * `state() === 'running'` only says the scenario was handed to the engine; a
- * scene that throws on its first frame would still get there. Draw calls are
- * the evidence that a frame reached the GPU.
+ * `.viewer-controls` only says the player reported "running"; a scene that throws on its first frame would
+ * still get there. Draw calls are the evidence that a frame reached the GPU.
  */
 export async function waitForFrames(page: Page, timeout = 60_000): Promise<EngineSnapshot> {
-  await page.waitForFunction(
-    async () => {
-      const { MemoryProfiler } = await import('WebEngineTS');
+  const frame = await playerFrame(page, timeout);
+  const url = new URL(ENGINE_URL, page.url()).href;
+  await frame.waitForFunction(
+    async u => {
+      const { MemoryProfiler } = await import(u);
       return (MemoryProfiler.snapshot().renderStats?.drawCalls ?? 0) > 0;
     },
-    undefined,
-    { timeout, polling: 500 }
+    url,
+    { timeout, polling: 500 },
   );
-
   return readEngineSnapshot(page);
 }
 
-/** Forces a context loss the way a driver reset would, via the GL extension. */
+/** The overlay's DOM node and the engine's view of it, read inside the frame. */
+export async function profilerState(page: Page): Promise<{ element: boolean; visible: boolean; allowed: boolean }> {
+  const frame = await playerFrame(page);
+  return frame.evaluate(async url => {
+    const { MemoryProfiler } = await import(url);
+    return {
+      element: document.getElementById('webengine-profiler') !== null,
+      visible: MemoryProfiler.isOverlayVisible,
+      allowed: MemoryProfiler.diagnosticsAllowed,
+    };
+  }, new URL(ENGINE_URL, page.url()).href);
+}
+
+/** Forces a context loss in the frame the way a driver reset would, via the GL extension. */
 export async function loseWebGLContext(page: Page): Promise<boolean> {
-  return page.evaluate(() => {
-    const canvas = document.querySelector('canvas.webgl-canvas') as HTMLCanvasElement | null;
+  const frame = await playerFrame(page);
+  return frame.evaluate(() => {
+    const canvas = document.querySelector('canvas');
     const gl = canvas?.getContext('webgl2');
     const ext = gl?.getExtension('WEBGL_lose_context');
     if (!ext) return false;

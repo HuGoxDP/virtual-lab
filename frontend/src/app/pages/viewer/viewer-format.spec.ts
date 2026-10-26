@@ -58,3 +58,64 @@ describe('readFlag', () => {
     expect(readFlag('yes')).toBe(false);
   });
 });
+
+// ── player isolation, phase 5: error mapping, URL absolutising, the pause shortcut ──
+
+import { absoluteUrl, isPauseShortcut, mapPlayerError } from './viewer-format';
+
+describe('mapPlayerError', () => {
+  it('DW-5.2 handshake: a Ukrainian "no response" text, not the engine wording', () => {
+    const text = mapPlayerError({ code: 'handshake', message: 'the player did not say hello' })!;
+    expect(text).toContain('Відтворювач сценаріїв не відповів');
+    expect(text).not.toContain('hello');
+  });
+  it('origin and version: the incompatibility text', () => {
+    for (const code of ['origin', 'version'] as const) expect(mapPlayerError({ code, message: 'x' })).toContain('не сумісний');
+  });
+  it('load: the player message is kept; an empty one gets the fallback', () => {
+    expect(mapPlayerError({ code: 'load', message: 'bad manifest' })).toBe('bad manifest');
+    expect(mapPlayerError({ code: 'load', message: '  ' })).toBe('Не вдалося завантажити сценарій');
+  });
+  it('runtime: nothing to show', () => {
+    expect(mapPlayerError({ code: 'runtime', message: 'TypeError' })).toBeNull();
+  });
+});
+
+describe('absoluteUrl', () => {
+  it('resolves a site-relative URL against the page and leaves an absolute one alone', () => {
+    expect(absoluteUrl('/a/x.json', 'http://localhost:8045/play/x?stream=1')).toBe('http://localhost:8045/a/x.json');
+    expect(absoluteUrl('https://cdn.example/a/x.json', 'http://localhost/')).toBe('https://cdn.example/a/x.json');
+  });
+});
+
+describe('isPauseShortcut', () => {
+  /** Dispatches a keydown and evaluates the predicate inside the listener, where `target` is set. */
+  const decide = (init: KeyboardEventInit, target: Element = document.body, prevent = false): boolean => {
+    let result = false;
+    const handler = (e: KeyboardEvent) => { if (prevent) e.preventDefault(); result = isPauseShortcut(e); };
+    document.addEventListener('keydown', handler, { once: true });
+    target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
+    return result;
+  };
+
+  it('DW-5.2 a plain first-press Space on the page is the shortcut', () => {
+    expect(decide({ code: 'Space' })).toBe(true);
+  });
+  it('is not the shortcut for repeats, modifiers or other keys', () => {
+    expect(decide({ code: 'Space', repeat: true })).toBe(false);
+    for (const mod of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey']) expect(decide({ code: 'Space', [mod]: true })).toBe(false);
+    expect(decide({ code: 'KeyP' })).toBe(false);
+  });
+  it('is not the shortcut for controls that use Space, nor inside them', () => {
+    for (const html of ['<button><span id="t">x</span></button>', '<a href="/x"><span id="t">x</span></a>', '<input id="t">', '<textarea id="t"></textarea>', '<select id="t"></select>', '<div contenteditable id="t"></div>', '<div role="button" id="t"></div>']) {
+      const host = document.createElement('div');
+      host.innerHTML = html;
+      document.body.append(host);
+      expect(decide({ code: 'Space' }, host.querySelector('#t')!), html).toBe(false);
+      host.remove();
+    }
+  });
+  it('is not the shortcut when the event was already handled', () => {
+    expect(decide({ code: 'Space' }, document.body, true)).toBe(false);
+  });
+});

@@ -14,18 +14,34 @@ import {
 import { Router, ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 
-// Engine imports — from the WebEngineTS npm package
-import { Application, BuildInfo, Texture2D } from 'WebEngineTS';
-import type { IScenarioLoadProgress } from 'WebEngineTS';
+// The only thing this page takes from the engine package: the host client of the sandboxed player.
+// It carries no engine code, so nothing in the page can run a scenario (player-isolation).
+import { PlayerHost } from 'WebEngineTS/player-host';
+import type { PlayerError, PlayerHostOptions, PlayerLoadSource, PlayerProgress } from 'WebEngineTS/player-host';
 
 import { IconComponent } from '../../ui/icon/icon.component';
 import { ScenarioService, DownloadProgress } from '../../services/scenario.service';
 import { TelemetryService } from '../../services/telemetry.service';
 import { ScenarioCatalogItem } from '../../models/scenario.model';
-import { STAGE_ENGINE, STAGE_FETCH, readFlag } from './viewer-format';
-import { PROFILER_GUARD_INTERVAL_MS, enforceProfilerOff, lockProfiler } from './viewer-profiler';
+import {
+  STAGE_ENGINE,
+  STAGE_FETCH,
+  absoluteUrl,
+  isPauseShortcut,
+  mapPlayerError,
+  readFlag,
+} from './viewer-format';
 import { ViewerHudComponent } from './viewer-hud.component';
 import { ViewerLoadingComponent } from './viewer-loading.component';
+
+/** Where the sandboxed player, the engine bundle it imports and the KTX2 transcoder are served. */
+const PLAYER_URL = '/player/player.html';
+const ENGINE_URL = '/assets/WebEngineTS.standalone.js';
+/** The engine's default is `/basis/`, which 404s here: Angular publishes `src/assets` under `/assets`. */
+const TRANSCODER_PATH = '/assets/basis/';
+
+/** The slice of `PlayerHost` the viewer drives; a spec substitutes a fake with the same surface. */
+export type PlayerHostLike = Pick<PlayerHost, 'load' | 'restart' | 'pause' | 'resume' | 'measure' | 'dispose'>;
 
 /**
  * Viewer states for the loading UI.
@@ -42,8 +58,9 @@ type ViewerState = 'idle' | 'downloading' | 'loading-engine' | 'running' | 'erro
 })
 export class ViewerComponent implements AfterViewInit, OnDestroy {
 
-  @ViewChild('webglCanvas', { static: true })
-  canvasRef!: ElementRef<HTMLCanvasElement>;
+  /** Where the sandboxed player frame is put; the frame is created and removed by `PlayerHost`. */
+  @ViewChild('playerHost', { static: true })
+  playerRef!: ElementRef<HTMLElement>;
 
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
@@ -51,28 +68,23 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   private readonly telemetry = inject(TelemetryService);
 
   private readonly destroy$ = new Subject<void>();
-  private app: Application | null = null;
+  private host: PlayerHostLike | null = null;
 
   /** Aborts the archive download when the user navigates away mid-transfer. */
   private downloadAbort: AbortController | null = null;
 
   /**
-   * Kept so "restart" can re-run the scenario without downloading it again.
+   * What the player ran, kept so "restart" can run it again in a fresh frame without downloading it
+   * again: the archive as a `Blob` (the host owns the bytes; the frame only ever receives a copy), or
+   * the manifest URL of a streamed run.
    *
-   * A signal, not a field, because `canRestart` derives from it: a streamed run
-   * has no buffer to re-run, and a plain field would never notify the zoneless
-   * scheduler to disable the button.
+   * A signal, not a field, because `canRestart` derives from it.
    */
-  private readonly loadedBuffer = signal<ArrayBuffer | null>(null);
-
-  /** Re-closes the profiler if a running scenario opens it again. */
-  private profilerGuard: ReturnType<typeof setInterval> | null = null;
-
-  private contextLostHandler: ((event: Event) => void) | null = null;
+  private readonly loadedSource = signal<PlayerLoadSource | null>(null);
 
   /**
-   * Incremented on every navigation so a load that is still in flight cannot
-   * write its result over a newer one.
+   * Incremented on every navigation and restart so a load that is still in flight cannot write its
+   * result over a newer one.
    */
   private loadToken = 0;
 
@@ -96,11 +108,25 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   readonly contextLost = signal(false);
   readonly isFullscreen = signal(false);
 
+  /** Frames per second reported by the player; `null` until the first report of a run. */
+  readonly fps = signal<number | null>(null);
+  /** Whether the player confirmed the scenario's clock is paused. Reflects the player, never guesses. */
+  readonly paused = signal(false);
+
   /**
    * Whether to show the engine build stamp (`?diag=1`). The stamp is all the flag does: the
-   * profiler overlay never runs on the platform, with or without it (see `viewer-profiler.ts`).
+   * profiler overlay never runs on the platform, with or without it (the host always sends `diag: false`).
    */
   readonly buildStampVisible = signal(false);
+
+  /**
+   * Which engine build the player runs, for the diagnostics readout; `''` until known.
+   *
+   * The page holds no engine, so the only source is the player's own measurement
+   * (`PlayerMetrics.engineBuild`), asked for once the scenario is running. Not `Application.version`:
+   * that is a string literal fixed at "0.1.0" across every local pack, so it cannot tell two builds apart.
+   */
+  readonly engineBuild = signal('');
 
   /**
    * Whether to load from the scenario's streaming manifest rather than its ZIP.
@@ -120,74 +146,44 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     () => this.state() === 'downloading' || this.state() === 'loading-engine'
   );
 
-  // A streamed run holds no buffer, so there is nothing to re-run in place —
-  // restarting it would mean re-fetching, which is not what the button promises.
+  /** Pause needs a running scenario in a live frame. */
+  readonly canPause = computed(() => this.state() === 'running' && !this.contextLost());
+
+  /** Any run can start again in a fresh frame: the ZIP from the retained Blob, a streamed one from its manifest. */
   readonly canRestart = computed(
-    () => this.state() === 'running' && !this.contextLost() && this.loadedBuffer() !== null
+    () => this.state() === 'running' && !this.contextLost() && this.loadedSource() !== null
   );
-
-  /**
-   * Which engine build is running, for the diagnostics readout.
-   *
-   * Not `Application.version`: that is a string literal fixed at "0.1.0" across
-   * every local pack, so it cannot tell two builds apart — which is the only
-   * question worth asking. `BuildInfo` is stamped from the engine's package.json
-   * at build time, and `builtAt` is what actually distinguishes one build from
-   * the next. A frame time quoted without it is not reproducible.
-   */
-  readonly engineBuild = ViewerComponent.describeEngineBuild();
-
-  private static describeEngineBuild(): string {
-    if (!BuildInfo.isBuild) return 'engine: running from source';
-
-    // Minutes are enough to identify a pack; seconds are noise on screen.
-    const builtAt = BuildInfo.builtAt
-      ? BuildInfo.builtAt.replace('T', ' ').slice(0, 16) + ' UTC'
-      : 'build date unknown';
-
-    return `engine ${BuildInfo.version} · ${builtAt}`;
-  }
 
   // ==================== LIFECYCLE ====================
 
   ngAfterViewInit(): void {
-    // First thing, before the WebGL probe and before any scenario code can exist.
-    lockProfiler();
-
-    // Read once: these are launch options (read before the WebGL probe so the build stamp also shows on the unsupported screen), not something to toggle mid-run.
+    // Read once: these are launch options, not something to toggle mid-run.
     const query = this.route.snapshot.queryParamMap;
     this.buildStampVisible.set(readFlag(query.get('diag')));
     this.streamingRequested.set(readFlag(query.get('stream')));
 
-    const canvas = this.canvasRef.nativeElement;
-
-    // Probe before constructing: the Application constructor throws on a
-    // machine without WebGL2 and the user would see a raw exception string.
-    if (!ViewerComponent.supportsWebGL2(canvas)) {
+    // Probe before starting: a machine without WebGL2 should see the explanation, not a frame that
+    // fails inside the sandbox.
+    if (!ViewerComponent.supportsWebGL2()) {
       this.state.set('unsupported');
       return;
     }
 
-    // The engine's game loop is a plain requestAnimationFrame loop and never
-    // touches change detection — the app is zoneless, so no NgZone dance is
-    // needed (or possible: the injected NgZone would be a no-op).
-    this.app = this.createApplication(canvas);
-
-    // KTX2 textures are transcoded by a WASM module the *host* serves, not the
-    // engine bundle. Angular publishes src/assets at /assets, so the engine's
-    // default of "/basis/" would 404 here — silently, until a scenario actually
-    // ships compressed textures. Set before any scenario loads.
-    Texture2D.ktx2TranscoderPath = '/assets/basis/';
-
-    // A lost context silently freezes the scene otherwise.
-    this.contextLostHandler = (event: Event) => {
-      event.preventDefault();
-      this.app?.stop();
-      this.contextLost.set(true);
-    };
-    canvas.addEventListener('webglcontextlost', this.contextLostHandler);
+    this.host = this.createPlayerHost(this.playerRef.nativeElement, {
+      playerUrl: PLAYER_URL,
+      engineUrl: ENGINE_URL,
+      transcoderPath: TRANSCODER_PATH,
+      callbacks: {
+        onProgress: progress => this.onPlayerProgress(progress),
+        onFps: value => this.fps.set(value),
+        onPaused: value => this.paused.set(value),
+        onContextLost: () => this.contextLost.set(true),
+        onError: error => this.onPlayerError(error),
+      },
+    });
 
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
+    document.addEventListener('keydown', this.keydownHandler);
     window.addEventListener('pagehide', this.pageHideHandler);
 
     this.route.paramMap
@@ -206,40 +202,30 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
-    this.loadToken++; // a load still in flight is now stale: it must not re-arm the profiler guard
+    this.loadToken++; // a load still in flight is now stale: it must not write into a dead component
 
     // Stop streaming a possibly-large archive into a dead component.
     this.downloadAbort?.abort();
     this.downloadAbort = null;
-    this.loadedBuffer.set(null);
+    this.loadedSource.set(null);
 
-    const canvas = this.canvasRef.nativeElement;
-    if (this.contextLostHandler) {
-      canvas.removeEventListener('webglcontextlost', this.contextLostHandler);
-      this.contextLostHandler = null;
-    }
     document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
+    document.removeEventListener('keydown', this.keydownHandler);
     window.removeEventListener('pagehide', this.pageHideHandler);
     this.telemetry.endSession();
 
-    if (this.profilerGuard !== null) clearInterval(this.profilerGuard);
-    this.profilerGuard = null;
-    enforceProfilerOff();
-
-    // Full cleanup: scenario → engine → WebGL context
-    if (this.app) {
-      this.app.dispose();
-      this.app = null;
-    }
+    // Full cleanup: frame → scenario → engine → WebGL context all go with the iframe element.
+    this.host?.dispose();
+    this.host = null;
   }
 
-  /** Test seam: jsdom has no WebGL2, so a spec swaps the engine out here. Behaviour is `new Application`. */
-  protected createApplication(canvas: HTMLCanvasElement): Application {
-    return new Application(canvas);
+  /** Test seam: jsdom has no WebGL2 or real frames, so a spec swaps the host out here. Behaviour is `new PlayerHost`. */
+  protected createPlayerHost(container: HTMLElement, options: PlayerHostOptions): PlayerHostLike {
+    return new PlayerHost(container, options);
   }
 
   /** Cheap feature probe; the context is released immediately. */
-  private static supportsWebGL2(canvas: HTMLCanvasElement): boolean {
+  private static supportsWebGL2(): boolean {
     try {
       const probe = document.createElement('canvas');
       const gl = probe.getContext('webgl2');
@@ -249,6 +235,27 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     } catch {
       return false;
     }
+  }
+
+  // ==================== PLAYER CALLBACKS ====================
+
+  /** Only a run in flight has a progress ring; a late report from a discarded frame is dropped by the host. */
+  private onPlayerProgress(progress: PlayerProgress): void {
+    if (this.state() === 'loading-engine') this.progressPercent.set(Math.round(progress.progress * 100));
+  }
+
+  private onPlayerError(error: PlayerError): void {
+    // Before the next run reaches the player there is no run of ours to fail (a frame being replaced
+    // by a new scenario must not put its own error over the download).
+    if (this.state() === 'downloading' || this.state() === 'idle') return;
+
+    const message = mapPlayerError(error);
+    if (message === null) {
+      console.warn('[ViewerComponent] Scenario error:', error.message);
+      return;
+    }
+    console.error(`[ViewerComponent] Player ${error.code} error:`, error.message);
+    this.showError(message);
   }
 
   // ==================== LOADING PIPELINE ====================
@@ -288,13 +295,16 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
   /**
    * Full loading pipeline:
-   * 1. Download ZIP from URL (with progress)
-   * 2. Pass ArrayBuffer to engine (with progress)
-   * 3. Engine parses ZIP, validates manifest, executes entry point
+   * 1. Download the ZIP from its URL (with progress), unless streaming was asked for and exists
+   * 2. Hand the archive (as a Blob) or the manifest URL to the sandboxed player
+   * 3. The player's engine unpacks it, validates the manifest and executes the entry point
    */
   private async startLoading(scenario: ScenarioCatalogItem, token: number): Promise<void> {
     if (this.streamingRequested() && scenario.manifestUrl) {
-      await this.startStreaming(scenario.manifestUrl, token);
+      // No download step: the engine in the frame fetches scripts and assets itself, in priority order.
+      const source: PlayerLoadSource = { kind: 'manifest', url: absoluteUrl(scenario.manifestUrl, location.href) };
+      this.loadedSource.set(source);
+      await this.runSource(source, token, false);
       return;
     }
 
@@ -305,9 +315,9 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     const abort = new AbortController();
     this.downloadAbort = abort;
 
+    let archive: ArrayBuffer;
     try {
-      // Step 1: Download the ZIP
-      const zipBuffer = await this.scenarioService.downloadScenarioZip(
+      archive = await this.scenarioService.downloadScenarioZip(
         scenario,
         (progress: DownloadProgress) => {
           if (token !== this.loadToken) return;
@@ -317,124 +327,86 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
         },
         abort.signal
       );
-
-      if (token !== this.loadToken) return;
-      this.loadedBuffer.set(zipBuffer);
-
-      await this.runBuffer(zipBuffer, token);
-
     } catch (err) {
       if (token !== this.loadToken || abort.signal.aborted) return;
-      const message = err instanceof Error
-        ? err.message
-        : 'Невідома помилка при завантаженні сценарію';
-      console.error('[ViewerComponent] Load failed:', err);
-      this.showError(message);
+      console.error('[ViewerComponent] Download failed:', err);
+      this.showError(err instanceof Error ? err.message : 'Невідома помилка при завантаженні сценарію');
+      return;
     }
+
+    if (token !== this.loadToken) return;
+    // The host keeps the bytes as a Blob; the player gets a structured copy on every (re)start.
+    const source: PlayerLoadSource = { kind: 'blob', blob: new Blob([archive], { type: 'application/zip' }) };
+    this.loadedSource.set(source);
+    // The archive is complete by now; the byte line stays, at "N з N МБ".
+    await this.runSource(source, token, false, archive.byteLength);
   }
 
   /**
-   * Runs a scenario from its streaming manifest instead of its archive.
+   * Starts (or restarts) the player on `source` and follows it to `running`.
    *
-   * No download step: the engine fetches scripts and assets itself, in priority
-   * order, so the only progress worth reporting is the engine's own. `restart()`
-   * is unavailable afterwards because there is no buffer to re-run — it would
-   * have to re-fetch, which is a different thing from what the button promises.
+   * Every failure that matters has already reached `onPlayerError` (the host reports before it
+   * rejects); a rejection caused by a newer run or by destroying the view carries a stale token and
+   * stays silent. What is left is a rejection nobody reported, which must not leave a spinner.
    */
-  private async startStreaming(manifestUrl: string, token: number): Promise<void> {
+  private async runSource(source: PlayerLoadSource, token: number, restart: boolean, archiveBytes?: number): Promise<void> {
+    const host = this.host;
+    if (!host) return;
+
     this.setState('loading-engine', 0, STAGE_ENGINE);
-    this.armProfilerGuard();
+    if (archiveBytes !== undefined) {
+      this.loadedBytes.set(archiveBytes);
+      this.totalBytes.set(archiveBytes);
+    }
+    this.fps.set(null);
+    this.paused.set(false); // a fresh frame never starts paused
 
     try {
-      if (!this.app) throw new Error('Engine not initialized');
-
-      await this.app.loadScenarioFromManifest(
-        manifestUrl,
-        (progress: IScenarioLoadProgress) => {
-          if (token !== this.loadToken) return;
-          this.progressPercent.set(Math.round(progress.progress * 100));
-        }
-      );
-
-      if (token !== this.loadToken) return;
-      this.loadedBuffer.set(null);
-      this.setState('running', 100, '');
-
-      this.watchProfiler();
-      void this.telemetry.startSession(this.scenarioId);
-
+      // diag is always false: the profiler is off on the platform, whatever the scenario or `?diag=1` says.
+      await (restart ? host.restart() : host.load(source, { diag: false }));
     } catch (err) {
-      if (token !== this.loadToken) return;
-      const message = err instanceof Error ? err.message : 'Не вдалося завантажити сценарій';
-      console.error('[ViewerComponent] Streamed load failed:', err);
-      this.showError(message);
-    }
-  }
-
-  /** Hands an already-downloaded archive to the engine. */
-  private async runBuffer(zipBuffer: ArrayBuffer, token: number): Promise<void> {
-    this.setState('loading-engine', 0, STAGE_ENGINE);
-    // The archive is complete by now; the byte line stays, at "N з N МБ".
-    this.loadedBytes.set(zipBuffer.byteLength);
-    this.totalBytes.set(zipBuffer.byteLength);
-
-    if (!this.app) throw new Error('Engine not initialized');
-
-    this.armProfilerGuard();
-    await this.app.loadScenarioFromBuffer(
-      zipBuffer,
-      (progress: IScenarioLoadProgress) => {
-        if (token !== this.loadToken) return;
-        this.progressPercent.set(Math.round(progress.progress * 100));
+      if (token === this.loadToken && this.state() === 'loading-engine') {
+        console.error('[ViewerComponent] Run failed:', err);
+        this.showError(err instanceof Error ? err.message : 'Не вдалося завантажити сценарій');
       }
-    );
+      return;
+    }
 
     if (token !== this.loadToken) return;
     this.setState('running', 100, '');
-
-    this.watchProfiler();
+    this.focusFrame();
 
     // Only count a launch that actually reached a running scene.
     void this.telemetry.startSession(this.scenarioId);
+
+    if (this.buildStampVisible()) void this.readEngineBuild(host, token);
   }
 
-  /**
-   * Closes the profiler a scenario opened during load, and keeps closing it: a scenario can call
-   * `showOverlay()` or re-open the engine's gate at any later moment, and the engine's setter is
-   * two-way today. A once-a-second check costs nothing and bounds a re-opened overlay to a blink.
-   */
-  private watchProfiler(): void {
-    if (enforceProfilerOff()) {
-      console.warn('[ViewerComponent] Scenario opened the profiler; closed it.');
+  /** Asks the player which engine it runs; the stamp shows about a second after the scenario starts. */
+  private async readEngineBuild(host: PlayerHostLike, token: number): Promise<void> {
+    try {
+      const metrics = await host.measure(1);
+      if (token === this.loadToken) this.engineBuild.set(`engine ${metrics.engineBuild}`);
+    } catch (err) {
+      if (token === this.loadToken) console.warn('[ViewerComponent] Engine build unavailable:', err);
     }
-    this.armProfilerGuard();
-  }
-
-  /**
-   * Shuts the gate and starts the periodic re-check (once per component). Called at load *start*, not
-   * only after success: a scenario's entry point runs during the load, so one that re-opens the gate
-   * and then fails or stalls would otherwise stay open until the component is destroyed.
-   */
-  private armProfilerGuard(): void {
-    lockProfiler();
-    this.profilerGuard ??= setInterval(enforceProfilerOff, PROFILER_GUARD_INTERVAL_MS);
   }
 
   // ==================== VIEWER CONTROLS ====================
 
-  /** Re-runs the scenario from the buffer already in memory — no re-download. */
+  /** Runs the same source again in a fresh frame — no re-download, no state carried over from the old frame. */
   async restart(): Promise<void> {
-    const buffer = this.loadedBuffer();
-    if (!buffer || !this.app) return;
+    const source = this.loadedSource();
+    if (!source || !this.host) return;
 
-    const token = ++this.loadToken;
-    try {
-      await this.runBuffer(buffer, token);
-    } catch (err) {
-      if (token !== this.loadToken) return;
-      console.error('[ViewerComponent] Restart failed:', err);
-      this.showError(err instanceof Error ? err.message : 'Не вдалося перезапустити сценарій');
-    }
+    await this.runSource(source, ++this.loadToken, true);
+  }
+
+  /** HUD pause button and the Space shortcut. The state flips when the player confirms (`onPaused`). */
+  togglePause(): void {
+    if (!this.canPause()) return;
+    if (this.paused()) this.host?.resume();
+    else this.host?.pause();
   }
 
   async toggleFullscreen(): Promise<void> {
@@ -442,15 +414,34 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
       } else {
-        await this.canvasRef.nativeElement.parentElement?.requestFullscreen();
+        // The host's container (frame + HUD), not the frame: the frame is given no `fullscreen` permission.
+        await this.playerRef.nativeElement.parentElement?.requestFullscreen();
       }
     } catch (err) {
       console.warn('[ViewerComponent] Fullscreen rejected:', err);
     }
   }
 
+  /** Keyboard focus goes to the scenario, so its controls work without a click first. */
+  private focusFrame(): void {
+    this.playerRef.nativeElement.querySelector('iframe')?.focus();
+  }
+
   private readonly fullscreenChangeHandler = (): void => {
     this.isFullscreen.set(!!document.fullscreenElement);
+  };
+
+  /**
+   * Space pauses while the host page has the keyboard. With the frame focused the same key is handled
+   * by the player inside the frame, which reports `paused` back; the key event goes to exactly one of
+   * the two documents (a frame's key events never reach this page), so one press is one toggle. Both
+   * routes end in the player's own confirmation (`onPaused`), and a pause/resume request for the state
+   * the player is already in is a no-op there, so even a double delivery could not flip it back.
+   */
+  private readonly keydownHandler = (event: KeyboardEvent): void => {
+    if (!this.canPause() || !isPauseShortcut(event)) return;
+    event.preventDefault();
+    this.togglePause();
   };
 
   /** ngOnDestroy never runs when the tab is closed; pagehide does. */
