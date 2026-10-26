@@ -17,7 +17,7 @@ function fakeContext2d(): CanvasRenderingContext2D {
 }
 
 function reset(): void {
-  MemoryProfiler.diagnosticsAllowed = true;
+  MemoryProfiler._resetDiagnosticsPolicy();
   MemoryProfiler.disableToggle();
   MemoryProfiler.hideOverlay();
 }
@@ -30,7 +30,7 @@ describe('viewer-profiler', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     reset();
-    MemoryProfiler.diagnosticsAllowed = true;
+    MemoryProfiler._resetDiagnosticsPolicy();
   });
 
   it('DW-5.3 lockProfiler closes the engine gate', () => {
@@ -62,7 +62,7 @@ describe('viewer-profiler', () => {
 
   it('DW-5.3 enforceProfilerOff catches a scenario that re-opened the gate after load, then its overlay', () => {
     lockProfiler();
-    MemoryProfiler.diagnosticsAllowed = true; // scenario code re-opening the (two-way) setter
+    MemoryProfiler._resetDiagnosticsPolicy(); // scenario code re-opening the gate (the engine latches the setter at false, so only the test reset can)
     MemoryProfiler.showOverlay();
 
     expect(enforceProfilerOff()).toBe(true);

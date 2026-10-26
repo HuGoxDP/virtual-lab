@@ -95,6 +95,25 @@ test.describe('content security policy', () => {
     }
   });
 
+  test('DW-4.4 every location carries the platform CSP (with frame-src), and /player/ carries the player CSP', async ({ request }) => {
+    // The nonce differs per response; everything else must be identical across locations.
+    const normalise = (csp: string) => csp.replace(/'nonce-[^']+'/, `'nonce-X'`);
+    const platform = normalise((await request.get('/')).headers()['content-security-policy']);
+
+    expect(platform, 'the viewer frames /player/player.html, same host only').toContain(`frame-src 'self'`);
+    expect(platform).not.toContain('sandbox');
+
+    for (const path of ['/index.html', '/scenarios/', '/a/molecules.json', '/a/objects/00/missing.js', '/api/health']) {
+      const res = await request.get(path);
+      expect(normalise(res.headers()['content-security-policy'] ?? ''), `CSP on ${path}`).toBe(platform);
+    }
+
+    const player = (await request.get('/player/player.html')).headers()['content-security-policy'];
+    expect(player).toContain(`default-src 'none'`);
+    expect(player).toContain('sandbox allow-scripts allow-pointer-lock');
+    expect(player, 'the player must not inherit the platform policy').not.toContain(`frame-src`);
+  });
+
   test('the catalog renders without violations', async ({ page }) => {
     const violations = await watchViolations(page);
 

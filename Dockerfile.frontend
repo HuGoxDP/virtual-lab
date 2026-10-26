@@ -28,4 +28,7 @@ FROM nginx:alpine
 COPY --from=build /app/dist/university-mock/browser /usr/share/nginx/html
 COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
 COPY nginx/csp.conf   /etc/nginx/csp.conf
+# The player's own headers ship with the engine; nginx cannot include from
+# node_modules at run time, so the build stage's copy is taken here.
+COPY --from=build /app/node_modules/WebEngineTS/dist/player/player.nginx.conf /etc/nginx/snippets/player.nginx.conf
 EXPOSE 80

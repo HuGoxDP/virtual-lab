@@ -452,6 +452,28 @@ Same harness; only the guard's `setInterval`/`clearInterval` are faked (`vi.useF
 157. [U] Destroy: `clearInterval` fires, no timer remains, a gate re-opened afterwards is not re-closed, the
      gate is left shut, and a streamed load still in flight cannot re-arm the guard (DW-5.3).
 
+#### Player isolation, phase 4: serving the player (additive)
+
+Specs: `e2e/tests/player-serving.spec.ts`, `e2e/tests/csp.spec.ts`; the unit change is in
+`viewer-profiler.spec.ts` / `viewer-lifecycle.spec.ts`. The headers come from nginx, so the e2e runs
+need a rebuilt stack.
+
+158. [E] `/player/player.html`: CSP naming the browser's own `scheme://host:port` (never `'self'`),
+     `sandbox allow-scripts allow-pointer-lock` without `allow-same-origin`, `frame-ancestors 'self'`,
+     no `X-Frame-Options` (DW-4.1).
+159. [E] `Access-Control-Allow-Origin: *` for a request with `Origin: null` on `player.html`,
+     `player.js`, the engine bundle, the Basis transcoder (`.js`, `.wasm`) and `/a/` (objects and
+     manifests, also on a 404) (DW-4.1).
+160. [E] `/player/player.js` is not taken by the static-asset regex block (no 30-day cache, no platform
+     CSP, no `X-Frame-Options`); anything else under `/player/` is a 404, never the SPA fallback (DW-4.1).
+161. [E] A top-level visit to `/player/player.html`: `window.origin === 'null'` and the page shows that it
+     refused to run (DW-4.2).
+162. [E] `/`, `/index.html`, `/scenarios/`, `/a/...`, `/api/health` carry the same platform CSP (now with
+     `frame-src 'self'`), `/player/player.html` the player's (DW-4.4).
+163. [U] Release 1's viewer profiler specs (154-157, `viewer-profiler.spec.ts`) re-open the engine gate
+     through `MemoryProfiler._resetDiagnosticsPolicy()`, because the setter now latches at `false`; they
+     still pin the lock before every load and the 1000 ms re-close (DW-4.5).
+
 ### 4.11 Golden paths (E2E)
 
 97. **Student**: open `/` → filter by category → search → open the scenario page (`/scenario/:id`) →

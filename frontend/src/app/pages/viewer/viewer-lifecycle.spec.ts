@@ -107,11 +107,11 @@ const running = (f: ComponentFixture<ViewerComponent>) => until(f, () => f.compo
 const el = (f: ComponentFixture<ViewerComponent>) => f.nativeElement as HTMLElement;
 
 describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
-  beforeEach(() => { MemoryProfiler.diagnosticsAllowed = true; });
+  beforeEach(() => { MemoryProfiler._resetDiagnosticsPolicy(); });
   afterEach(() => {
     TestBed.resetTestingModule();
     vi.restoreAllMocks();
-    MemoryProfiler.diagnosticsAllowed = true;
+    MemoryProfiler._resetDiagnosticsPolicy();
   });
 
   describe('149 exit()', () => {
@@ -458,7 +458,7 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
           const seen: boolean[] = [];
           const { fixture, viewer, app } = setup({ query });
           await running(fixture);
-          MemoryProfiler.diagnosticsAllowed = true; // a scenario re-opened it while running
+          MemoryProfiler._resetDiagnosticsPolicy(); // a scenario re-opened it while running (simulated: the engine setter now latches)
           app.loadScenarioFromBuffer.mockImplementationOnce(gateAtLoad(seen));
           await viewer.restart();
           expect(seen).toEqual([false]);
@@ -477,7 +477,7 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
       it('DW-5.3 a scenario that re-opened the gate during load is closed the moment it is running, with a warning', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const { fixture } = setup({
-          arrange: d => d.app.loadScenarioFromBuffer.mockImplementation(async () => { MemoryProfiler.diagnosticsAllowed = true; }),
+          arrange: d => d.app.loadScenarioFromBuffer.mockImplementation(async () => { MemoryProfiler._resetDiagnosticsPolicy(); }),
         });
         await running(fixture);
         expect(MemoryProfiler.diagnosticsAllowed).toBe(false); // no timer has ticked
@@ -488,7 +488,7 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const { fixture } = setup({
           query: { stream: '1' },
-          arrange: d => d.app.loadScenarioFromManifest.mockImplementation(async () => { MemoryProfiler.diagnosticsAllowed = true; }),
+          arrange: d => d.app.loadScenarioFromManifest.mockImplementation(async () => { MemoryProfiler._resetDiagnosticsPolicy(); }),
         });
         await running(fixture);
         expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
@@ -506,7 +506,7 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
       it('DW-5.3 re-closes a gate re-opened while running, on the next 1000 ms tick and not before', async () => {
         const { fixture } = setup();
         await running(fixture);
-        MemoryProfiler.diagnosticsAllowed = true;
+        MemoryProfiler._resetDiagnosticsPolicy();
         vi.advanceTimersByTime(999);
         expect(MemoryProfiler.diagnosticsAllowed).toBe(true);
         vi.advanceTimersByTime(1);
@@ -532,7 +532,7 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
         const { fixture } = setup();
         await running(fixture);
         for (let i = 0; i < 3; i++) {
-          MemoryProfiler.diagnosticsAllowed = true;
+          MemoryProfiler._resetDiagnosticsPolicy();
           vi.advanceTimersByTime(1000);
           expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
         }
@@ -551,7 +551,7 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
         vi.spyOn(console, 'error').mockImplementation(() => undefined);
         const { fixture, viewer } = setup({
           arrange: d => d.app.loadScenarioFromBuffer.mockImplementation(async () => {
-            MemoryProfiler.diagnosticsAllowed = true;
+            MemoryProfiler._resetDiagnosticsPolicy();
             throw new Error('entry point failed');
           }),
         });
@@ -566,7 +566,7 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
         const { fixture, viewer } = setup({
           query: { stream: '1' },
           arrange: d => d.app.loadScenarioFromManifest.mockImplementation(async () => {
-            MemoryProfiler.diagnosticsAllowed = true;
+            MemoryProfiler._resetDiagnosticsPolicy();
             throw new Error('entry point failed');
           }),
         });
@@ -598,7 +598,7 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
         expect(clear).toHaveBeenCalledWith(id); // exactly the guard's interval is cleared
         expect(vi.getTimerCount()).toBe(0);
 
-        MemoryProfiler.diagnosticsAllowed = true;
+        MemoryProfiler._resetDiagnosticsPolicy();
         vi.advanceTimersByTime(5000);
         expect(MemoryProfiler.diagnosticsAllowed).toBe(true);
       });
@@ -606,7 +606,7 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
       it('destroy leaves the gate shut', async () => {
         const { fixture } = setup();
         await running(fixture);
-        MemoryProfiler.diagnosticsAllowed = true;
+        MemoryProfiler._resetDiagnosticsPolicy();
         fixture.destroy();
         expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
       });
