@@ -27,7 +27,6 @@ import { IconComponent } from '../../ui/icon/icon.component';
 import { SiteFooterComponent } from '../../ui/site-footer/site-footer.component';
 import { SiteHeaderComponent } from '../../ui/site-header/site-header.component';
 import { ToastService } from '../../ui/toast/toast.service';
-import { PlatformConfigService } from '../../services/platform-config.service';
 
 export type ScenarioPageStatus = 'loading' | 'ready' | 'not-found' | 'error';
 
@@ -59,9 +58,6 @@ export class ScenarioComponent {
   private readonly toast = inject(ToastService);
   private readonly titleService = inject(Title);
   private readonly injector = inject(Injector);
-  private readonly platformConfig = inject(PlatformConfigService);
-
-  readonly maxArchiveBytes = this.platformConfig.maxArchiveBytes;
 
   private readonly params = toSignal(this.route.paramMap, { requireSync: true });
 
@@ -109,7 +105,6 @@ export class ScenarioComponent {
       untracked(() => void this.load(id));
     });
     inject(DestroyRef).onDestroy(() => this.titleService.setTitle(this.initialTitle));
-    void this.platformConfig.load();
   }
 
   /** Fetches the scenario; an answer for an id the visitor has already left is dropped. */

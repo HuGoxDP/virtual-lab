@@ -99,4 +99,13 @@ describe('ViewerHudComponent', () => {
     const { root } = await render({ title: '' });
     expect(root.querySelector('.title-badge')).toBeNull();
   });
+
+  it('DW-5.3 has no diagnostics output or control, whatever else is on', async () => {
+    const { root } = await render({ title: 'T', fps: 60, canPause: true, canRestart: true });
+    expect(root.querySelector('button[aria-label*="іагностик"]')).toBeNull();
+    expect(root.querySelector('.control-btn[aria-label="Показати діагностику"]')).toBeNull();
+    expect(root.querySelectorAll('.viewer-controls button').length).toBe(3); // pause, restart, fullscreen
+    expect((root.querySelector('.viewer-controls') as HTMLElement).textContent).not.toMatch(/діагност|VRAM|profil/i);
+    expect(Object.keys((TestBed.createComponent(ViewerHudComponent).componentInstance as object))).not.toContain('toggleDiagnostics');
+  });
 });

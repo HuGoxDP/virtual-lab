@@ -112,7 +112,6 @@
             <button type="button" class="btn btn-primary btn-block launch" (click)="launch()">
               <vl-icon name="play" size="17" />Запустити симуляцію
             </button>
-            <p class="text-muted launch-note">Відкриється у браузері. Встановлення не потрібне.</p>
             <hr class="hr" />
           }
 
@@ -130,11 +129,6 @@
             <button type="button" class="btn btn-secondary copy" (click)="copyLink()">
               <vl-icon name="link-simple" size="15" />Копіювати посилання
             </button>
-            @if (s.scenarioUrl) {
-              <a class="btn btn-secondary btn-icon download" [href]="s.scenarioUrl" download aria-label="Завантажити архів">
-                <vl-icon name="download-simple" size="16" />
-              </a>
-            }
           </div>
 
           @if (manualLink(); as link) {
@@ -154,4 +148,4 @@
   }
 }
 
-<vl-site-footer [maxArchiveBytes]="maxArchiveBytes()" />
+<vl-site-footer />

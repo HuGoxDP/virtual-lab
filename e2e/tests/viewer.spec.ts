@@ -9,7 +9,10 @@
 // Release 1, phase 4 (test-plan 141-144; DW-4.1, 4.2, 4.4, 4.5): the loading screen and the HUD
 // restyled as Nocturne prototype screens 2c / 2d — cancel and exit go to /scenario/:id, restart
 // runs from the buffer, the hints leave at 390 px, error states keep their actions. The HUD has
-// no diagnostics button (Phase 5 removes the code behind it).
+// no diagnostics button.
+//
+// Release 1, phase 5 (test-plan 145; DW-5.3): the profiler overlay never runs on the platform -
+// solar-system opens it from its own code, `?diag=1` keeps only the build stamp, Backquote does nothing.
 
 import { expect, test, type Page } from '@playwright/test';
 import { adminScenarios, smallestPublishedScenario } from '../helpers/api';
@@ -117,8 +120,28 @@ test.describe('viewer', () => {
     await expect(page.getByRole('button', { name: 'Перезавантажити' })).toBeVisible();
   });
 
-  test.describe('diagnostics are a launch option, not a student control (F8)', () => {
-    test('no diagnostics button in the HUD, and no build badge without ?diag=1', async ({ page }) => {
+  test.describe('the profiler never runs on the platform (F8; test-plan 145)', () => {
+    /** The overlay's own DOM node, and the engine's view of it. */
+    async function profilerState(page: Page) {
+      return page.evaluate(async () => {
+        const { MemoryProfiler } = await import('WebEngineTS');
+        return {
+          element: document.getElementById('webengine-profiler') !== null,
+          visible: MemoryProfiler.isOverlayVisible,
+          allowed: MemoryProfiler.diagnosticsAllowed,
+        };
+      });
+    }
+
+    async function expectProfilerOff(page: Page, when: string): Promise<void> {
+      await expect.poll(() => profilerState(page).then(s => s.element || s.visible),
+        { message: `no profiler overlay ${when}` }).toBe(false);
+      // And not a moment later either: a scenario can call showOverlay() again at will.
+      await page.waitForTimeout(2500);
+      expect(await profilerState(page)).toEqual({ element: false, visible: false, allowed: false });
+    }
+
+    test('DW-5.3 no diagnostics button in the HUD, and no build badge without ?diag=1', async ({ page }) => {
       const id = await smallestPublishedId();
 
       await page.goto(`/play/${id}`);
@@ -128,54 +151,51 @@ test.describe('viewer', () => {
       await expect(page.locator('.control-btn[aria-label="Показати діагностику"]')).toHaveCount(0);
     });
 
-    test('a scenario cannot open the profiler on a student', async ({ page }) => {
-      // Regression test for a real defect this suite found: `solar-system` calls
-      // MemoryProfiler.showOverlay() from its own scenario code, so students
-      // opening the platform's flagship scenario were shown a developer overlay
-      // of FPS and VRAM counters. Gating the button cannot stop that — the
-      // scenario is arbitrary engine code — so the viewer now closes it.
+    test('DW-5.3 solar-system opens the overlay itself and the student never sees it; Backquote does not open it', async ({ page }) => {
+      // Regression for a real defect: `solar-system` calls enableToggle() and showOverlay() from its
+      // own scenario code. The viewer shuts the engine's gate before the load, so both are inert.
       await page.goto('/play/solar-system');
       await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
       await waitForFrames(page);
 
-      await expect
-        .poll(async () => page.evaluate(async () => {
-          const { MemoryProfiler } = await import('WebEngineTS');
-          return MemoryProfiler.isOverlayVisible;
-        }), { message: 'the profiler overlay must not be open without ?diag=1' })
-        .toBe(false);
+      await expectProfilerOff(page, 'without ?diag=1');
+
+      await page.keyboard.press('Backquote');
+      await page.waitForTimeout(500);
+      await expect(page.locator('#webengine-profiler')).toHaveCount(0);
+      expect((await profilerState(page)).visible).toBe(false);
     });
 
-    test('with ?diag=1 the badge names the running engine build', async ({ page }) => {
-      const id = await smallestPublishedId();
-
-      await page.goto(`/play/${id}?diag=1`);
-      await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
-
-      const badge = page.locator('.build-badge');
-      await expect(badge).toBeVisible();
-
-      // The badge must agree with what the bundle says about itself — the whole
-      // point is that it identifies the build, not that it renders some string.
-      const build = await readEngineBuild(page);
-      expect(build.isBuild, 'a packed bundle should report isBuild').toBe(true);
-      await expect(badge).toContainText(build.version);
-    });
-
-    test('with ?diag=1 the HUD still has no diagnostics button, and the platform leaves the profiler alone', async ({ page }) => {
-      // The HUD renders no diagnostics control any more; `?diag=1` only lifts the policy that
-      // closes a scenario's own overlay. `solar-system` opens it itself, so with the flag it stays open.
+    test('DW-5.3 ?diag=1 on solar-system shows the build stamp and still no overlay; Backquote does not open it', async ({ page }) => {
       await page.goto('/play/solar-system?diag=1');
       await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
       await waitForFrames(page);
 
+      const build = await readEngineBuild(page);
+      expect(build.isBuild, 'a packed bundle should report isBuild').toBe(true);
+      await expect(page.locator('.build-badge')).toBeVisible();
+      await expect(page.locator('.build-badge')).toContainText(build.version);
+
       await expect(page.locator('.control-btn[aria-label="Показати діагностику"]')).toHaveCount(0);
-      await expect
-        .poll(() => page.evaluate(async () => {
-          const { MemoryProfiler } = await import('WebEngineTS');
-          return MemoryProfiler.isOverlayVisible;
-        }), { message: "with ?diag=1 the scenario's own overlay must not be closed" })
-        .toBe(true);
+      await expectProfilerOff(page, 'with ?diag=1');
+
+      await page.keyboard.press('Backquote');
+      await page.waitForTimeout(500);
+      await expect(page.locator('#webengine-profiler')).toHaveCount(0);
+    });
+
+    test('DW-5.3 a scenario that re-opens the gate and the overlay after load is shut again', async ({ page }) => {
+      const id = await smallestPublishedId();
+      await page.goto(`/play/${id}`);
+      await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
+
+      await page.evaluate(async () => {
+        const { MemoryProfiler } = await import('WebEngineTS');
+        MemoryProfiler.diagnosticsAllowed = true; // what hostile scenario code could do on today's engine
+        MemoryProfiler.showOverlay();
+      });
+
+      await expectProfilerOff(page, 'after a scenario re-opened it');
     });
   });
 

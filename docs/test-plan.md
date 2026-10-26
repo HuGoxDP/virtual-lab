@@ -316,8 +316,8 @@ Numbered in phase 3, which owns this document. Specs: `frontend/src/styles/noctu
 114. [E] Inter is served from `/assets/fonts/`; no request leaves the origin (DW-2.2).
 115. [C] `<vl-icon>` draws every hosted icon from the generated path data, inherits colour and size,
      falls back for an unknown name; the committed data equals what the generator produces (DW-2.3).
-116. [C] `<vl-site-header>` (both brand modes, slot order) and `<vl-site-footer>` (texts from
-     `site.config.ts`, limit line) (DW-2.4).
+116. [C] `<vl-site-header>` (both brand modes, slot order) and `<vl-site-footer>` (DW-2.4; since phase 5
+     the footer is the copyright bar only - see #147).
 117. [C] `<vl-scenario-card>` (open vs launch, gradient fallback), toast service and host (announced,
      self-hiding), `categoryGradient` (stable per slug) (DW-2.4).
 118. [U] `formatBytes`, `formatDate` (Kyiv, own month names), `pluralUk` (DW-2.5).
@@ -337,11 +337,10 @@ Specs: `catalog-query.spec.ts`, `platform-config.service.spec.ts`, `scenario.ser
      count in API order; chips survive a failed request; load more keeps the query (DW-3.1, DW-3.2).
 122. [U] Responses resolving out of order: the newest filter wins, an older failure shows no error,
      an older answer does not end `loading`, a stale append is dropped (DW-3.2).
-123. [U] `PlatformConfigService`: limit from `/api/config`, shared request, retry after failure,
-     malformed answers ignored (DW-3.1).
-124. [C] Catalog: header "Увійти"/"Панель", hero (department from config, counters from `summary`,
-     plural forms), chips (icon, count, order, `aria-pressed`), "Знайдено N", card grid, footer limit
-     or format only (DW-3.1).
+123. ~~`PlatformConfigService`~~ - **retired 2026-10-26 (phase 5)**: the footer's archive limit was its
+     only consumer; `GET /api/config` stays on the backend (#111, API tests).
+124. [C] Catalog: header "Увійти"/"Панель", chips (icon, count, order, `aria-pressed`), "Знайдено N",
+     card grid (DW-3.1). The hero and the footer limit were removed in phase 5 (#147).
 125. [C] Catalog: sort segment drives `sort`; deep link → request; chip/sort/search write the URL
      (search replaces history after the debounce); the search box is not overwritten mid-word; Back
      and return from a scenario page reload the filter; load more keeps the query (DW-3.1, DW-3.2).
@@ -356,7 +355,7 @@ Specs: `catalog-query.spec.ts`, `platform-config.service.spec.ts`, `scenario.ser
 129. [C] Scenario page: 404 → not-found, 500 / network → error and retry, loading state, an answer for
      an id the visitor left is dropped; "Каталог" returns with the filter (DW-3.4, DW-3.2).
 130. [C] Copy link: clipboard ok → absolute URL + toast; Clipboard API missing or rejected → readonly
-     selected input, no toast; download `href` equals `scenarioUrl` (DW-3.5).
+     selected input, no toast (DW-3.5). The download link was removed in phase 5 (#147).
 131. [C] `/admin` editor: add up to six entries (seventh blocked), icons from `ICON_NAMES`, edit and
      remove, empty subtitle dropped on save, existing entries copied not shared, server 400 shown
      (DW-3.8).
@@ -395,6 +394,29 @@ Specs: `catalog-query.spec.ts`, `platform-config.service.spec.ts`, `scenario.ser
 144. [E] `viewer.spec.ts`: unknown scenario → Nocturne error panel with its way back; no WebGL 2 → Nocturne
      panel (Inter, `--color-bg`); forced context loss → panel with "Перезавантажити" (existing test, F7)
      (DW-4.5).
+
+#### Trimmed pages and the profiler switched off (release 1, phase 5)
+
+Specs: `viewer-profiler.spec.ts`, `viewer.component.spec.ts`, `viewer-hud.component.spec.ts`,
+`site-footer.component.spec.ts`, `catalog.component.spec.ts`, `scenario.component.spec.ts`;
+`viewer.spec.ts`, `catalog-scenario-page.spec.ts`.
+
+145. [E] `viewer.spec.ts`: solar-system, with and without `?diag=1`, shows no profiler overlay (no
+     `#webengine-profiler`, `isOverlayVisible` false, gate shut) now and 2.5 s later; Backquote opens
+     nothing; `?diag=1` shows the build stamp; a scenario that re-opens the gate and the overlay after
+     load is shut again; no diagnostics button in the HUD (DW-5.3).
+146. [E] `catalog-scenario-page.spec.ts`: no `.hero` on `/`, no `.footer-inner`, copyright bar present, no
+     admin link in the footer, `/admin` reachable by URL (DW-5.1); the scenario page has no download link
+     and no `.launch-note`, "Копіювати посилання" toasts and the launch button opens `/play/:id`
+     (DW-5.2).
+147. [C] Catalog: no `.hero`; footer: no `.footer-inner`, no admin link, no ZIP note, copyright bar from
+     `site.config.ts`; scenario page: no `.download` / `a[download]`, no `.launch-note`, launch button
+     stays (DW-5.1, DW-5.2).
+148. [U] `viewer-profiler.spec.ts` (real `MemoryProfiler`): `lockProfiler` shuts the gate, a locked gate
+     makes `showOverlay` / `toggleOverlay` / `enableToggle` and Backquote inert, `enforceProfilerOff`
+     closes an open overlay and a re-opened gate, idempotent; `viewer.component.spec.ts`: the viewer sets
+     `diagnosticsAllowed = false` on init without and **with** `?diag=1`, `?diag=1` renders only the build
+     stamp, no `toggleDiagnostics`, destroy leaves it shut; HUD: no diagnostics output (DW-5.3).
 
 ### 4.11 Golden paths (E2E)
 

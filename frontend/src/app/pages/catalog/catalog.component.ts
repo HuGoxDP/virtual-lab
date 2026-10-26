@@ -13,7 +13,6 @@ import {
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 
-import { SITE } from '../../site.config';
 import { AdminService } from '../../services/admin.service';
 import {
   CatalogFilter,
@@ -23,7 +22,6 @@ import {
   sameCatalogFilter,
   toCatalogQuery,
 } from '../../services/catalog-query';
-import { PlatformConfigService } from '../../services/platform-config.service';
 import { ScenarioService } from '../../services/scenario.service';
 import { IconComponent } from '../../ui/icon/icon.component';
 import { pluralUk } from '../../ui/format';
@@ -35,7 +33,6 @@ import { SiteHeaderComponent } from '../../ui/site-header/site-header.component'
 const SEARCH_DEBOUNCE_MS = 300;
 
 const SCENARIO_FORMS = ['сценарій', 'сценарії', 'сценаріїв'] as const;
-const DIRECTION_FORMS = ['освітній напрям', 'освітні напрями', 'освітніх напрямів'] as const;
 
 /**
  * The public catalog (prototype screen 2a). The URL's query string (`category`, `q`, `sort`) is the
@@ -62,19 +59,14 @@ export class CatalogComponent implements OnDestroy {
   private readonly scenarioService = inject(ScenarioService);
   private readonly admin = inject(AdminService);
 
-  protected readonly site = SITE;
-
   // Data — read straight off the service's signals; no subscriptions to clean up.
   readonly scenarios = this.scenarioService.scenarios;
   readonly categories = this.scenarioService.categories;
-  readonly summary = this.scenarioService.summary;
   readonly isLoading = this.scenarioService.loading;
   readonly isLoaded = this.scenarioService.loaded;
   readonly errorMessage = this.scenarioService.error;
   readonly total = this.scenarioService.total;
   readonly hasMore = this.scenarioService.hasMore;
-  private readonly platformConfig = inject(PlatformConfigService);
-  readonly maxArchiveBytes = this.platformConfig.maxArchiveBytes;
 
   /** "Панель" once an admin token is in the session, "Увійти" before. */
   readonly accountLabel = computed(() => (this.admin.isAuthenticated() ? 'Панель' : 'Увійти'));
@@ -95,14 +87,6 @@ export class CatalogComponent implements OnDestroy {
   readonly searchText = signal(this.filter().q);
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
 
-  readonly totalLabel = computed(() => {
-    const count = this.summary()?.scenarios;
-    return count == null ? '' : `${count} ${pluralUk(count, SCENARIO_FORMS)} у каталозі`;
-  });
-  readonly directionsLabel = computed(() => {
-    const count = this.summary()?.categories;
-    return count == null ? '' : `${count} ${pluralUk(count, DIRECTION_FORMS)}`;
-  });
   readonly foundLabel = computed(
     () => `Знайдено ${this.total()} ${pluralUk(this.total(), SCENARIO_FORMS)}`,
   );
@@ -113,8 +97,6 @@ export class CatalogComponent implements OnDestroy {
   readonly hasError = computed(() => !!this.errorMessage() && !this.isLoading());
 
   constructor() {
-    void this.platformConfig.load();
-
     // One load per distinct filter: on entry, and whenever the URL's query changes.
     effect(() => {
       const filter = this.filter();

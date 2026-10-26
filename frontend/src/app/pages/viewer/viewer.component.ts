@@ -15,7 +15,7 @@ import { Router, ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 
 // Engine imports — from the WebEngineTS npm package
-import { Application, BuildInfo, MemoryProfiler, Texture2D } from 'WebEngineTS';
+import { Application, BuildInfo, Texture2D } from 'WebEngineTS';
 import type { IScenarioLoadProgress } from 'WebEngineTS';
 
 import { IconComponent } from '../../ui/icon/icon.component';
@@ -23,6 +23,7 @@ import { ScenarioService, DownloadProgress } from '../../services/scenario.servi
 import { TelemetryService } from '../../services/telemetry.service';
 import { ScenarioCatalogItem } from '../../models/scenario.model';
 import { STAGE_ENGINE, STAGE_FETCH, readFlag } from './viewer-format';
+import { PROFILER_GUARD_INTERVAL_MS, enforceProfilerOff, lockProfiler } from './viewer-profiler';
 import { ViewerHudComponent } from './viewer-hud.component';
 import { ViewerLoadingComponent } from './viewer-loading.component';
 
@@ -64,6 +65,9 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    */
   private readonly loadedBuffer = signal<ArrayBuffer | null>(null);
 
+  /** Re-closes the profiler if a running scenario opens it again. */
+  private profilerGuard: ReturnType<typeof setInterval> | null = null;
+
   private contextLostHandler: ((event: Event) => void) | null = null;
 
   /**
@@ -91,18 +95,12 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   readonly scenarioTitle = signal('');
   readonly contextLost = signal(false);
   readonly isFullscreen = signal(false);
-  readonly diagnosticsVisible = signal(false);
 
   /**
-   * Whether the engine diagnostics overlay may be opened at all.
-   *
-   * Off unless the URL asks for it (`?diag=1`), per scenario. Diagnostics are a
-   * measurement tool, not a student-facing feature: without the flag the button
-   * is not rendered, the overlay is never created, and nothing is sampled — the
-   * profiler's rAF loop only exists while the overlay does, so the cost is
-   * genuinely zero rather than merely hidden.
+   * Whether to show the engine build stamp (`?diag=1`). The stamp is all the flag does: the
+   * profiler overlay never runs on the platform, with or without it (see `viewer-profiler.ts`).
    */
-  readonly diagnosticsEnabled = signal(false);
+  readonly buildStampVisible = signal(false);
 
   /**
    * Whether to load from the scenario's streaming manifest rather than its ZIP.
@@ -153,6 +151,14 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   // ==================== LIFECYCLE ====================
 
   ngAfterViewInit(): void {
+    // First thing, before the WebGL probe and before any scenario code can exist.
+    lockProfiler();
+
+    // Read once: these are launch options (read before the WebGL probe so the build stamp also shows on the unsupported screen), not something to toggle mid-run.
+    const query = this.route.snapshot.queryParamMap;
+    this.buildStampVisible.set(readFlag(query.get('diag')));
+    this.streamingRequested.set(readFlag(query.get('stream')));
+
     const canvas = this.canvasRef.nativeElement;
 
     // Probe before constructing: the Application constructor throws on a
@@ -183,11 +189,6 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
     window.addEventListener('pagehide', this.pageHideHandler);
-
-    // Read once: these are launch options, not something to toggle mid-run.
-    const query = this.route.snapshot.queryParamMap;
-    this.diagnosticsEnabled.set(readFlag(query.get('diag')));
-    this.streamingRequested.set(readFlag(query.get('stream')));
 
     this.route.paramMap
       .pipe(takeUntil(this.destroy$))
@@ -220,7 +221,9 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     window.removeEventListener('pagehide', this.pageHideHandler);
     this.telemetry.endSession();
 
-    if (this.diagnosticsVisible()) MemoryProfiler.hideOverlay();
+    if (this.profilerGuard !== null) clearInterval(this.profilerGuard);
+    this.profilerGuard = null;
+    enforceProfilerOff();
 
     // Full cleanup: scenario → engine → WebGL context
     if (this.app) {
@@ -334,6 +337,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    */
   private async startStreaming(manifestUrl: string, token: number): Promise<void> {
     this.setState('loading-engine', 0, STAGE_ENGINE);
+    lockProfiler();
 
     try {
       if (!this.app) throw new Error('Engine not initialized');
@@ -350,7 +354,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       this.loadedBuffer.set(null);
       this.setState('running', 100, '');
 
-      this.enforceDiagnosticsPolicy();
+      this.watchProfiler();
       void this.telemetry.startSession(this.scenarioId);
 
     } catch (err) {
@@ -370,6 +374,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
     if (!this.app) throw new Error('Engine not initialized');
 
+    lockProfiler();
     await this.app.loadScenarioFromBuffer(
       zipBuffer,
       (progress: IScenarioLoadProgress) => {
@@ -381,31 +386,23 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     if (token !== this.loadToken) return;
     this.setState('running', 100, '');
 
-    this.enforceDiagnosticsPolicy();
+    this.watchProfiler();
 
     // Only count a launch that actually reached a running scene.
     void this.telemetry.startSession(this.scenarioId);
   }
 
   /**
-   * Closes the profiler overlay if the scenario opened it without `?diag=1`.
-   *
-   * A scenario is arbitrary engine code and can call `MemoryProfiler.showOverlay()`
-   * itself — `solar-system` does, so students were being shown a developer
-   * overlay of FPS and VRAM counters on the platform's flagship scenario. The
-   * gating on the button cannot prevent that: it only governs the platform's own
-   * control, not what the content does once it is running.
-   *
-   * Whether the overlay belongs in a scenario at all is ScenarioCreator's
-   * question. Whether students see it is this platform's, so it is decided here
-   * rather than assumed.
+   * Closes the profiler a scenario opened during load, and keeps closing it: a scenario can call
+   * `showOverlay()` or re-open the engine's gate at any later moment, and the engine's setter is
+   * two-way today. A once-a-second check costs nothing and bounds a re-opened overlay to a blink.
    */
-  private enforceDiagnosticsPolicy(): void {
-    if (this.diagnosticsEnabled()) return;
-
-    if (MemoryProfiler.isOverlayVisible) {
-      MemoryProfiler.hideOverlay();
-      console.warn('[ViewerComponent] Scenario opened the profiler overlay; closed it (no ?diag=1).');
+  private watchProfiler(): void {
+    if (enforceProfilerOff()) {
+      console.warn('[ViewerComponent] Scenario opened the profiler; closed it.');
+    }
+    if (this.profilerGuard === null) {
+      this.profilerGuard = setInterval(enforceProfilerOff, PROFILER_GUARD_INTERVAL_MS);
     }
   }
 
@@ -446,20 +443,6 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   private readonly pageHideHandler = (): void => {
     this.telemetry.endSession();
   };
-
-  /**
-   * Engine-provided overlay: FPS, CPU frame time, VRAM estimates.
-   *
-   * Guarded as well as hidden. The template does not render the button without
-   * the flag, but a stale DOM node or a console call must not be able to start
-   * sampling either.
-   */
-  toggleDiagnostics(): void {
-    if (!this.diagnosticsEnabled()) return;
-
-    MemoryProfiler.toggleOverlay();
-    this.diagnosticsVisible.set(MemoryProfiler.isOverlayVisible);
-  }
 
   /** After a context loss the engine cannot recover in place — reload the page. */
   reloadPage(): void {

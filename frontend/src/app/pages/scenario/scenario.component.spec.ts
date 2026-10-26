@@ -75,7 +75,6 @@ describe('ScenarioComponent', () => {
   async function open(path = '/scenario/a'): Promise<TestRequest> {
     await harness.navigateByUrl(path, ScenarioComponent);
     root = harness.routeNativeElement as HTMLElement;
-    http.match('/api/config').forEach(r => r.flush({ maxArchiveBytes: 209715200 }));
     return http.expectOne(r => r.url.startsWith('/api/catalog/'));
   }
 
@@ -150,8 +149,16 @@ describe('ScenarioComponent', () => {
       expect(navigate).toHaveBeenNthCalledWith(2, ['/play', 'a']);
     });
 
-    it('the footer shows the limit from /api/config', () => {
-      expect(text('.archive-requirement')).toContain('до 200 МБ');
+    it('DW-5.2 no download link and no launch note; the launch button stays', () => {
+      expect(q('.download')).toBeNull();
+      expect(q('a[download]')).toBeNull();
+      expect(q('.launch-note')).toBeNull();
+      expect(q('.side .launch')).not.toBeNull();
+    });
+
+    it('DW-5.1 the footer is the copyright bar only', () => {
+      expect(q('.footer-inner')).toBeNull();
+      expect(q('.footer-legal')).not.toBeNull();
     });
   });
 
@@ -169,11 +176,10 @@ describe('ScenarioComponent', () => {
       expect(qa('.block-title').map(t => t.textContent!.trim())).toEqual(['Що всередині']);
     });
 
-    it('DW-3.4 no scenarioUrl -> no launch button, no sticky bar, no download link', async () => {
+    it('DW-3.4 no scenarioUrl -> no launch button and no sticky bar', async () => {
       await openWith(detail('a', { scenarioUrl: '' }));
       expect(q('.launch')).toBeNull();
       expect(q('.launch-bar')).toBeNull();
-      expect(q('.download')).toBeNull();
       expect(q('.copy')).not.toBeNull();
     });
 
@@ -296,18 +302,11 @@ describe('ScenarioComponent', () => {
 
   // ==================== DW-3.5 ====================
 
-  describe('copy link and download (DW-3.5)', () => {
+  describe('copy link (DW-3.5)', () => {
     const clipboardOf = (writeText: unknown) =>
       Object.defineProperty(navigator, 'clipboard', { value: writeText === undefined ? undefined : { writeText }, configurable: true });
 
     afterEach(() => Reflect.deleteProperty(navigator, 'clipboard'));
-
-    it('DW-3.5 the download link is the scenario archive URL', async () => {
-      await openWith(detail('a', { scenarioUrl: '/scenarios/abc123.zip' }));
-      const link = q('.download');
-      expect(link.getAttribute('href')).toBe('/scenarios/abc123.zip');
-      expect(link.hasAttribute('download')).toBe(true);
-    });
 
     it('DW-3.5 copies the absolute page URL and shows a toast', async () => {
       const writeText = vi.fn().mockResolvedValue(undefined);

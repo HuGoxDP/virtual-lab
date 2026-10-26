@@ -1,7 +1,7 @@
 // path: src/app/pages/catalog/catalog.component.spec.ts
 //
 // Release 1, phase 3. Covers test-plan scenarios 75, 76 (debounce, category resets paging),
-// 124 (header, hero, chips, "Знайдено N", footer - DW-3.1), 125 (sort, URL <-> filters, back, load more
+// 124 (header, chips, "Знайдено N", footer - DW-3.1; no hero, copyright-only footer - DW-5.1), 125 (sort, URL <-> filters, back, load more
 // - DW-3.1, DW-3.2), 126 (empty state, error state - DW-3.3), 127 (no modal, no theme, card and
 // launch targets - DW-3.6).
 //
@@ -92,11 +92,10 @@ describe('CatalogComponent', () => {
     harness.detectChanges();
   }
 
-  /** Opens `/catalog...`, answers the config call and returns the catalog request for the caller to answer. */
+  /** Opens `/catalog...` and returns the catalog request for the caller to answer. */
   async function open(url = '/catalog'): Promise<TestRequest> {
     await harness.navigateByUrl(url, CatalogComponent);
     root = harness.routeNativeElement as HTMLElement;
-    http.match('/api/config').forEach(r => r.flush({ maxArchiveBytes: 209715200 }));
     return http.expectOne(r => r.url === '/api/catalog');
   }
 
@@ -114,10 +113,11 @@ describe('CatalogComponent', () => {
   describe('page content (DW-3.1)', () => {
     beforeEach(async () => openAndAnswer());
 
-    it('DW-3.1 hero: department comes from site.config, counters from summary', () => {
-      expect(q('.hero-tag').textContent!.trim()).toBe(SITE.department);
-      const facts = qa('.fact').map(f => f.textContent!.trim());
-      expect(facts).toEqual(['6 сценаріїв у каталозі', '2 освітні напрями', 'WebGL, без плагінів']);
+    it('DW-5.1 no hero: no section, title, lead or counters', () => {
+      expect(q('.hero')).toBeNull();
+      expect(q('.hero-title')).toBeNull();
+      expect(q('.fact')).toBeNull();
+      expect(q('main.catalog-main')).not.toBeNull();
     });
 
     it('DW-3.1 chips: icon, label and count in API order, "Усі напрями" first with the whole count', () => {
@@ -134,8 +134,11 @@ describe('CatalogComponent', () => {
       expect(qa('vl-scenario-card').length).toBe(2);
     });
 
-    it('DW-3.1 the footer states the limit from /api/config', () => {
-      expect(q('.archive-requirement').textContent).toContain('до 200 МБ');
+    it('DW-5.1 the footer is the copyright bar only: no .footer-inner, no admin link, no ZIP note', () => {
+      expect(q('.footer-inner')).toBeNull();
+      expect(q('.footer-legal').textContent!.trim()).toBe(SITE.copyright);
+      expect(q('footer a[href="/admin"]')).toBeNull();
+      expect(q('.archive-requirement')).toBeNull();
     });
 
     it('DW-3.1 the header button reads "Увійти" without an admin token', () => {
@@ -156,33 +159,6 @@ describe('CatalogComponent', () => {
     TestBed.inject(AdminService).setToken('secret');
     await openAndAnswer();
     expect(q('.account').textContent!.trim()).toBe('Панель');
-  });
-
-  it('DW-3.1 counters are absent until the API has answered, never guessed', async () => {
-    const req = await open();
-    harness.detectChanges();
-    expect(qa('.fact').map(f => f.textContent!.trim())).toEqual(['WebGL, без плагінів']);
-    req.flush(payload());
-  });
-
-  it('DW-3.1 the footer names the format only when /api/config failed', async () => {
-    await harness.navigateByUrl('/catalog', CatalogComponent);
-    root = harness.routeNativeElement as HTMLElement;
-    http.match('/api/config').forEach(r => r.flush('x', { status: 500, statusText: 'Server Error' }));
-    http.expectOne(r => r.url === '/api/catalog').flush(payload());
-    await settle();
-    expect(q('.archive-requirement').textContent!.trim()).toBe('ZIP-архів зі сценарієм');
-  });
-
-  it.each([
-    [1, '1 сценарій у каталозі', '1 освітній напрям'],
-    [2, '2 сценарії у каталозі', '2 освітні напрями'],
-    [5, '5 сценаріїв у каталозі', '5 освітніх напрямів'],
-    [21, '21 сценарій у каталозі', '21 освітній напрям'],
-  ])('DW-3.1 counters pluralise for %s', async (n, scenarios, directions) => {
-    await openAndAnswer('/catalog', payload({ summary: { scenarios: n, categories: n } }));
-    const facts = qa('.fact').map(f => f.textContent!.trim());
-    expect(facts.slice(0, 2)).toEqual([scenarios, directions]);
   });
 
   // ==================== DW-3.2 ====================

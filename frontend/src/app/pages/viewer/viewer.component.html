@@ -24,7 +24,7 @@
     the `running` guard: a measurement is quoted against a named build, and the
     build matters just as much on the error screen as on a working one.
   -->
-  @if (diagnosticsEnabled()) {
+  @if (buildStampVisible()) {
     <div class="build-badge">{{ engineBuild }}</div>
   }
 

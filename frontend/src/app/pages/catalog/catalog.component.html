@@ -22,27 +22,6 @@
   </button>
 </vl-site-header>
 
-<section class="hero">
-  <div class="hero-glow"></div>
-  <div class="hero-inner">
-    <span class="tag tag-outline hero-tag">{{ site.department }}</span>
-    <h1 class="hero-title">Тривимірні сценарії для навчальних дисциплін</h1>
-    <p class="hero-lead">
-      Готові до запуску симуляції, які відкриваються просто у браузері — без встановлення й
-      реєстрації. Оберіть сценарій, запустіть його на парі або надішліть студентам посиланням.
-    </p>
-    <div class="hero-facts">
-      @if (totalLabel()) {
-        <span class="fact"><vl-icon name="cube" size="16" />{{ totalLabel() }}</span>
-      }
-      @if (directionsLabel()) {
-        <span class="fact"><vl-icon name="graduation-cap" size="16" />{{ directionsLabel() }}</span>
-      }
-      <span class="fact"><vl-icon name="browser" size="16" />WebGL, без плагінів</span>
-    </div>
-  </div>
-</section>
-
 <main class="catalog-main">
   <div class="toolbar">
     <h2 class="toolbar-title">Каталог сценаріїв</h2>
@@ -124,4 +103,4 @@
   }
 </main>
 
-<vl-site-footer [maxArchiveBytes]="maxArchiveBytes()" />
+<vl-site-footer />

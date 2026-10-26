@@ -21,17 +21,11 @@ async function catalogAnswer(): Promise<CatalogAnswer> {
 }
 
 test.describe('catalog (Nocturne)', () => {
-  test('DW-3.1 the hero, chips and footer show real numbers from the API', async ({ page }) => {
+  test('DW-3.1 the chips and the found line show real numbers from the API', async ({ page }) => {
     const { summary, categories } = await catalogAnswer();
-    const config = await (await fetch(`${BASE_URL}/api/config`)).json() as { maxArchiveBytes: number };
 
     await page.goto('/catalog');
     await expect(page.locator('.scenario-card').first()).toBeVisible();
-
-    const facts = (await page.locator('.fact').allTextContents()).map(t => t.trim());
-    expect(facts[0]).toContain(String(summary.scenarios));
-    expect(facts[1]).toContain(String(summary.categories));
-    expect(facts[2]).toBe('WebGL, без плагінів');
 
     const chips = (await page.locator('.chips .chip').allTextContents()).map(t => t.replace(/\s+/g, ' ').trim());
     expect(chips).toEqual([
@@ -40,8 +34,20 @@ test.describe('catalog (Nocturne)', () => {
     ]);
 
     await expect(page.locator('.found')).toContainText(`Знайдено ${summary.scenarios}`);
-    await expect(page.locator('.archive-requirement')).toContainText(`${config.maxArchiveBytes / 1024 / 1024} МБ`);
     await expect(page.locator('.account')).toHaveText('Увійти');
+  });
+
+  test('DW-5.1 the catalog has no hero and the footer is the copyright bar only', async ({ page }) => {
+    await page.goto('/catalog');
+    await expect(page.locator('.scenario-card').first()).toBeVisible();
+
+    await expect(page.locator('.hero, .hero-title, .hero-lead, .fact')).toHaveCount(0);
+    await expect(page.locator('.footer-inner')).toHaveCount(0);
+    await expect(page.locator('footer a[href="/admin"]')).toHaveCount(0);
+    await expect(page.locator('.footer-legal')).toContainText('©');
+    // /admin stays reachable by its URL; only the footer link went.
+    await page.goto('/admin');
+    await expect(page.locator('input[type="password"]')).toBeVisible();
   });
 
   test('DW-3.1 the header button reads "Панель" once the admin token is in the session', async ({ page }) => {
@@ -121,7 +127,7 @@ test.describe('catalog (Nocturne)', () => {
 });
 
 test.describe('scenario page', () => {
-  test('DW-3.4 renders the real fields of a scenario; DW-3.5 download link is its archive', async ({ page }) => {
+  test('DW-3.4 renders the real fields of a scenario', async ({ page }) => {
     const res = await fetch(`${BASE_URL}/api/catalog/solar-system`);
     const item = await res.json() as {
       title: string; author: string; version: string; scenarioUrl: string; categoryLabel: string;
@@ -140,8 +146,22 @@ test.describe('scenario page', () => {
     if (item.archiveBytes) await expect(meta.filter({ hasText: 'Розмір архіву' })).toBeVisible();
     await expect(meta.filter({ hasText: 'Оновлено' })).toBeVisible();
 
-    await expect(page.locator('.download')).toHaveAttribute('href', item.scenarioUrl);
     if (item.related.length) await expect(page.locator('.related-item')).toHaveCount(item.related.length);
+  });
+
+  test('DW-5.2 no download link and no launch note; launch and copy-link still work', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE_URL });
+    await page.goto('/scenario/solar-system');
+    await expect(page.locator('h1.title')).toBeVisible();
+
+    await expect(page.locator('.download, a[download], .launch-note')).toHaveCount(0);
+    await expect(page.locator('.footer-inner')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Копіювати посилання' }).click();
+    await expect(page.getByText('Посилання скопійовано')).toBeVisible();
+
+    await page.locator('.side .launch').click();
+    await expect(page).toHaveURL(/\/play\/solar-system$/);
   });
 
   test('DW-3.4 an unknown id shows the not-found state', async ({ page }) => {
