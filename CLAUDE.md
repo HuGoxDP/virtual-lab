@@ -45,7 +45,7 @@ so the dependency spec never needs touching. The package *inside* is stamped
 `0.1.0-local.<timestamp>` and `frontend/package-lock.json` records it.
 
 **Which engine build is running is answerable at run time: `BuildInfo`** (`version` / `builtAt` /
-`isBuild`), rendered by the viewer under `?diag=1`. `builtAt` is the field that identifies a
+`isBuild`), rendered by the viewer under `?diag=1` (the stamp is all that flag does). `builtAt` is the field that identifies a
 build. Do **not** use `Application.version` for this — it is a string literal fixed at `"0.1.0"`
 across every local pack, so it cannot tell two builds apart.
 
@@ -144,22 +144,33 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
 ## Key components
 
 **Frontend** (`frontend/`, Angular 21, standalone components, project name `university-mock`)
-- `src/app/pages/catalog/` — catalog: category filter, search, paging, detail modal, dark mode.
-  **Filtering and paging are server-side** (`?category=&q=&limit=&offset=`) — a client-side filter
-  over a paged response would only ever search the page in hand.
+- `src/app/pages/catalog/` — the Nocturne catalog (sort segment, icon chips, card grid; no hero, and the
+  footer is the copyright bar only). **Filtering, search, sorting and paging are server-side**
+  (`?category=&q=&sort=&limit=&offset=`) — a client-side filter over a paged response would only ever
+  search the page in hand. **The URL's query string (`category`, `q`, `sort`; defaults omitted) is the
+  only holder of the filter** (`services/catalog-query.ts`): controls navigate, an effect loads, Back works.
+- `src/app/pages/scenario/` — `/scenario/:id`, which replaced the details modal: fields, "Що всередині",
+  related scenarios, copy link (falls back to a selectable field when the Clipboard API is missing — the
+  server runs plain HTTP), not-found and error states, a sticky launch bar on narrow
+  screens. The viewer's exit target.
 - `src/app/pages/viewer/` — the 3D host: canvas, load progress, error states, engine lifecycle,
-  restart / fullscreen, WebGL2 probe and context-loss handling. The `MemoryProfiler` overlay is a
-  **measurement tool, not a student control**: the button only renders with `?diag=1` on the
-  viewer URL, and `toggleDiagnostics()` refuses without the flag too.
-  **A scenario can still open the overlay itself** — it is arbitrary engine code, and
-  `solar-system` does exactly that — so the gate on the button is not sufficient.
-  `enforceDiagnosticsPolicy()` closes it after load when the flag is absent. Whether the overlay
-  belongs in a scenario is ScenarioCreator's question; whether students see it is this repo's.
-- `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit, publish
-  toggle, delete, archive upload with progress. The token lives in `sessionStorage`
+  restart / fullscreen, WebGL2 probe and context-loss handling. The `MemoryProfiler` overlay is **off on
+  the platform**: it is engine API and a measurement tool, developed separately, not a student
+  control. `viewer-profiler.ts` sets `MemoryProfiler.diagnosticsAllowed = false` before every load
+  (`lockProfiler()`), unconditionally, so a scenario's own `showOverlay()` / `enableToggle()` (the
+  Backquote hotkey) — `solar-system` calls both — are inert. With today's two-way engine setter a
+  scenario can still re-open the gate later, so `enforceProfilerOff()` also runs after load and once
+  a second while the viewer lives. `?diag=1` shows only the `BuildInfo` stamp, never the overlay, and
+  the HUD has no diagnostics control. Whether the overlay belongs in a scenario is ScenarioCreator's
+  question; the platform never shows it. (Player-isolation phase 5 keeps this by always sending
+  `diag: false`; the engine's latching setter will make the periodic check redundant.)
+- `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit (including the
+  "Що всередині" editor, up to six entries), publish toggle, delete, archive upload with progress. The token lives in `sessionStorage`
   (`AdminService`), so it dies with the tab.
-- `src/app/services/scenario.service.ts` — catalog state as **signals**, paged fetching, and the
-  streamed ZIP download with progress and abort.
+- `src/app/services/scenario.service.ts` — catalog state as **signals**, paged fetching (a response for an
+  older request is dropped, so the newest filter always wins), `fetchScenarioById` (with `related`), and
+  the streamed ZIP download with progress and abort. (`GET /api/config` stays on the backend; the
+  frontend no longer reads it — the footer's archive-limit line went with the footer's main block.)
 - `src/app/services/admin.service.ts` — admin token + CRUD + upload with progress.
 - `src/app/services/telemetry.service.ts` — anonymous session log; failures are swallowed, since
   telemetry must never break playback.
@@ -169,8 +180,17 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
 - `src/environments/environment.ts` — `catalogUrl`, currently `/api/catalog`.
 
 **Backend** (`backend/`, Express 4 — `server.js` plus a few small modules)
-- `GET /api/catalog`, `GET /api/catalog/:id` — published scenarios only (`is_published = true`).
-  The catalog response also carries the distinct `categories` in use.
+- `GET /api/catalog?category&q&sort=new|title&limit&offset`, `GET /api/catalog/:id` — published
+  scenarios only (`is_published = true`). Each item carries `archiveBytes`, `updatedAt` and
+  `features` ("Що всередині"); the list also returns `categories` (visible, with `icon` and published
+  `count`, by `categories.sort_order`) and an unfiltered `summary`; the by-id route adds `related`
+  (<=2, same category first). `categories.label` is canonical over `scenarios.category_label`; a POST/PUT
+  with an unknown slug creates the category (`ensureCategory`), a known slug keeps its label. Admin
+  `features` are validated by `catalog-input.js` (<=6 items, icon `^[a-z0-9-]{1,40}$`, title 1-60,
+  subtitle <=90).
+- `GET /api/config` — public, `{maxArchiveBytes}`. The cap is `MAX_ARCHIVE_BYTES` (default 200 MiB,
+  read once at load); an oversize upload is a 413. multer's limit is set to cap + 1 because busboy fires
+  on *reaching* `fileSize`, not exceeding it. nginx's `client_max_body_size` (512m) must stay above it.
 - `POST /api/catalog`, `PUT /api/catalog/:id`, `DELETE /api/catalog/:id` — catalog mutation,
   **admin only** (`Authorization: Bearer $ADMIN_TOKEN`).
 - `GET /api/admin/scenarios` — admin; every row including unpublished, with storage and manifest
@@ -263,9 +283,9 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 232 tests; needs docker-compose.test.yml up
-cd frontend && npx ng test --no-watch   # 60 tests
-cd e2e      && npm test           # 35 Playwright tests; needs the stack up AND a published
+cd backend  && npm test           # 348 tests; needs docker-compose.test.yml up
+cd frontend && npx ng test --no-watch   # 226 tests
+cd e2e      && npm test           # 56 Playwright tests (8 skip by design); needs the stack up AND a published
                                   # catalog — see e2e/README.md
 docker compose -f docker-compose.test.yml up -d   # throwaway Postgres on :55432
 

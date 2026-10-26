@@ -11,6 +11,7 @@ const { Pool } = require('pg');
 const { runMigrations } = require('./migrations');
 const storage = require('./storage');
 const { validateScenarioArchive } = require('./archive-validation');
+const { validateFeatures } = require('./catalog-input');
 
 const app = express();
 
@@ -94,7 +95,15 @@ function requireAdmin(req, res, next) {
  * following fetcher — is gone: every catalog row is served from local storage
  * now, so none of it had a caller.
  */
-const MAX_ARCHIVE_BYTES = Number(process.env.MAX_ARCHIVE_BYTES || 2 * 1024 * 1024 * 1024);
+const DEFAULT_MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
+
+/** Read once at load; a junk value falls back to the default rather than disabling the cap. */
+function parseMaxArchiveBytes(raw) {
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_MAX_ARCHIVE_BYTES;
+}
+
+const MAX_ARCHIVE_BYTES = parseMaxArchiveBytes(process.env.MAX_ARCHIVE_BYTES);
 
 // ══════════════════════════════════════════════════════
 // ROUTES
@@ -126,63 +135,101 @@ function escapeLikePattern(value) {
   return value.replace(/[\\%_]/g, char => `\\${char}`);
 }
 
+/**
+ * Public item shape shared by the list, the by-id route and `related`.
+ *
+ * `categories.label` is canonical; the scenario's own label is only the
+ * fallback for a slug with no category row. A stored `features` that is not an
+ * array reads as `[]`. `archive_bytes` is BIGINT (pg would return a string), so
+ * it is cast to float8, which is exact far beyond any archive size.
+ */
+const ITEM_COLUMNS = `
+  s.id,
+  s.title,
+  s.description,
+  s.full_description                      AS "fullDescription",
+  s.category,
+  COALESCE(c.label, s.category_label)     AS "categoryLabel",
+  s.image_url                             AS "imageUrl",
+  s.scenario_url                          AS "scenarioUrl",
+  s.manifest_url                          AS "manifestUrl",
+  s.version,
+  s.author,
+  s.upload_date                           AS "uploadDate",
+  s.archive_bytes::float8                 AS "archiveBytes",
+  COALESCE(s.updated_at, s.created_at)    AS "updatedAt",
+  CASE WHEN jsonb_typeof(s.features) = 'array' THEN s.features ELSE '[]'::jsonb END AS features
+`;
+
+/** How many "related scenarios" the scenario page shows. */
+const RELATED_LIMIT = 2;
+
+const ITEM_FROM = 'FROM scenarios s LEFT JOIN categories c ON c.slug = s.category';
+
+/** Whitelisted ORDER BY fragments: user input only selects a key, it never reaches the SQL text. */
+const CATALOG_SORTS = {
+  new:   's.created_at DESC, s.id DESC',
+  title: 's.title COLLATE "uk-x-icu", s.id',
+};
+
+/** Unknown, empty or repeated (`sort[]=a&sort[]=b`) values fall back to newest first. */
+function parseSort(raw) {
+  return typeof raw === 'string' && Object.hasOwn(CATALOG_SORTS, raw) ? raw : 'new';
+}
+
 app.get('/api/catalog', async (req, res) => {
   const limit = parseLimit(req.query.limit);
   const offset = parseOffset(req.query.offset);
-  const category = req.query.category && req.query.category !== 'all' ? String(req.query.category) : null;
-  const query = req.query.q ? String(req.query.q).trim() : '';
+  const rawCategory = typeof req.query.category === 'string' ? req.query.category : '';
+  const category = rawCategory && rawCategory !== 'all' ? rawCategory : null;
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const pattern = query ? `%${escapeLikePattern(query)}%` : null;
+  const orderBy = CATALOG_SORTS[parseSort(req.query.sort)];
 
   // Filtering runs here rather than in the browser: with pagination, a
   // client-side filter would only ever search the page it happens to hold.
   const where = `
-    WHERE is_published = true
-      AND ($1::text IS NULL OR category = $1)
+    WHERE s.is_published = true
+      AND ($1::text IS NULL OR s.category = $1)
       AND (
         $2::text IS NULL
-        OR title       ILIKE $2 ESCAPE '\'
-        OR description ILIKE $2 ESCAPE '\'
+        OR s.title       ILIKE $2 ESCAPE '\\'
+        OR s.description ILIKE $2 ESCAPE '\\'
       )
   `;
 
   try {
-    // Categories describe the whole published catalog, not the filtered page —
-    // otherwise chips would vanish as soon as one was selected.
-    const [scenarios, total, categories] = await Promise.all([
+    // Categories and summary describe the whole published catalog, not the
+    // filtered page — otherwise chips would vanish as soon as one was selected.
+    const [scenarios, total, categories, published] = await Promise.all([
       pool.query(`
-        SELECT
-          id,
-          title,
-          description,
-          full_description   AS "fullDescription",
-          category,
-          category_label     AS "categoryLabel",
-          image_url          AS "imageUrl",
-          scenario_url       AS "scenarioUrl",
-          manifest_url       AS "manifestUrl",
-          version,
-          author,
-          upload_date        AS "uploadDate"
-        FROM scenarios
+        SELECT ${ITEM_COLUMNS}
+        ${ITEM_FROM}
         ${where}
-        ORDER BY created_at DESC, id DESC
+        ORDER BY ${orderBy}
         LIMIT $3 OFFSET $4
       `, [category, pattern, limit, offset]),
-      pool.query(`SELECT COUNT(*)::int AS count FROM scenarios ${where}`, [category, pattern]),
+      pool.query(`SELECT COUNT(*)::int AS count ${ITEM_FROM} ${where}`, [category, pattern]),
       pool.query(`
-        SELECT DISTINCT
-          category,
-          category_label AS "categoryLabel"
-        FROM scenarios
-        WHERE is_published = true
-        ORDER BY category_label
+        SELECT
+          c.slug           AS category,
+          c.label          AS "categoryLabel",
+          c.icon,
+          COUNT(s.id)::int AS count
+        FROM categories c
+        JOIN scenarios s ON s.category = c.slug AND s.is_published = true
+        WHERE c.is_visible = true
+        GROUP BY c.slug, c.label, c.icon, c.sort_order
+        ORDER BY c.sort_order, c.slug
       `),
+      pool.query('SELECT COUNT(*)::int AS count FROM scenarios WHERE is_published = true'),
     ]);
 
     res.json({
       version: '1',
       scenarios: scenarios.rows,
       categories: categories.rows,
+      summary: { scenarios: published.rows[0].count, categories: categories.rows.length },
       total: total.rows[0].count,
       limit,
       offset,
@@ -191,6 +238,12 @@ app.get('/api/catalog', async (req, res) => {
     console.error('[API] GET /api/catalog error:', err.message);
     res.status(500).json({ error: 'Не вдалося завантажити каталог' });
   }
+});
+
+// ── GET /api/config ──────────────────────────────────
+// Public limits the UI needs to explain itself (the upload form shows the cap).
+app.get('/api/config', (req, res) => {
+  res.json({ maxArchiveBytes: MAX_ARCHIVE_BYTES });
 });
 
 // ── GET /api/admin/scenarios ─────────────────────────
@@ -216,7 +269,8 @@ app.get('/api/admin/scenarios', requireAdmin, async (req, res) => {
         manifest_id        AS "manifestId",
         manifest_version   AS "manifestVersion",
         manifest_engine_version AS "manifestEngineVersion",
-        updated_at         AS "updatedAt"
+        updated_at         AS "updatedAt",
+        CASE WHEN jsonb_typeof(features) = 'array' THEN features ELSE '[]'::jsonb END AS features
       FROM scenarios
       ORDER BY created_at DESC
     `);
@@ -232,34 +286,68 @@ app.get('/api/admin/scenarios', requireAdmin, async (req, res) => {
 app.get('/api/catalog/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT
-        id, title, description,
-        full_description   AS "fullDescription",
-        category, category_label AS "categoryLabel",
-        image_url AS "imageUrl", scenario_url AS "scenarioUrl",
-        manifest_url AS "manifestUrl",
-        version, author, upload_date AS "uploadDate"
-      FROM scenarios
-      WHERE id = $1 AND is_published = true
+      SELECT ${ITEM_COLUMNS}
+      ${ITEM_FROM}
+      WHERE s.id = $1 AND s.is_published = true
     `, [req.params.id]);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Сценарій не знайдено' });
     }
 
-    res.json(rows[0]);
+    // Same category first, then newest; never itself, never unpublished.
+    const related = await pool.query(`
+      SELECT
+        s.id, s.title, s.category,
+        COALESCE(c.label, s.category_label) AS "categoryLabel",
+        s.image_url                         AS "imageUrl"
+      ${ITEM_FROM}
+      WHERE s.is_published = true AND s.id <> $1
+      ORDER BY (s.category = $2) DESC, s.created_at DESC, s.id DESC
+      LIMIT ${RELATED_LIMIT}
+    `, [rows[0].id, rows[0].category]);
+
+    res.json({ ...rows[0], related: related.rows });
   } catch (err) {
     console.error('[API] GET /api/catalog/:id error:', err.message);
     res.status(500).json({ error: 'Помилка сервера' });
   }
 });
 
+/** Runs `work(client)` in a transaction; rolls back and rethrows on any failure. */
+async function inTransaction(work) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Makes sure a category row exists for `slug`, appended after the last one.
+ * A known slug keeps its stored label; with no label the slug stands in.
+ */
+async function ensureCategory(db, slug, label) {
+  await db.query(`
+    INSERT INTO categories (slug, label, icon, sort_order)
+    VALUES ($1, $2, 'folder', (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM categories))
+    ON CONFLICT (slug) DO NOTHING
+  `, [slug, label || slug]);
+}
+
 // ── POST /api/catalog ────────────────────────────────
 app.post('/api/catalog', requireAdmin, async (req, res) => {
   const {
     id, title, description, fullDescription,
     category, categoryLabel, imageUrl, scenarioUrl,
-    version, author,
+    version, author, features,
   } = req.body;
 
   if (!id || !title || !category || !categoryLabel) {
@@ -268,22 +356,30 @@ app.post('/api/catalog', requireAdmin, async (req, res) => {
     });
   }
 
-  try {
-    const { rows } = await pool.query(`
-      INSERT INTO scenarios
-      (id, title, description, full_description, category, category_label,
-       image_url, scenario_url, version, author)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-        RETURNING id
-    `, [
-      id, title,
-      description || '', fullDescription || '',
-      category, categoryLabel,
-      imageUrl || '', scenarioUrl || '',
-      version || '1.0.0', author || null,
-    ]);
+  const checked = features === undefined ? { value: [] } : validateFeatures(features);
+  if (checked.error) return res.status(400).json({ error: checked.error });
 
-    res.status(201).json({ id: rows[0].id, message: 'Сценарій додано' });
+  try {
+    const created = await inTransaction(async db => {
+      await ensureCategory(db, category, categoryLabel);
+      const { rows } = await db.query(`
+        INSERT INTO scenarios
+        (id, title, description, full_description, category, category_label,
+         image_url, scenario_url, version, author, features)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+          RETURNING id
+      `, [
+        id, title,
+        description || '', fullDescription || '',
+        category, categoryLabel,
+        imageUrl || '', scenarioUrl || '',
+        version || '1.0.0', author || null,
+        JSON.stringify(checked.value),
+      ]);
+      return rows[0];
+    });
+
+    res.status(201).json({ id: created.id, message: 'Сценарій додано' });
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).json({ error: `Сценарій з id "${id}" вже існує` });
@@ -300,8 +396,17 @@ app.put('/api/catalog/:id', requireAdmin, async (req, res) => {
   const {
     title, description, fullDescription,
     category, categoryLabel, imageUrl, scenarioUrl, manifestUrl,
-    version, author, isPublished,
+    version, author, isPublished, features,
   } = req.body;
+
+  const checked = features === undefined ? null : validateFeatures(features);
+  if (checked?.error) return res.status(400).json({ error: checked.error });
+  if (category !== undefined && (typeof category !== 'string' || !category)) {
+    return res.status(400).json({ error: 'category має бути непорожнім рядком' });
+  }
+  if (categoryLabel !== undefined && typeof categoryLabel !== 'string') {
+    return res.status(400).json({ error: 'categoryLabel має бути рядком' });
+  }
 
   // Собираем только те поля, которые пришли в запросе
   const fields = [];
@@ -328,6 +433,10 @@ app.put('/api/catalog/:id', requireAdmin, async (req, res) => {
   addField('version', version);
   addField('author', author);
   addField('is_published', isPublished);
+  if (checked) {
+    fields.push(`features = $${paramIndex++}::jsonb`);
+    values.push(JSON.stringify(checked.value));
+  }
 
   if (fields.length === 0) {
     return res.status(400).json({ error: 'Не вказано жодного поля для оновлення' });
@@ -338,10 +447,17 @@ app.put('/api/catalog/:id', requireAdmin, async (req, res) => {
 
   try {
     values.push(id); // последний параметр — WHERE id = $N
-    const { rowCount } = await pool.query(
-      `UPDATE scenarios SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
-      values
-    );
+    const rowCount = await inTransaction(async db => {
+      // Create the category only when the row exists, so a 404 leaves nothing behind.
+      if (category !== undefined && (await db.query('SELECT 1 FROM scenarios WHERE id = $1', [id])).rowCount) {
+        await ensureCategory(db, category, categoryLabel);
+      }
+      const result = await db.query(
+        `UPDATE scenarios SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
+        values
+      );
+      return result.rowCount;
+    });
 
     if (rowCount === 0) {
       return res.status(404).json({ error: 'Сценарій не знайдено' });
@@ -379,8 +495,29 @@ app.delete('/api/catalog/:id', requireAdmin, async (req, res) => {
 
 const upload = multer({
   dest: storage.TMP_DIR,
-  limits: { fileSize: MAX_ARCHIVE_BYTES, files: 1 },
+  // busboy raises its limit event on reaching fileSize, not on exceeding it, so +1
+  // makes an archive of exactly MAX_ARCHIVE_BYTES acceptable.
+  limits: { fileSize: MAX_ARCHIVE_BYTES + 1, files: 1 },
 });
+
+/**
+ * Runs multer and maps its errors to responses. Without this they escape the
+ * route's own try/catch and surface as a 500; multer has already removed the
+ * partial temp file by the time it reports one.
+ */
+function receiveArchive(req, res, next) {
+  upload.single('archive')(req, res, err => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      const mib = Math.round(MAX_ARCHIVE_BYTES / (1024 * 1024));
+      return res.status(413).json({ error: `Архів завеликий: максимум ${mib} МіБ` });
+    }
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ error: 'Некоректне завантаження файлу' });
+    }
+    next(err);
+  });
+}
 
 async function scenarioExists(id) {
   const { rowCount } = await pool.query('SELECT 1 FROM scenarios WHERE id = $1', [id]);
@@ -417,7 +554,7 @@ async function attachArchive(id, { sha256, bytes, url }, manifest) {
  * Stores the upload as /scenarios/<sha256>.zip and repoints the scenario at it.
  * Identical content uploaded twice reuses the same object.
  */
-app.post('/api/scenarios/:id/archive', requireAdmin, upload.single('archive'), async (req, res) => {
+app.post('/api/scenarios/:id/archive', requireAdmin, receiveArchive, async (req, res) => {
   const { id } = req.params;
   const tmpFile = req.file?.path;
 
@@ -780,4 +917,6 @@ module.exports = {
   tokensMatch,
   parseLimit,
   parseOffset,
+  parseSort,
+  parseMaxArchiveBytes,
 };

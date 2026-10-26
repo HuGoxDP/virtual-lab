@@ -1,0 +1,84 @@
+// path: src/app/pages/viewer/viewer-hud.component.scss
+
+// The HUD floats over the canvas: the host takes no pointer events, only its controls do, so a drag
+// that starts beside a button still orbits the camera.
+:host {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.exit,
+.viewer-controls,
+.title-badge,
+.hints {
+  pointer-events: auto;
+}
+
+.exit {
+  position: absolute;
+  top: var(--space-6);
+  left: var(--space-6);
+  background: rgba(7, 8, 15, 0.7);
+}
+
+.viewer-controls {
+  position: absolute;
+  top: var(--space-6);
+  right: var(--space-6);
+  display: flex;
+  gap: var(--space-2);
+
+  .control-btn { background: rgba(7, 8, 15, 0.7); }
+}
+
+.title-badge {
+  position: absolute;
+  top: var(--space-6);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  max-width: min(52vw, 360px);
+  padding: 7px 15px;
+  background: rgba(7, 8, 15, 0.7);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+
+  .title-text { overflow: hidden; text-overflow: ellipsis; }
+  .divider { flex: none; width: 1px; height: 13px; background: var(--color-divider); }
+  .fps { flex: none; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+}
+
+.hints {
+  position: absolute;
+  bottom: var(--space-6);
+  left: var(--space-6);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  padding: 9px 15px;
+  background: rgba(7, 8, 15, 0.62);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  font-size: 11.5px;
+  color: color-mix(in srgb, var(--color-text) 78%, transparent);
+
+  span { display: inline-flex; align-items: center; gap: 6px; }
+}
+
+// Narrow screens: exit, title and the buttons no longer fit on one line, so the title drops under
+// them (still reachable, never overlapping a button) and the hints go away.
+@media (max-width: 559.98px) {
+  .hints { display: none; }
+
+  .title-badge {
+    top: calc(var(--space-6) + 48px);
+    max-width: calc(100vw - 2 * var(--space-6));
+  }
+}

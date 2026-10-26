@@ -114,7 +114,7 @@ $ok-light: #4ade80;
 }
 
 // ── Inputs ───────────────────────────────────────────
-input, textarea {
+input, textarea, select {
   width: 100%;
   padding: 9px 12px;
   border: 1px solid $border;
@@ -173,6 +173,34 @@ textarea { resize: vertical; }
 
   em { color: $danger; font-style: normal; }
   .span-2 { grid-column: 1 / -1; }
+}
+
+.features {
+  margin: 18px 0 0;
+  padding: 12px 14px;
+  border: 1px solid $border;
+  border-radius: 10px;
+
+  legend { padding: 0 6px; font-size: 13px; color: $muted; }
+}
+
+// Own classes, not .btn-small / .btn-danger: those are the table rows' look and a characterisation test
+// reads the first match of each.
+.add-feature, .feature-remove { padding: 5px 10px; font-size: 13px; }
+.feature-remove {
+  border-color: rgba($danger, .5);
+  color: $danger-light;
+
+  &:hover:not(:disabled) { background: rgba($danger, .15); }
+}
+
+.feature-row {
+  display: grid;
+  grid-template-columns: 150px 1fr 1.4fr auto;
+  gap: 8px;
+  margin-bottom: 8px;
+
+  @media (max-width: 720px) { grid-template-columns: 1fr; }
 }
 
 .editor-actions { display: flex; gap: 8px; margin-top: 18px; }

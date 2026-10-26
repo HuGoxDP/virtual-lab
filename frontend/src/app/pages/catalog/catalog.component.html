@@ -1,216 +1,106 @@
 <!-- path: src/app/pages/catalog/catalog.component.html -->
 
-<div class="catalog-layout" [class.dark-theme]="isDarkMode()">
+<vl-site-header>
+  <div header-start class="search">
+    <vl-icon class="search-icon" name="magnifying-glass" size="14" />
+    <input
+      class="input search-input"
+      type="search"
+      aria-label="Пошук сценаріїв"
+      placeholder="Пошук сценаріїв"
+      [value]="searchText()"
+      (input)="onSearch($event)"
+    />
+    @if (searchText()) {
+      <button type="button" class="search-clear" aria-label="Очистити" (click)="clearSearch()">
+        <vl-icon name="x" size="12" />
+      </button>
+    }
+  </div>
+  <button header-end type="button" class="btn btn-secondary account" (click)="goAccount()">
+    <vl-icon [name]="accountIcon()" size="15" />{{ accountLabel() }}
+  </button>
+</vl-site-header>
 
-  <!-- ==================== HEADER ==================== -->
-  <header class="catalog-header">
-    <div class="header-inner">
-
-      <div class="brand-area">
-        <a routerLink="/" class="back-link">&larr; Назад</a>
-        <div class="separator"></div>
-        <div class="logo-text">
-          <span class="logo-icon">🧬</span>
-          Віртуальна Лабораторія
-        </div>
+<main class="catalog-main">
+  <div class="toolbar">
+    <h2 class="toolbar-title">Каталог сценаріїв</h2>
+    <div class="sort">
+      <span class="text-muted sort-label" id="sort-label">Сортувати</span>
+      <div class="seg" role="radiogroup" aria-labelledby="sort-label">
+        <label class="seg-opt">
+          <input type="radio" name="vl-sort" value="new" [checked]="filter().sort === 'new'" (change)="setSort('new')" />
+          <span>Нові</span>
+        </label>
+        <label class="seg-opt">
+          <input type="radio" name="vl-sort" value="title" [checked]="filter().sort === 'title'" (change)="setSort('title')" />
+          <span>За назвою</span>
+        </label>
       </div>
-
-      <div class="controls-area">
-        <div class="search-wrapper">
-          <span class="search-icon" aria-hidden="true">🔍</span>
-          <input
-            type="search"
-            aria-label="Пошук сценаріїв"
-            placeholder="Пошук сценаріїв..."
-            [value]="searchQuery()"
-            (input)="onSearch($event)"
-          />
-        </div>
-
-        <button
-          class="theme-toggle"
-          (click)="toggleTheme()"
-          [attr.aria-label]="isDarkMode() ? 'Увімкнути світлу тему' : 'Увімкнути темну тему'"
-          title="Змінити тему"
-        >
-          {{ isDarkMode() ? '☀️' : '🌙' }}
-        </button>
-      </div>
-
     </div>
-  </header>
+  </div>
 
-  <!-- ==================== MAIN CONTENT ==================== -->
-  <main class="catalog-content">
-    <div class="content-inner">
-
-      <!-- Category filters -->
-      <div class="filters-bar" role="group" aria-label="Фільтр за категорією">
-        @for (cat of categories(); track cat.id) {
-          <button
-            class="filter-chip"
-            [class.active]="selectedCategory() === cat.id"
-            [attr.aria-pressed]="selectedCategory() === cat.id"
-            (click)="selectCategory(cat.id)"
-          >
-            @if (cat.icon) {
-              <span class="chip-icon" aria-hidden="true">{{ cat.icon }}</span>
-            }
-            {{ cat.label }}
-          </button>
-        }
-      </div>
-
-      <!-- Status bar -->
-      <div class="status-bar" aria-live="polite">
-        <span class="result-count">
-          Знайдено: <strong>{{ total() }}</strong>
-        </span>
-      </div>
-
-      <!-- Error state -->
-      @if (errorMessage() && !isLoading()) {
-        <div class="error-state">
-          <span class="error-icon" aria-hidden="true">⚠️</span>
-          <p>{{ errorMessage() }}</p>
-          <button class="retry-btn" (click)="reload()">
-            Спробувати ще раз
-          </button>
-        </div>
-      }
-
-      <!-- Empty state -->
-      @if (!isLoading() && !errorMessage() && scenarios().length === 0) {
-        <div class="empty-state">
-          <span class="empty-icon" aria-hidden="true">🔍</span>
-          <p>Сценаріїв не знайдено</p>
-        </div>
-      }
-
-      <!-- Scenarios grid -->
-      @if (scenarios().length > 0) {
-        <div class="scenarios-grid">
-          @for (scenario of scenarios(); track scenario.id) {
-            <button type="button" class="scenario-card" (click)="openModal(scenario, $event)">
-              <div class="card-preview">
-                <span class="badge-webgl">WebGL</span>
-                @if (!hasScenarioUrl(scenario)) {
-                  <span class="badge-unavailable">Незабаром</span>
-                }
-                <img
-                  [src]="scenario.imageUrl"
-                  [alt]="scenario.title"
-                  loading="lazy"
-                  decoding="async"
-                  (error)="handleImageError($event)"
-                />
-                <div class="hover-overlay">
-                  <span class="play-icon" aria-hidden="true">▶</span>
-                </div>
-              </div>
-
-              <div class="card-info">
-                <div class="meta-row">
-                  <span class="category-tag">{{ scenario.categoryLabel }}</span>
-                  @if (scenario.version) {
-                    <span class="version-tag">v{{ scenario.version }}</span>
-                  }
-                </div>
-                <h3 class="card-title">{{ scenario.title }}</h3>
-                <p class="card-desc">{{ scenario.description }}</p>
-              </div>
-            </button>
-          }
-        </div>
-      }
-
-      <!-- Loading state -->
-      @if (isLoading()) {
-        <div class="loading-state">
-          <div class="spinner" aria-hidden="true"></div>
-          <p>Завантаження каталогу...</p>
-        </div>
-      }
-
-      <!-- Pagination -->
-      @if (hasMore() && !isLoading()) {
-        <div class="load-more-bar">
-          <button class="retry-btn" (click)="loadMore()">
-            Показати ще ({{ total() - scenarios().length }})
-          </button>
-        </div>
-      }
-
-    </div>
-  </main>
-
-  <!-- ==================== MODAL ==================== -->
-  <div
-    class="modal-overlay"
-    [class.open]="isModalOpen()"
-    (click)="onOverlayClick($event)"
-  >
-    @if (activeScenario(); as scenario) {
-      <div
-        #modalWindow
-        class="modal-window"
-        role="dialog"
-        aria-modal="true"
-        [attr.aria-label]="scenario.title"
-        tabindex="-1"
-        (click)="$event.stopPropagation()"
-        (keydown)="onModalKeydown($event)"
+  <div class="chips" role="group" aria-label="Фільтр за напрямом">
+    @for (cat of categories(); track cat.id) {
+      <button
+        type="button"
+        class="btn chip"
+        [class.is-active]="filter().category === cat.id"
+        [attr.aria-pressed]="filter().category === cat.id"
+        (click)="selectCategory(cat.id)"
       >
-
-        <!-- Left: image -->
-        <div class="modal-image-side">
-          <img
-            [src]="scenario.imageUrl"
-            [alt]="scenario.title"
-            (error)="handleImageError($event)"
-          />
-        </div>
-
-        <!-- Right: info -->
-        <div class="modal-info-side">
-          <button class="close-btn" aria-label="Закрити" (click)="closeModal()">&times;</button>
-
-          <div class="modal-scroll">
-            <span class="modal-category">{{ scenario.categoryLabel }}</span>
-            <h2 class="modal-title">{{ scenario.title }}</h2>
-
-            @if (scenario.author || scenario.version) {
-              <div class="modal-meta">
-                @if (scenario.author) {
-                  <span>👤 {{ scenario.author }}</span>
-                }
-                @if (scenario.version) {
-                  <span>📦 v{{ scenario.version }}</span>
-                }
-              </div>
-            }
-
-            <p class="modal-description">{{ scenario.fullDescription }}</p>
-          </div>
-
-          <div class="modal-footer">
-            <button
-              class="launch-btn"
-              [class.disabled]="!hasScenarioUrl(scenario)"
-              [disabled]="!hasScenarioUrl(scenario)"
-              (click)="launchScenario()"
-            >
-              @if (hasScenarioUrl(scenario)) {
-                🚀 Запустити симуляцію
-              } @else {
-                🔒 Сценарій ще не доступний
-              }
-            </button>
-          </div>
-        </div>
-
-      </div>
+        <vl-icon [name]="cat.icon" size="15" />{{ cat.label }}<span class="chip-count">{{ cat.count }}</span>
+      </button>
     }
   </div>
 
-</div>
+  @if (isLoaded() && !hasError()) {
+    <div class="found" aria-live="polite">{{ foundLabel() }}</div>
+  }
+
+  @if (hasError()) {
+    <div class="state error-state" role="alert">
+      <vl-icon name="warning-circle" size="40" />
+      <div class="state-title">{{ errorMessage() }}</div>
+      <button type="button" class="btn btn-secondary" (click)="reload()">
+        <vl-icon name="arrow-counter-clockwise" size="15" />Спробувати ще раз
+      </button>
+    </div>
+  }
+
+  @if (scenarios().length > 0) {
+    <div class="grid" [attr.aria-busy]="isLoading()">
+      @for (scenario of scenarios(); track scenario.id) {
+        <vl-scenario-card [scenario]="scenario" (open)="openScenario($event)" (launch)="launchScenario($event)" />
+      }
+    </div>
+  }
+
+  @if (isEmpty()) {
+    <div class="state empty-state">
+      <vl-icon name="cube-transparent" size="40" />
+      <div class="state-title">Нічого не знайдено</div>
+      <p class="text-muted state-text">Спробуйте інше формулювання або зніміть фільтр за напрямом.</p>
+      <button type="button" class="btn btn-secondary" (click)="resetFilters()">
+        <vl-icon name="arrow-counter-clockwise" size="15" />Скинути фільтри
+      </button>
+    </div>
+  }
+
+  @if (isLoading()) {
+    <div class="state loading-state" role="status">
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="text-muted state-text">Завантаження каталогу…</p>
+    </div>
+  }
+
+  @if (hasMore() && !isLoading()) {
+    <div class="more">
+      <button type="button" class="btn btn-secondary" (click)="loadMore()">
+        Показати ще ({{ total() - scenarios().length }})
+      </button>
+    </div>
+  }
+</main>
+
+<vl-site-footer />

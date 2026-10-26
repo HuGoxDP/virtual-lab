@@ -57,6 +57,37 @@ export interface ScenarioCatalogItem {
 
   /** Upload / publish date (ISO string). */
   uploadDate?: string;
+
+  /** Archive size in bytes; null while no archive is stored. */
+  archiveBytes: number | null;
+
+  /** Last change (ISO string); the server falls back to the creation time. */
+  updatedAt: string;
+
+  /** "Що всередині": 0-6 entries an admin wrote; empty when there is nothing to show. */
+  features: ScenarioFeature[];
+}
+
+/** One "Що всередині" entry. `icon` is a name from `ICON_NAMES`. */
+export interface ScenarioFeature {
+  icon: string;
+  title: string;
+  subtitle?: string;
+}
+
+/** What the "Суміжні сценарії" block needs of another scenario. */
+export interface RelatedScenario {
+  id: string;
+  title: string;
+  category: string;
+  categoryLabel: string;
+  /** Preview URL; empty when the scenario has none. */
+  imageUrl: string;
+}
+
+/** `GET /api/catalog/:id`: the item plus its related scenarios (at most two). */
+export interface ScenarioDetail extends ScenarioCatalogItem {
+  related: RelatedScenario[];
 }
 
 /**
@@ -88,12 +119,13 @@ export interface ScenarioCatalogManifest {
   scenarios: ScenarioCatalogItem[];
 
   /**
-   * Distinct categories actually used by the published scenarios.
-   *
-   * Sent by the API so the filter bar reflects the data instead of a
-   * hard-coded list; the client only supplies the icon per category key.
+   * Visible categories that have published scenarios, in the order the API
+   * wants them shown. Describes the whole catalog, not the current filter.
    */
   categories?: CatalogCategory[];
+
+  /** Whole-catalog counters for the hero; unaffected by any filter. */
+  summary?: CatalogSummary;
 
   /** Total rows matching the current filter, across all pages. */
   total?: number;
@@ -114,15 +146,28 @@ export interface CatalogCategory {
 
   /** Localized label for display, e.g. "Фізика". */
   categoryLabel: string;
+
+  /** Icon name from `ICON_NAMES`. */
+  icon: string;
+
+  /** Published scenarios in the category. */
+  count: number;
 }
 
-/**
- * Filter category for the catalog sidebar / chip bar.
- */
+/** `summary` of `GET /api/catalog`. */
+export interface CatalogSummary {
+  /** All published scenarios. */
+  scenarios: number;
+  /** Number of category chips. */
+  categories: number;
+}
+
+/** One chip of the filter bar. */
 export interface CategoryFilter {
   id: string;
   label: string;
-  icon?: string;
+  icon: string;
+  count: number;
 }
 
 /**

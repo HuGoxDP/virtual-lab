@@ -1,0 +1,24 @@
+<!-- path: src/app/pages/viewer/viewer-loading.component.html -->
+
+<button type="button" class="btn btn-secondary cancel" (click)="cancel.emit()">
+  <vl-icon name="arrow-left" size="15" />Скасувати
+</button>
+
+<div class="center" role="status" aria-live="polite">
+  <div class="panel">
+    <div class="ring">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="track" cx="50" cy="50" r="42" />
+        <circle class="progress" cx="50" cy="50" r="42" [style.stroke-dashoffset]="ringOffset()" />
+      </svg>
+      <span class="loader-percent">{{ shownPercent() }}%</span>
+    </div>
+
+    <div class="loader-title">{{ title() }}</div>
+    @if (bytes()) {
+      <p class="text-muted loader-bytes">{{ bytes() }}</p>
+    }
+    <div class="bar" aria-hidden="true"><div class="fill" [style.width.%]="shownPercent()"></div></div>
+    <div class="loader-stage">{{ stage() }}</div>
+  </div>
+</div>

@@ -1,14 +1,20 @@
 // path: src/app/services/scenario.service.spec.ts
 //
 // Covers test-plan scenarios 6, 12, 13, 14 (catalog state) and 35
-// (download URL resolution), plus the download/abort path (F4).
+// (download URL resolution), plus the download/abort path (F4), and - release 1, phase 3 -
+// 121 (sort / summary / category mapping, DW-3.1, DW-3.2) and 122 (out-of-order responses, DW-3.2).
 
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 
 import { ScenarioService } from './scenario.service';
-import { ScenarioCatalogItem, ScenarioCatalogManifest } from '../models/scenario.model';
+import { CatalogCategory, ScenarioCatalogItem, ScenarioCatalogManifest } from '../models/scenario.model';
+import { CatalogFilter, DEFAULT_CATALOG_FILTER } from './catalog-query';
+
+const filter = (change: Partial<CatalogFilter> = {}): CatalogFilter => ({ ...DEFAULT_CATALOG_FILTER, ...change });
+const category = (slug: string, count = 1, icon = 'folder'): CatalogCategory =>
+  ({ category: slug, categoryLabel: slug.toUpperCase(), icon, count });
 
 function scenario(id: string, overrides: Partial<ScenarioCatalogItem> = {}): ScenarioCatalogItem {
   return {
@@ -20,6 +26,9 @@ function scenario(id: string, overrides: Partial<ScenarioCatalogItem> = {}): Sce
     categoryLabel: 'Астрономія',
     imageUrl: '',
     scenarioUrl: `/scenarios/${id}.zip`,
+    archiveBytes: null,
+    updatedAt: '2026-10-01T00:00:00.000Z',
+    features: [],
     ...overrides,
   };
 }
@@ -28,7 +37,8 @@ function manifest(overrides: Partial<ScenarioCatalogManifest> = {}): ScenarioCat
   return {
     version: '1',
     scenarios: [scenario('a'), scenario('b')],
-    categories: [{ category: 'astronomy', categoryLabel: 'Астрономія' }],
+    categories: [category('astronomy')],
+    summary: { scenarios: 5, categories: 1 },
     total: 5,
     limit: 24,
     offset: 0,
@@ -67,7 +77,7 @@ describe('ScenarioService', () => {
     });
 
     it('sends category and query only when set', async () => {
-      const pending = service.loadCatalog('biology', '  клітина  ');
+      const pending = service.loadCatalog(filter({ category: 'biology', q: '  клітина  ' }));
 
       const req = http.expectOne(r => r.url === '/api/catalog');
       expect(req.request.params.get('category')).toBe('biology');
@@ -77,7 +87,7 @@ describe('ScenarioService', () => {
     });
 
     it('omits the category when it is "all"', async () => {
-      const pending = service.loadCatalog('all', '');
+      const pending = service.loadCatalog(filter());
 
       const req = http.expectOne(r => r.url === '/api/catalog');
       expect(req.request.params.has('category')).toBe(false);
@@ -170,34 +180,158 @@ describe('ScenarioService', () => {
   });
 
   describe('categories', () => {
-    it('always prepends the "all" entry', () => {
-      expect(service.categories()[0].id).toBe('all');
+    it('DW-3.1 always prepends "Усі напрями" with the whole-catalog count', async () => {
+      const pending = service.loadCatalog();
+      http.expectOne(r => r.url === '/api/catalog').flush(manifest({ summary: { scenarios: 7, categories: 1 } }));
+      await pending;
+
+      expect(service.categories()[0]).toEqual({ id: 'all', label: 'Усі напрями', icon: 'list-dashes', count: 7 });
     });
 
-    it('maps API categories and keeps known icons', async () => {
+    it('DW-3.1 maps the API categories with icon and count, keeping the API order', async () => {
       const pending = service.loadCatalog();
       http.expectOne(r => r.url === '/api/catalog').flush(manifest({
-        categories: [
-          { category: 'physics', categoryLabel: 'Фізика' },
-          { category: 'astronomy', categoryLabel: 'Астрономія' },
-        ],
+        categories: [category('physics', 4, 'lightning'), category('astronomy', 2, 'planet')],
       }));
       await pending;
 
-      const ids = service.categories().map(c => c.id);
-      expect(ids).toEqual(['all', 'physics', 'astronomy']);
-      expect(service.categories()[1].icon).toBe('⚡');
+      expect(service.categories().map(c => [c.id, c.icon, c.count])).toEqual([
+        ['all', 'list-dashes', 5], ['physics', 'lightning', 4], ['astronomy', 'planet', 2],
+      ]);
     });
 
-    it('falls back to a default icon for an unknown category', async () => {
-      const pending = service.loadCatalog();
-      http.expectOne(r => r.url === '/api/catalog').flush(manifest({
-        categories: [{ category: 'quantum-basketry', categoryLabel: 'Дивна' }],
-      }));
+    it('has only the "all" chip (count 0) before anything is loaded', () => {
+      expect(service.categories()).toEqual([{ id: 'all', label: 'Усі напрями', icon: 'list-dashes', count: 0 }]);
+      expect(service.summary()).toBeNull();
+    });
+
+    it('keeps the chips and the summary when a later request fails', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      let pending = service.loadCatalog();
+      http.expectOne(r => r.url === '/api/catalog').flush(manifest());
       await pending;
 
-      // Without a default this rendered as `undefined` in the chip bar.
-      expect(service.categories()[1].icon).toBe('📁');
+      pending = service.loadCatalog(filter({ category: 'astronomy' }));
+      http.expectOne(r => r.url === '/api/catalog').flush('x', { status: 500, statusText: 'Server Error' });
+      await pending;
+
+      expect(service.categories().length).toBe(2);
+      expect(service.summary()).toEqual({ scenarios: 5, categories: 1 });
+    });
+  });
+
+  describe('sort and filter memory', () => {
+    it('DW-3.1 sends sort=title only for the non-default order', async () => {
+      let pending = service.loadCatalog(filter({ sort: 'title' }));
+      let req = http.expectOne(r => r.url === '/api/catalog');
+      expect(req.request.params.get('sort')).toBe('title');
+      req.flush(manifest());
+      await pending;
+
+      pending = service.loadCatalog(filter({ sort: 'new' }));
+      req = http.expectOne(r => r.url === '/api/catalog');
+      expect(req.request.params.has('sort')).toBe(false);
+      req.flush(manifest());
+      await pending;
+    });
+
+    it('DW-3.2 load more keeps category, query and sort', async () => {
+      const active = filter({ category: 'astronomy', q: 'сонце', sort: 'title' });
+      let pending = service.loadCatalog(active);
+      http.expectOne(r => r.url === '/api/catalog').flush(manifest());
+      await pending;
+
+      pending = service.loadMore(active);
+      const req = http.expectOne(r => r.url === '/api/catalog');
+      expect(req.request.params.get('offset')).toBe('2');
+      expect(req.request.params.get('category')).toBe('astronomy');
+      expect(req.request.params.get('q')).toBe('сонце');
+      expect(req.request.params.get('sort')).toBe('title');
+      req.flush(manifest({ scenarios: [scenario('c')] }));
+      await pending;
+    });
+
+    it('remembers the filter of the latest request', async () => {
+      const active = filter({ category: 'physics' });
+      const pending = service.loadCatalog(active);
+      expect(service.filter()).toEqual(active);
+      http.expectOne(r => r.url === '/api/catalog').flush(manifest());
+      await pending;
+    });
+
+    it('is not "loaded" until a request finishes, and is after a failure too', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      expect(service.loaded()).toBe(false);
+      const pending = service.loadCatalog();
+      expect(service.loaded()).toBe(false);
+      http.expectOne(r => r.url === '/api/catalog').flush('x', { status: 500, statusText: 'Server Error' });
+      await pending;
+      expect(service.loaded()).toBe(true);
+    });
+  });
+
+  describe('out-of-order responses', () => {
+    it('DW-3.2 a slow answer for an older filter never overwrites the newest one', async () => {
+      const older = service.loadCatalog(filter({ category: 'physics' }));
+      const newer = service.loadCatalog(filter({ category: 'biology' }));
+      const [oldReq, newReq] = http.match(r => r.url === '/api/catalog');
+      expect(oldReq.request.params.get('category')).toBe('physics');
+
+      newReq.flush(manifest({ scenarios: [scenario('bio')], total: 1 }));
+      await newer;
+      oldReq.flush(manifest({ scenarios: [scenario('phys')], total: 1 }));
+      await older;
+
+      expect(service.scenarios().map(s => s.id)).toEqual(['bio']);
+      expect(service.loading()).toBe(false);
+    });
+
+    it('DW-3.2 a late failure of an older request does not show an error over the newer list', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const older = service.loadCatalog(filter({ q: 'a' }));
+      const newer = service.loadCatalog(filter({ q: 'ab' }));
+      const [oldReq, newReq] = http.match(r => r.url === '/api/catalog');
+
+      newReq.flush(manifest({ scenarios: [scenario('ok')], total: 1 }));
+      await newer;
+      oldReq.flush('x', { status: 500, statusText: 'Server Error' });
+      await older;
+
+      expect(service.error()).toBeNull();
+      expect(service.scenarios().map(s => s.id)).toEqual(['ok']);
+    });
+
+    it('an older answer arriving first does not end loading while the newer request is in flight', async () => {
+      const older = service.loadCatalog(filter({ category: 'physics' }));
+      const newer = service.loadCatalog(filter({ category: 'biology' }));
+      const [oldReq, newReq] = http.match(r => r.url === '/api/catalog');
+
+      oldReq.flush(manifest({ scenarios: [scenario('phys')] }));
+      await older;
+      expect(service.loading()).toBe(true);
+      expect(service.scenarios()).toEqual([]);
+
+      newReq.flush(manifest({ scenarios: [scenario('bio')] }));
+      await newer;
+      expect(service.loading()).toBe(false);
+      expect(service.scenarios().map(s => s.id)).toEqual(['bio']);
+    });
+
+    it('a page being appended is dropped when a new filter starts meanwhile', async () => {
+      const first = service.loadCatalog();
+      http.expectOne(r => r.url === '/api/catalog').flush(manifest());
+      await first;
+
+      const append = service.loadMore();
+      const replace = service.loadCatalog(filter({ category: 'biology' }));
+      const [appendReq, replaceReq] = http.match(r => r.url === '/api/catalog');
+
+      replaceReq.flush(manifest({ scenarios: [scenario('bio')], total: 1 }));
+      await replace;
+      appendReq.flush(manifest({ scenarios: [scenario('late')], offset: 2 }));
+      await append;
+
+      expect(service.scenarios().map(s => s.id)).toEqual(['bio']);
     });
   });
 
@@ -208,6 +342,38 @@ describe('ScenarioService', () => {
       expect(req.request.url).toBe('/api/catalog/with%20space%20%26%20pct%25');
       req.flush(scenario('with space & pct%'));
       await pending;
+    });
+
+    it('DW-3.4 encodes a slash and Cyrillic in the id', async () => {
+      const pending = service.fetchScenarioById('a/б');
+      const req = http.expectOne(r => r.url.startsWith('/api/catalog/'));
+      expect(req.request.url).toBe('/api/catalog/a%2F%D0%B1');
+      req.flush(scenario('a/б'));
+      await pending;
+    });
+
+    it('DW-3.4 returns related and features as arrays even when the answer omits them', async () => {
+      const pending = service.fetchScenarioById('x');
+      const bare: Partial<ScenarioCatalogItem> = scenario('x');
+      delete bare.features;
+      http.expectOne('/api/catalog/x').flush(bare);
+
+      const detail = await pending;
+      expect(detail.related).toEqual([]);
+      expect(detail.features).toEqual([]);
+    });
+
+    it('DW-3.4 keeps the related scenarios the API sent', async () => {
+      const pending = service.fetchScenarioById('x');
+      const related = [{ id: 'y', title: 'Y', category: 'physics', categoryLabel: 'Фізика', imageUrl: '' }];
+      http.expectOne('/api/catalog/x').flush({ ...scenario('x'), related });
+      expect((await pending).related).toEqual(related);
+    });
+
+    it('rejects with the HTTP error so a caller can tell 404 from 500', async () => {
+      const pending = service.fetchScenarioById('nope');
+      http.expectOne('/api/catalog/nope').flush({ error: 'x' }, { status: 404, statusText: 'Not Found' });
+      await expect(pending).rejects.toMatchObject({ status: 404 });
     });
   });
 

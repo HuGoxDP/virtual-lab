@@ -1,6 +1,6 @@
 <!-- path: src/app/pages/admin/admin.component.html -->
 
-<div class="admin-layout">
+<div class="admin-layout legacy-admin">
 
   <header class="admin-header">
     <div class="brand">
@@ -108,6 +108,53 @@
             <textarea rows="4" [value]="form.fullDescription" (input)="updateDraft('fullDescription', $event)"></textarea>
           </label>
         </div>
+
+        <fieldset class="features">
+          <legend>Що всередині ({{ form.features.length }}/{{ maxFeatures }})</legend>
+
+          @for (feature of form.features; track $index) {
+            <div class="feature-row">
+              <select
+                class="feature-icon"
+                [attr.aria-label]="'Іконка пункту ' + ($index + 1)"
+                (change)="updateFeature($index, 'icon', $event)"
+              >
+                @for (name of iconNames; track name) {
+                  <option [value]="name" [selected]="name === feature.icon">{{ name }}</option>
+                }
+              </select>
+              <input
+                class="feature-title"
+                maxlength="60"
+                placeholder="Заголовок"
+                [attr.aria-label]="'Заголовок пункту ' + ($index + 1)"
+                [value]="feature.title"
+                (input)="updateFeature($index, 'title', $event)"
+              />
+              <input
+                class="feature-subtitle"
+                maxlength="90"
+                placeholder="Підпис"
+                [attr.aria-label]="'Підпис пункту ' + ($index + 1)"
+                [value]="feature.subtitle ?? ''"
+                (input)="updateFeature($index, 'subtitle', $event)"
+              />
+              <button
+                type="button"
+                class="btn feature-remove"
+                [attr.aria-label]="'Видалити пункт ' + ($index + 1)"
+                (click)="removeFeature($index)"
+              >×</button>
+            </div>
+          }
+
+          <button
+            type="button"
+            class="btn add-feature"
+            [disabled]="form.features.length >= maxFeatures"
+            (click)="addFeature()"
+          >+ Додати пункт</button>
+        </fieldset>
 
         <div class="editor-actions">
           <button class="btn btn-primary" (click)="saveDraft()">Зберегти</button>

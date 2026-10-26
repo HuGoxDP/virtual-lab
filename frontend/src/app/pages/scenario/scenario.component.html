@@ -1,0 +1,151 @@
+<!-- path: src/app/pages/scenario/scenario.component.html -->
+
+<vl-site-header brand="logo">
+  <a header-start class="btn btn-secondary back" routerLink="/catalog" [queryParams]="backQuery()">
+    <vl-icon name="arrow-left" size="15" />Каталог
+  </a>
+  @if (scenario(); as s) {
+    <nav header-start class="crumbs" aria-label="Шлях">
+      <span class="crumb-sep" aria-hidden="true">/</span><span class="crumb-category">{{ s.categoryLabel }}</span>
+      <span class="crumb-sep" aria-hidden="true">/</span><span class="crumb-title" aria-current="page">{{ s.title }}</span>
+    </nav>
+  }
+</vl-site-header>
+
+@switch (status()) {
+  @case ('loading') {
+    <div class="state" role="status">
+      <div class="spinner" aria-hidden="true"></div>
+      <p class="text-muted state-text">Завантаження сценарію…</p>
+    </div>
+  }
+  @case ('not-found') {
+    <div class="state not-found-state">
+      <vl-icon name="cube-transparent" size="40" />
+      <h1 class="state-title">Сценарій не знайдено</h1>
+      <p class="text-muted state-text">Його могли прибрати з каталогу або посилання містить помилку.</p>
+      <a class="btn btn-secondary" routerLink="/catalog">
+        <vl-icon name="arrow-left" size="15" />До каталогу
+      </a>
+    </div>
+  }
+  @case ('error') {
+    <div class="state error-state" role="alert">
+      <vl-icon name="warning-circle" size="40" />
+      <h1 class="state-title">Не вдалося завантажити сценарій</h1>
+      <button type="button" class="btn btn-secondary" (click)="retry()">
+        <vl-icon name="arrow-counter-clockwise" size="15" />Спробувати ще раз
+      </button>
+    </div>
+  }
+  @case ('ready') {
+    @if (scenario(); as s) {
+      <div class="banner" [style.background]="gradient()">
+        @if (bannerImage(); as image) {
+          <img class="banner-image" [src]="image" alt="" (error)="imageFailed(image)" />
+        }
+        <div class="banner-fade"></div>
+      </div>
+
+      <div class="layout">
+        <article class="content">
+          <span class="card-kicker kicker">{{ s.categoryLabel }}</span>
+          <h1 class="title">{{ s.title }}</h1>
+
+          <div class="byline">
+            @if (s.author) {
+              <span class="byline-item"><vl-icon name="user" size="14" />{{ s.author }}</span>
+            }
+            @if (updated()) {
+              <span class="byline-item"><vl-icon name="clock-counter-clockwise" size="14" />Оновлено {{ updated() }}</span>
+            }
+            @if (s.version) {
+              <span class="byline-item"><vl-icon name="tag" size="14" />{{ s.version }}</span>
+            }
+          </div>
+
+          @if (description()) {
+            <p class="description">{{ description() }}</p>
+          }
+
+          @if (s.features.length > 0) {
+            <h6 class="block-title">Що всередині</h6>
+            <ul class="features">
+              @for (feature of s.features; track $index) {
+                <li class="feature">
+                  <vl-icon class="feature-icon" [name]="feature.icon" size="19" />
+                  <div class="feature-text">
+                    <div class="feature-title">{{ feature.title }}</div>
+                    @if (feature.subtitle) {
+                      <div class="text-muted feature-sub">{{ feature.subtitle }}</div>
+                    }
+                  </div>
+                </li>
+              }
+            </ul>
+          }
+
+          @if (s.related.length > 0) {
+            <h6 class="block-title">Суміжні сценарії</h6>
+            <ul class="related">
+              @for (item of s.related; track item.id) {
+                <li>
+                  <a class="related-item" [routerLink]="['/scenario', item.id]">
+                    <span class="related-thumb" [style.background]="relatedGradient(item)">
+                      @if (relatedImage(item); as image) {
+                        <img [src]="image" alt="" loading="lazy" (error)="imageFailed(image)" />
+                      }
+                    </span>
+                    <span class="related-text">
+                      <span class="related-title">{{ item.title }}</span>
+                      <span class="related-category">{{ item.categoryLabel }}</span>
+                    </span>
+                  </a>
+                </li>
+              }
+            </ul>
+          }
+        </article>
+
+        <aside class="side">
+          @if (canLaunch()) {
+            <button type="button" class="btn btn-primary btn-block launch" (click)="launch()">
+              <vl-icon name="play" size="17" />Запустити симуляцію
+            </button>
+            <hr class="hr" />
+          }
+
+          <dl class="meta">
+            @for (row of meta(); track row.label) {
+              <div class="meta-row">
+                <dt class="text-muted">{{ row.label }}</dt>
+                <dd [class.mono]="row.mono">{{ row.value }}</dd>
+              </div>
+            }
+          </dl>
+          <hr class="hr" />
+
+          <div class="side-actions">
+            <button type="button" class="btn btn-secondary copy" (click)="copyLink()">
+              <vl-icon name="link-simple" size="15" />Копіювати посилання
+            </button>
+          </div>
+
+          @if (manualLink(); as link) {
+            <input class="input manual-link" readonly aria-label="Посилання на сценарій" [value]="link" (focus)="$any($event.target).select()" />
+          }
+        </aside>
+      </div>
+
+      @if (canLaunch()) {
+        <div class="launch-bar">
+          <button type="button" class="btn btn-primary btn-block" (click)="launch()">
+            <vl-icon name="play" size="17" />Запустити симуляцію
+          </button>
+        </div>
+      }
+    }
+  }
+}
+
+<vl-site-footer />

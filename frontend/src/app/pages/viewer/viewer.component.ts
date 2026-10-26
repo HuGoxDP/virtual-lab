@@ -15,12 +15,17 @@ import { Router, ActivatedRoute } from '@angular/router';
 import { Subject, takeUntil } from 'rxjs';
 
 // Engine imports — from the WebEngineTS npm package
-import { Application, BuildInfo, MemoryProfiler, Texture2D } from 'WebEngineTS';
+import { Application, BuildInfo, Texture2D } from 'WebEngineTS';
 import type { IScenarioLoadProgress } from 'WebEngineTS';
 
+import { IconComponent } from '../../ui/icon/icon.component';
 import { ScenarioService, DownloadProgress } from '../../services/scenario.service';
 import { TelemetryService } from '../../services/telemetry.service';
 import { ScenarioCatalogItem } from '../../models/scenario.model';
+import { STAGE_ENGINE, STAGE_FETCH, readFlag } from './viewer-format';
+import { PROFILER_GUARD_INTERVAL_MS, enforceProfilerOff, lockProfiler } from './viewer-profiler';
+import { ViewerHudComponent } from './viewer-hud.component';
+import { ViewerLoadingComponent } from './viewer-loading.component';
 
 /**
  * Viewer states for the loading UI.
@@ -30,6 +35,7 @@ type ViewerState = 'idle' | 'downloading' | 'loading-engine' | 'running' | 'erro
 @Component({
   selector: 'app-viewer',
   standalone: true,
+  imports: [ViewerHudComponent, ViewerLoadingComponent, IconComponent],
   templateUrl: './viewer.component.html',
   styleUrls: ['./viewer.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -59,6 +65,9 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    */
   private readonly loadedBuffer = signal<ArrayBuffer | null>(null);
 
+  /** Re-closes the profiler if a running scenario opens it again. */
+  private profilerGuard: ReturnType<typeof setInterval> | null = null;
+
   private contextLostHandler: ((event: Event) => void) | null = null;
 
   /**
@@ -70,28 +79,28 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   /** Catalog id of the scenario currently loaded, for telemetry attribution. */
   private scenarioId = '';
 
+  /** The id in the URL; the exit target even when the lookup failed and `scenarioId` was never set. */
+  private routeId = '';
+
   // UI state. Signals, not plain fields: the app is zoneless, so a signal write
   // is what notifies the change-detection scheduler. Mutating a field from an
   // async callback would never repaint.
   readonly state = signal<ViewerState>('idle');
   readonly progressPercent = signal(0);
-  readonly progressLabel = signal('');
+  /** Archive bytes received / announced by the server (0 = unknown); `null` = no archive download. */
+  readonly loadedBytes = signal<number | null>(null);
+  readonly totalBytes = signal<number | null>(null);
+  readonly stage = signal('');
   readonly errorMessage = signal<string | null>(null);
   readonly scenarioTitle = signal('');
   readonly contextLost = signal(false);
   readonly isFullscreen = signal(false);
-  readonly diagnosticsVisible = signal(false);
 
   /**
-   * Whether the engine diagnostics overlay may be opened at all.
-   *
-   * Off unless the URL asks for it (`?diag=1`), per scenario. Diagnostics are a
-   * measurement tool, not a student-facing feature: without the flag the button
-   * is not rendered, the overlay is never created, and nothing is sampled — the
-   * profiler's rAF loop only exists while the overlay does, so the cost is
-   * genuinely zero rather than merely hidden.
+   * Whether to show the engine build stamp (`?diag=1`). The stamp is all the flag does: the
+   * profiler overlay never runs on the platform, with or without it (see `viewer-profiler.ts`).
    */
-  readonly diagnosticsEnabled = signal(false);
+  readonly buildStampVisible = signal(false);
 
   /**
    * Whether to load from the scenario's streaming manifest rather than its ZIP.
@@ -116,9 +125,6 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   readonly canRestart = computed(
     () => this.state() === 'running' && !this.contextLost() && this.loadedBuffer() !== null
   );
-
-  /** Stroke offset for the progress ring (circumference ≈ 264). */
-  readonly ringOffset = computed(() => 264 - (264 * this.progressPercent() / 100));
 
   /**
    * Which engine build is running, for the diagnostics readout.
@@ -145,6 +151,14 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   // ==================== LIFECYCLE ====================
 
   ngAfterViewInit(): void {
+    // First thing, before the WebGL probe and before any scenario code can exist.
+    lockProfiler();
+
+    // Read once: these are launch options (read before the WebGL probe so the build stamp also shows on the unsupported screen), not something to toggle mid-run.
+    const query = this.route.snapshot.queryParamMap;
+    this.buildStampVisible.set(readFlag(query.get('diag')));
+    this.streamingRequested.set(readFlag(query.get('stream')));
+
     const canvas = this.canvasRef.nativeElement;
 
     // Probe before constructing: the Application constructor throws on a
@@ -157,7 +171,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     // The engine's game loop is a plain requestAnimationFrame loop and never
     // touches change detection — the app is zoneless, so no NgZone dance is
     // needed (or possible: the injected NgZone would be a no-op).
-    this.app = new Application(canvas);
+    this.app = this.createApplication(canvas);
 
     // KTX2 textures are transcoded by a WASM module the *host* serves, not the
     // engine bundle. Angular publishes src/assets at /assets, so the engine's
@@ -176,15 +190,11 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
     window.addEventListener('pagehide', this.pageHideHandler);
 
-    // Read once: these are launch options, not something to toggle mid-run.
-    const query = this.route.snapshot.queryParamMap;
-    this.diagnosticsEnabled.set(ViewerComponent.readFlag(query.get('diag')));
-    this.streamingRequested.set(ViewerComponent.readFlag(query.get('stream')));
-
     this.route.paramMap
       .pipe(takeUntil(this.destroy$))
       .subscribe(params => {
         const id = params.get('id');
+        this.routeId = id ?? '';
         if (id) {
           void this.openScenario(id);
         } else {
@@ -196,6 +206,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+    this.loadToken++; // a load still in flight is now stale: it must not re-arm the profiler guard
 
     // Stop streaming a possibly-large archive into a dead component.
     this.downloadAbort?.abort();
@@ -211,13 +222,20 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     window.removeEventListener('pagehide', this.pageHideHandler);
     this.telemetry.endSession();
 
-    if (this.diagnosticsVisible()) MemoryProfiler.hideOverlay();
+    if (this.profilerGuard !== null) clearInterval(this.profilerGuard);
+    this.profilerGuard = null;
+    enforceProfilerOff();
 
     // Full cleanup: scenario → engine → WebGL context
     if (this.app) {
       this.app.dispose();
       this.app = null;
     }
+  }
+
+  /** Test seam: jsdom has no WebGL2, so a spec swaps the engine out here. Behaviour is `new Application`. */
+  protected createApplication(canvas: HTMLCanvasElement): Application {
+    return new Application(canvas);
   }
 
   /** Cheap feature probe; the context is released immediately. */
@@ -243,7 +261,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    */
   private async openScenario(id: string): Promise<void> {
     const token = ++this.loadToken;
-    this.setState('downloading', 0, 'Отримання даних сценарію...');
+    this.setState('downloading', 0, 'Отримання даних сценарію');
 
     let scenario: ScenarioCatalogItem;
 
@@ -280,7 +298,8 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    this.setState('downloading', 0, 'Завантаження архіву...');
+    this.setState('downloading', 0, STAGE_FETCH);
+    this.loadedBytes.set(0);
 
     this.downloadAbort?.abort();
     const abort = new AbortController();
@@ -293,8 +312,8 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
         (progress: DownloadProgress) => {
           if (token !== this.loadToken) return;
           this.progressPercent.set(progress.percent >= 0 ? progress.percent : 0);
-          const mb = (progress.loaded / (1024 * 1024)).toFixed(1);
-          this.progressLabel.set(`Завантаження: ${mb} MB`);
+          this.loadedBytes.set(progress.loaded);
+          this.totalBytes.set(progress.total);
         },
         abort.signal
       );
@@ -323,7 +342,8 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    * have to re-fetch, which is a different thing from what the button promises.
    */
   private async startStreaming(manifestUrl: string, token: number): Promise<void> {
-    this.setState('loading-engine', 0, 'Ініціалізація сцени...');
+    this.setState('loading-engine', 0, STAGE_ENGINE);
+    this.armProfilerGuard();
 
     try {
       if (!this.app) throw new Error('Engine not initialized');
@@ -333,7 +353,6 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
         (progress: IScenarioLoadProgress) => {
           if (token !== this.loadToken) return;
           this.progressPercent.set(Math.round(progress.progress * 100));
-          this.progressLabel.set(progress.currentOperation);
         }
       );
 
@@ -341,7 +360,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
       this.loadedBuffer.set(null);
       this.setState('running', 100, '');
 
-      this.enforceDiagnosticsPolicy();
+      this.watchProfiler();
       void this.telemetry.startSession(this.scenarioId);
 
     } catch (err) {
@@ -354,48 +373,51 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
   /** Hands an already-downloaded archive to the engine. */
   private async runBuffer(zipBuffer: ArrayBuffer, token: number): Promise<void> {
-    this.setState('loading-engine', 0, 'Ініціалізація сцени...');
+    this.setState('loading-engine', 0, STAGE_ENGINE);
+    // The archive is complete by now; the byte line stays, at "N з N МБ".
+    this.loadedBytes.set(zipBuffer.byteLength);
+    this.totalBytes.set(zipBuffer.byteLength);
 
     if (!this.app) throw new Error('Engine not initialized');
 
+    this.armProfilerGuard();
     await this.app.loadScenarioFromBuffer(
       zipBuffer,
       (progress: IScenarioLoadProgress) => {
         if (token !== this.loadToken) return;
         this.progressPercent.set(Math.round(progress.progress * 100));
-        this.progressLabel.set(progress.currentOperation);
       }
     );
 
     if (token !== this.loadToken) return;
     this.setState('running', 100, '');
 
-    this.enforceDiagnosticsPolicy();
+    this.watchProfiler();
 
     // Only count a launch that actually reached a running scene.
     void this.telemetry.startSession(this.scenarioId);
   }
 
   /**
-   * Closes the profiler overlay if the scenario opened it without `?diag=1`.
-   *
-   * A scenario is arbitrary engine code and can call `MemoryProfiler.showOverlay()`
-   * itself — `solar-system` does, so students were being shown a developer
-   * overlay of FPS and VRAM counters on the platform's flagship scenario. The
-   * gating on the button cannot prevent that: it only governs the platform's own
-   * control, not what the content does once it is running.
-   *
-   * Whether the overlay belongs in a scenario at all is ScenarioCreator's
-   * question. Whether students see it is this platform's, so it is decided here
-   * rather than assumed.
+   * Closes the profiler a scenario opened during load, and keeps closing it: a scenario can call
+   * `showOverlay()` or re-open the engine's gate at any later moment, and the engine's setter is
+   * two-way today. A once-a-second check costs nothing and bounds a re-opened overlay to a blink.
    */
-  private enforceDiagnosticsPolicy(): void {
-    if (this.diagnosticsEnabled()) return;
-
-    if (MemoryProfiler.isOverlayVisible) {
-      MemoryProfiler.hideOverlay();
-      console.warn('[ViewerComponent] Scenario opened the profiler overlay; closed it (no ?diag=1).');
+  private watchProfiler(): void {
+    if (enforceProfilerOff()) {
+      console.warn('[ViewerComponent] Scenario opened the profiler; closed it.');
     }
+    this.armProfilerGuard();
+  }
+
+  /**
+   * Shuts the gate and starts the periodic re-check (once per component). Called at load *start*, not
+   * only after success: a scenario's entry point runs during the load, so one that re-opens the gate
+   * and then fails or stalls would otherwise stay open until the component is destroyed.
+   */
+  private armProfilerGuard(): void {
+    lockProfiler();
+    this.profilerGuard ??= setInterval(enforceProfilerOff, PROFILER_GUARD_INTERVAL_MS);
   }
 
   // ==================== VIEWER CONTROLS ====================
@@ -436,27 +458,6 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     this.telemetry.endSession();
   };
 
-  /**
-   * Engine-provided overlay: FPS, CPU frame time, VRAM estimates.
-   *
-   * Guarded as well as hidden. The template does not render the button without
-   * the flag, but a stale DOM node or a console call must not be able to start
-   * sampling either.
-   */
-  toggleDiagnostics(): void {
-    if (!this.diagnosticsEnabled()) return;
-
-    MemoryProfiler.toggleOverlay();
-    this.diagnosticsVisible.set(MemoryProfiler.isOverlayVisible);
-  }
-
-  /** Accepts `1`, `true` or a bare `?flag`; anything else means off. */
-  private static readFlag(raw: string | null): boolean {
-    if (raw === null) return false;
-    const v = raw.toLowerCase();
-    return v === '' || v === '1' || v === 'true';
-  }
-
   /** After a context loss the engine cannot recover in place — reload the page. */
   reloadPage(): void {
     window.location.reload();
@@ -464,10 +465,12 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
   // ==================== UI HELPERS ====================
 
-  private setState(state: ViewerState, percent: number, label: string): void {
+  private setState(state: ViewerState, percent: number, stage: string): void {
     this.state.set(state);
     this.progressPercent.set(percent);
-    this.progressLabel.set(label);
+    this.stage.set(stage);
+    this.loadedBytes.set(null);
+    this.totalBytes.set(null);
     this.errorMessage.set(null);
   }
 
@@ -476,6 +479,12 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     this.errorMessage.set(message);
   }
 
+  /** HUD "Вийти" and the loader's "Скасувати": back to the scenario's own page. */
+  exit(): void {
+    void this.router.navigate(this.routeId ? ['/scenario', this.routeId] : ['/catalog']);
+  }
+
+  /** The error, unsupported and context-lost screens keep their way out: the catalog. */
   goBack(): void {
     void this.router.navigate(['/catalog']);
   }

@@ -45,9 +45,10 @@ could not be verified without a browser, it is marked ⚠ and listed in §7.
 | F6 | `loadToken` guard: a superseded load cannot overwrite a newer one | `viewer.component.ts` |
 | F7 | WebGL2 probe, context-loss handling | `viewer.component.ts` |
 | F8 | Restart from in-memory buffer (no re-download) | `restart()` |
-| F9 | Catalog UI: debounced search, load-more, placeholder fallback | `catalog.component.ts` |
-| F10 | Modal a11y: focus trap, Esc, focus restore | `onModalKeydown`, `openModal`/`closeModal` |
-| F11 | Theme persisted and applied to `<html>` | `catalog.component.ts` |
+| F9 | Catalog UI: debounced search, load-more, URL-backed filters, empty/error states | `catalog.component.ts` |
+| ~~F10~~ | ~~Modal a11y~~ — the modal is gone (release 1, phase 3); its job is done by the scenario page, F14 | — |
+| ~~F11~~ | ~~Theme persisted~~ — dark theme only; the test is now that no `theme` key is written | — |
+| F14 | Scenario page `/scenario/:id`: fields, hidden blocks, not-found/error, copy link | `pages/scenario/` |
 | F12 | Admin: token in `sessionStorage`, list/create/edit/publish/delete, upload progress | `admin.component.ts`, `admin.service.ts` |
 | F13 | Telemetry client: client id, start on running, end via `sendBeacon` | `telemetry.service.ts` |
 
@@ -119,10 +120,13 @@ Legend: **[U]** unit · **[I]** integration · **[C]** component · **[E]** E2E.
 
 **Happy path**
 1. [I] `GET /api/catalog` → 200, only published rows, `total` equals their count.
-2. [I] Response carries `categories` = distinct published categories, sorted by label.
+2. [I] Response carries `categories` = visible categories with at least one published scenario,
+   each `{category, categoryLabel, icon, count}`, in `sort_order` (changed by Nocturne release 1;
+   see §4.12 #100-101).
 3. [I] `?limit=2&offset=0` and `?limit=2&offset=2` return disjoint sets covering the page,
    stably across repeated calls (regression for §6.2).
-4. [I] `?category=astronomy` narrows `scenarios` and `total` but **not** `categories`.
+4. [I] `?category=astronomy` narrows `scenarios` and `total` but **not** `categories` or `summary`
+   (the unfiltered counts; see §4.12 #101).
 5. [I] `?q=соняч` matches case-insensitively on title and on description.
 6. [U] `ScenarioService.loadCatalog` replaces the held list; `loadMore` appends.
 
@@ -175,7 +179,8 @@ once, when it took the upstream URL from the client.
     original spec would have rejected every real archive).
 41. [U] ZIP signature check accepts `PK\x03\x04`, `PK\x05\x06`, `PK\x07\x08`; rejects a text file
     renamed to `.zip`.
-42. [I] Upload exceeding multer's `fileSize` → 413/400, no temp file left behind.
+42. [I] Upload exceeding `MAX_ARCHIVE_BYTES` → 413 (Ukrainian message), no temp file left behind;
+    exactly the limit is accepted (see §4.12 #107).
 43. [I] `…/archive/import` on a row already `local` → 409.
 44. [I] `…/archive/import` on a row with empty `scenario_url` → 400.
 45. [U] `cleanStaleTemp` removes files older than the cutoff and leaves fresh ones (an in-flight
@@ -232,11 +237,12 @@ once, when it took the upstream URL from the client.
 
 75. [C] Typing fires **one** request after the debounce window, not one per keystroke.
 76. [C] Changing category resets paging to offset 0.
-77. [C] Image error → placeholder; a failing placeholder does not loop.
-78. [E] Card is reachable by Tab and activates on Enter and Space.
-79. [E] Modal open moves focus into the dialog; Tab cycles within it; Shift+Tab from the first
-    element wraps to the last; Esc closes; focus returns to the originating card.
-80. [C] Theme persists across reload and toggles `dark-theme` on `<html>`.
+77. [C] Image error → fallback. Now: the card falls back to the category gradient
+    (`scenario-card.component.spec.ts`, #117), the scenario page likewise (#128).
+78. [E] Card title is reachable by Tab and opens the scenario page on Enter.
+79. ~~Modal focus trap~~ — **retired 2026-10-24 with the modal**; keyboard coverage of what replaced
+    it is #133.
+80. ~~Theme persists~~ — **retired with the theme toggle**; replaced by #127 (no `theme` key).
 
 ### 4.9 Admin (F12)
 
@@ -265,10 +271,191 @@ once, when it took the upstream URL from the client.
 95. [Static] `git ls-files` contains no `.env`; `.env.example` holds only placeholders.
 96. [Static] `nginx -t` passes.
 
+### 4.12 Nocturne release 1: catalog data and API (phase 1)
+
+Specs: `catalog-api.test.js`, `archive-limit.test.js`, unit `catalog-input.test.js`.
+
+99. [I] Migration 006 applied twice: one category per distinct scenarios.category, prototype
+    icons (folder otherwise), sort_order = Ukrainian label order x 10, features defaults [].
+100. [I] Catalog item carries archiveBytes (number, null without an archive), updatedAt,
+    features; categories.label beats the scenario's own label; categories are
+    {category, categoryLabel, icon, count} in sort_order; summary present.
+101. [I] summary and category count do not change with category/q; a category with
+    is_visible = false or only unpublished rows is absent from categories and
+    summary.categories, while its published scenarios still list.
+102. [I] sort=title orders Ґанок, Єнот, Іграшка, Їжак, Яблуко (and Latin titles) correctly;
+    sort=new is created_at DESC, id DESC; no sort equals new.
+103. [I] limit 0/1/100/101 and offset past the end under both sorts; pages disjoint and
+    complete; sort=, sort=DROP, sort[]=a&sort[]=b and similar fall back to new; q with
+    % / _ stays literal (a title containing 100% is found by 100%; this caught a
+    pre-existing ESCAPE clause that SQL read as an empty string).
+104. [I] related: same category first, newest first, at most 2, never itself, never unpublished,
+    topped up from other categories; empty for a one-scenario catalog.
+105. [I] GET /api/catalog/:id for an unpublished, unknown or %2F id -> 404.
+106. [I] GET /api/config -> 209715200 by default (fresh process), MAX_ARCHIVE_BYTES honoured,
+    junk value falls back to the default.
+107. [I] Archive of exactly the limit accepted; limit + 1 byte -> 413 and an empty temp dir; the row is
+    untouched; no token -> 401 before any size check; other multer failures -> 400.
+108. [I] Admin features accepted: 6 items, title 60, subtitle 90, subtitle absent, icon 40 chars;
+    PUT replaces, a PUT without features keeps them; admin list returns them.
+109. [I] Admin features rejected with 400: 7 items, icon Atom / ../x / 41 chars, empty or
+    61-char title, 91-char subtitle, non-array, item null; nothing is written.
+110. [I] An unknown slug creates its category (label from categoryLabel, else the slug) at max + 10;
+    a known slug keeps its label; a 404 or 409 leaves no category behind; non-array stored
+    features reads []; a slug without a category row still lists (no chip).
+111. [U] validateFeatures, parseSort (incl. __proto__/constructor), parseMaxArchiveBytes.
+
+### 4.13 Nocturne release 1: foundation (phase 2)
+
+Numbered in phase 3, which owns this document. Specs: `frontend/src/styles/nocturne-styles.spec.ts`,
+`frontend/src/app/ui/**`, `e2e/tests/nocturne-foundation.spec.ts`.
+
+112. [U] Tokens, component classes and keyframes carry the design file's values; the page ground is
+     #161826; no light theme rules remain (DW-2.1).
+113. [U] Every Inter face in the stylesheet points at a file that ships (DW-2.2, stylesheet half).
+114. [E] Inter is served from `/assets/fonts/`; no request leaves the origin (DW-2.2).
+115. [C] `<vl-icon>` draws every hosted icon from the generated path data, inherits colour and size,
+     falls back for an unknown name; the committed data equals what the generator produces (DW-2.3).
+116. [C] `<vl-site-header>` (both brand modes, slot order) and `<vl-site-footer>` (DW-2.4; since phase 5
+     the footer is the copyright bar only - see #147).
+117. [C] `<vl-scenario-card>` (open vs launch, gradient fallback), toast service and host (announced,
+     self-hiding), `categoryGradient` (stable per slug) (DW-2.4).
+118. [U] `formatBytes`, `formatDate` (Kyiv, own month names), `pluralUk` (DW-2.5).
+119. [E] The old `/admin` and the viewer error screen keep their computed look under the legacy scope
+     (DW-2.6).
+
+### 4.14 Nocturne release 1: catalog and scenario page (phase 3)
+
+Specs: `catalog-query.spec.ts`, `platform-config.service.spec.ts`, `scenario.service.spec.ts`,
+`catalog.component.spec.ts`, `scenario.component.spec.ts`, `admin.component.spec.ts`;
+`catalog-scenario-page.spec.ts`, `catalog-a11y.spec.ts`, `student-golden-path.spec.ts`,
+`admin-golden-path.spec.ts`.
+
+120. [U] The URL query ↔ filter conversion round-trips; defaults are dropped from the URL; junk,
+     repeats, unknown `sort`, over-long `q` fall back (DW-3.2).
+121. [U] `ScenarioService`: `sort=title` sent only when non-default; summary and chips with icon and
+     count in API order; chips survive a failed request; load more keeps the query (DW-3.1, DW-3.2).
+122. [U] Responses resolving out of order: the newest filter wins, an older failure shows no error,
+     an older answer does not end `loading`, a stale append is dropped (DW-3.2).
+123. ~~`PlatformConfigService`~~ - **retired 2026-10-26 (phase 5)**: the footer's archive limit was its
+     only consumer; `GET /api/config` stays on the backend (#111, API tests).
+124. [C] Catalog: header "Увійти"/"Панель", chips (icon, count, order, `aria-pressed`), "Знайдено N",
+     card grid (DW-3.1). The hero and the footer limit were removed in phase 5 (#147).
+125. [C] Catalog: sort segment drives `sort`; deep link → request; chip/sort/search write the URL
+     (search replaces history after the debounce); the search box is not overwritten mid-word; Back
+     and return from a scenario page reload the filter; load more keeps the query (DW-3.1, DW-3.2).
+126. [C] Catalog: no results → "Нічого не знайдено" (not flashed before the first answer), reset
+     clears the URL and the box; 500 → error state, retry reloads the same filter (DW-3.3).
+127. [C] Catalog: no dialog, no theme toggle, no `theme` key; card → `/scenario/:id`, "Запустити" →
+     `/play/:id` by id alone; a scenario without an archive opens its page (DW-3.6).
+128. [C] Scenario page: every field, meta table rows (version, author, size, updated, ID), features,
+     related links, breadcrumbs, `document.title`, logo-only header with back and crumbs; features
+     `[]`, related `[]`, no `scenarioUrl`, missing fields → their blocks absent; id with `/` and
+     Cyrillic encoded (DW-3.4).
+129. [C] Scenario page: 404 → not-found, 500 / network → error and retry, loading state, an answer for
+     an id the visitor left is dropped; "Каталог" returns with the filter (DW-3.4, DW-3.2).
+130. [C] Copy link: clipboard ok → absolute URL + toast; Clipboard API missing or rejected → readonly
+     selected input, no toast (DW-3.5). The download link was removed in phase 5 (#147).
+131. [C] `/admin` editor: add up to six entries (seventh blocked), icons from `ICON_NAMES`, edit and
+     remove, empty subtitle dropped on save, existing entries copied not shared, server 400 shown
+     (DW-3.8).
+132. [E] Student golden path through the scenario page (filter → search → page → Back keeps the query
+     → launch → viewer); real counters equal the API; URL round trip and Back (DW-3.1, DW-3.2, DW-3.10).
+133. [E] Keyboard: chips are buttons with `aria-pressed` (Enter, Space); sort radios (arrows) request
+     the order; Tab on the scenario page reaches "Запустити симуляцію" (DW-3.10).
+134. [E] 390 × 844: no horizontal page scroll on either page, chips scroll on their own, the scenario
+     page's launch bar stays in view (DW-3.7).
+135. [E] Loading the catalog and a scenario page makes no off-origin request (DW-3.9).
+136. [E] Admin golden path with a "Що всередині" entry that reaches the scenario page; seventh entry
+     blocked; server 400 shown and nothing created (DW-3.8, DW-3.10).
+137. [E] Catalog empty state and error state with retry against the real stack (DW-3.3).
+
+#### Viewer — loading screen and HUD (release 1, phase 4)
+
+138. [U] `viewer-format.spec.ts`: the byte line — known total ("3,2 з 48,2 МБ"), unknown total (0 / null /
+     NaN gives "X МБ"), loaded greater than total (total dropped, never "5 з 3"), no archive (empty);
+     `readFlag` (`?diag` / `?stream` parsing, moved out of `ViewerComponent` unchanged) (DW-4.1, DW-4.7).
+139. [U] `viewer-loading.component.spec.ts`: inputs → percent, title, byte line, stage, bar and ring offset
+     (percent clamped, NaN → 0); byte line hidden without a download; "Скасувати" emits `cancel`
+     (DW-4.1, DW-4.7).
+140. [U] `viewer-hud.component.spec.ts`: exit, title, restart / fullscreen with Ukrainian `aria-label`s; FPS
+     slot only when `fps` is a number (0 counts); pause button and the "Space — пауза" hint only with
+     `canPause` (label swaps while paused); every button fires its output; restart disabled, not
+     hidden, without `canRestart`; **Space does nothing in the page** (pause arrives with player-isolation
+     phase 5) (DW-4.2, DW-4.4, DW-4.7).
+141. [E] `viewer.spec.ts`: loading screen (ring percent, title, "Завантаження архіву — X з Y МБ", stage,
+     "Скасувати") then the HUD; "Скасувати" aborts the archive `fetch` and lands on `/scenario/:id`
+     (DW-4.1).
+142. [E] `viewer.spec.ts`: HUD at 1440 px — aria-labels, no pause button and no FPS slot, hints without
+     Space, "Вийти" → `/scenario/:id`; at 390 px the hints are hidden and exit / title / buttons stay
+     inside the viewport without overlapping (DW-4.2).
+143. [E] `viewer.spec.ts`: restart on a ZIP run is enabled and re-runs from the buffer (second telemetry
+     launch, one archive request); `streaming.spec.ts`: disabled with `?stream=1` (DW-4.4).
+144. [E] `viewer.spec.ts`: unknown scenario → Nocturne error panel with its way back; no WebGL 2 → Nocturne
+     panel (Inter, `--color-bg`); forced context loss → panel with "Перезавантажити" (existing test, F7)
+     (DW-4.5).
+
+#### Trimmed pages and the profiler switched off (release 1, phase 5)
+
+Specs: `viewer-profiler.spec.ts`, `viewer.component.spec.ts`, `viewer-hud.component.spec.ts`,
+`site-footer.component.spec.ts`, `catalog.component.spec.ts`, `scenario.component.spec.ts`;
+`viewer.spec.ts`, `catalog-scenario-page.spec.ts`.
+
+145. [E] `viewer.spec.ts`: solar-system, with and without `?diag=1`, shows no profiler overlay (no
+     `#webengine-profiler`, `isOverlayVisible` false, gate shut) now and 2.5 s later; Backquote opens
+     nothing; `?diag=1` shows the build stamp; a scenario that re-opens the gate and the overlay after
+     load is shut again; no diagnostics button in the HUD (DW-5.3).
+146. [E] `catalog-scenario-page.spec.ts`: no `.hero` on `/`, no `.footer-inner`, copyright bar present, no
+     admin link in the footer, `/admin` reachable by URL (DW-5.1); the scenario page has no download link
+     and no `.launch-note`, "Копіювати посилання" toasts and the launch button opens `/play/:id`
+     (DW-5.2).
+147. [C] Catalog: no `.hero`; footer: no `.footer-inner`, no admin link, no ZIP note, copyright bar from
+     `site.config.ts`; scenario page: no `.download` / `a[download]`, no `.launch-note`, launch button
+     stays (DW-5.1, DW-5.2).
+148. [U] `viewer-profiler.spec.ts` (real `MemoryProfiler`): `lockProfiler` shuts the gate, a locked gate
+     makes `showOverlay` / `toggleOverlay` / `enableToggle` and Backquote inert, `enforceProfilerOff`
+     closes an open overlay and a re-opened gate, idempotent; `viewer.component.spec.ts`: the viewer sets
+     `diagnosticsAllowed = false` on init without and **with** `?diag=1`, `?diag=1` renders only the build
+     stamp, no `toggleDiagnostics`, destroy leaves it shut; HUD: no diagnostics output (DW-5.3).
+
+#### Viewer — load pipeline and restart, unit (release 1, phase 4 fix-forward)
+
+`viewer-lifecycle.spec.ts`, with the engine (`createApplication` seam, `supportsWebGL2` stub) and
+`ScenarioService` / `TelemetryService` replaced by doubles.
+
+149. [U] `exit()`: `/scenario/:id` with a route id (also after a failed lookup), `/catalog` without one; the
+     loader's "Скасувати" exits and destroying the view aborts the archive download without showing an error
+     (DW-4.1, DW-4.2).
+150. [U] `canRestart` and the HUD restart button: ZIP run enabled; streamed run (`?stream=1`) disabled, and
+     `restart()` there does nothing; `?stream=1` without a `manifestUrl` falls back to the ZIP; false after
+     context loss and while a restart is loading (DW-4.4).
+151. [U] `restart()`: same buffer re-run, one download, second telemetry launch; engine failure → error screen
+     (Error and non-Error); no-op before an archive has loaded (DW-4.4).
+152. [U] `setState` byte-signal reset and the loader feed: fetch stage with bytes and ring percent, "N з N" in the
+     engine stage, everything reset on running; unknown total; streamed run keeps the byte signals null
+     (DW-4.1).
+153. [U] Failures and stale loads: lookup failure, missing archive, failed download, ZIP and streamed engine
+     failure (no telemetry launch), a superseded restart cannot overwrite a newer result (DW-4.5).
+
+#### Viewer — profiler lock and guard, unit (release 1, phase 5 fix-forward)
+
+Same harness; only the guard's `setInterval`/`clearInterval` are faked (`vi.useFakeTimers({ toFake })`).
+
+154. [U] `diagnosticsAllowed` is false at the moment the engine receives each load (ZIP, streamed, restart),
+     with and without `?diag=1`, even when the test opened the gate first; `?diag=1` still shows the build
+     stamp with the gate shut (DW-5.3).
+155. [U] A scenario that re-opened the gate during load (ZIP and streamed) is closed the moment the run starts,
+     with a warning; a well-behaved scenario produces none (DW-5.3).
+156. [U] The 1000 ms guard: a re-opened gate stays open at 999 ms and is closed at 1000 ms; an opened overlay is
+     hidden; repeats on later ticks; one interval across load and restarts; armed at load start so a load
+     that re-opens the gate and then fails is still closed on the tick; none before a load begins (DW-5.3).
+157. [U] Destroy: `clearInterval` fires, no timer remains, a gate re-opened afterwards is not re-closed, the
+     gate is left shut, and a streamed load still in flight cannot re-arm the guard (DW-5.3).
+
 ### 4.11 Golden paths (E2E)
 
-97. **Student**: open `/` → filter by category → search → open a scenario → progress ring advances
-    from 0 to 100 → scene renders → back to catalog. Assert a telemetry row was created and closed.
+97. **Student**: open `/` → filter by category → search → open the scenario page (`/scenario/:id`) →
+    launch → progress ring advances from 0 to 100 → scene renders → back to catalog. Assert a telemetry row was created and closed.
 98. **Teacher/admin**: `/admin` → enter token → create scenario → upload archive → publish →
     it appears in the public catalog and plays → delete.
 
@@ -346,7 +533,7 @@ build is clean. They were the argument for the Playwright layer, and `e2e/` is n
 | WebGL2-unavailable message (F7) | `viewer.spec.ts` — `getContext('webgl2')` stubbed to null |
 | Context-loss overlay after `WEBGL_lose_context` (F7) | `viewer.spec.ts` |
 | Fullscreen toggle and the `MemoryProfiler` overlay (F8) | `viewer.spec.ts` |
-| Modal focus trap, Esc, focus restoration (F10) | `catalog-a11y.spec.ts` |
+| ~~Modal focus trap, Esc, focus restoration (F10)~~ | modal removed; `catalog-a11y.spec.ts` now tests chips, sort radios and the scenario page (#133) |
 | Orientation hint on a portrait viewport (F9) | `viewer.spec.ts`, `catalog-a11y.spec.ts` |
 | The `/admin` screen itself (F12) | `admin-golden-path.spec.ts` |
 | `sendBeacon` firing on tab close (F13) | `student-golden-path.spec.ts` — asserted on the request |
@@ -367,7 +554,10 @@ Two things the browser layer found immediately, neither of which any unit test c
 
 Note on the progress ring: it is **not** one continuous 0→100 ramp, and asserting that was wrong.
 `progressPercent` is shared by two phases — the archive download, then the engine unpacking it —
-and restarts between them. The test asserts monotonicity within each phase.
+and restarts between them. The test asserts monotonicity within each phase (told apart by the stage
+label: "Отримання даних із сервера" vs "Ініціалізація сцени"). Release 1 phase 4: the HUD no longer
+has a diagnostics button, so the old "button toggles the overlay" test became "no button, and with
+`?diag=1` the scenario's own overlay is left open".
 
 ---
 

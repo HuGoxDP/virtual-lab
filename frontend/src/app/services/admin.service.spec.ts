@@ -19,6 +19,7 @@ const DRAFT: ScenarioDraft = {
   imageUrl: '',
   version: '1.0.0',
   author: '',
+  features: [],
 };
 
 describe('AdminService', () => {

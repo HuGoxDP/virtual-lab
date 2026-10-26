@@ -45,6 +45,33 @@ deliberately different sets: engine texture objects, uploaded or not, versus GPU
 Until then this platform's choice stands: do **not** default to the manifest path — see
 [`../PLAN.md`](../PLAN.md#progress).
 
+### 6. `Time.timeScale` survives `Application.dispose()` and the next scenario load (G5)
+
+Found against `0.1.0-local.1792706134341`; shared-index row **G5** in `../../../.claude-shared/ENGINE-GAPS.md`.
+
+`Time` is a static class. Its `timeScale` setter (`WebEngineTS/src/engine/core/Time.ts:201`) writes
+a static, and the only routine that puts it back to `1.0` is `Time._reset()`
+(`WebEngineTS/src/engine/core/Time.ts:280`, `@internal`, "Useful for testing or scene reloads").
+**Nothing calls it**: `grep -rn "Time\._reset" WebEngineTS/src` finds no caller outside the method's
+own definition, whereas the sibling statics (`Profiler._reset()`, `AudioManager._reset()`) are called
+from `Application`. So a scenario that pauses or slows time (`Time.timeScale = 0`) leaves that scale
+behind through `dispose()` and the next `loadScenarioFrom*` in the same page — the next scenario
+starts frozen or slowed.
+
+**What is affected:** any host that runs more than one scenario per page load. This platform's viewer
+is a single-page app: leaving `/play/a` and opening `/play/b` reuses the same JS realm and the same
+`Time` statics.
+
+**What the platform does about it:** nothing page-side, on purpose. As of release 1 phase 4 the viewer
+carries no `Time.timeScale` write and no reset — pause, FPS and the scale reset were deliberately not
+built in the page. The platform's fix is **a fresh player frame per run** (the isolated player,
+`WebEngineTS/player-host`, plan `2026-10-24-player-isolation.md` phase 5): every scenario then starts in
+a new JS realm with a new `Time`, so the scale cannot leak, whatever the engine does. Until that ships,
+a scale set by one scenario can carry into the next one opened in the same tab.
+
+**What is asked of the engine (optional, it does not block the platform):** call `Time._reset()` from
+`Application.dispose()` (or at the start of a scenario load), so a host that reuses the page is also safe.
+
 ---
 
 ## Closed

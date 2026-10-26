@@ -46,7 +46,7 @@ async function prepareSchema(pool) {
 }
 
 async function truncateAll(pool) {
-  await pool.query('TRUNCATE scenarios, scenario_sessions RESTART IDENTITY CASCADE');
+  await pool.query('TRUNCATE scenarios, scenario_sessions, categories RESTART IDENTITY CASCADE');
 }
 
 /**
@@ -57,6 +57,14 @@ async function truncateAll(pool) {
  * `id` tiebreaker in the catalog query exists for.
  */
 async function seedScenarios(pool) {
+  // Same shape migration 006 seeds: label order x 10, prototype icons.
+  await pool.query(`
+    INSERT INTO categories (slug, label, icon, sort_order) VALUES
+      ('astronomy', 'Астрономія', 'planet',    10),
+      ('biology',   'Біологія',   'dna',       20),
+      ('physics',   'Фізика',     'lightning', 30)
+  `);
+
   await pool.query(`
     INSERT INTO scenarios
       (id, title, description, category, category_label, scenario_url, is_published, created_at)

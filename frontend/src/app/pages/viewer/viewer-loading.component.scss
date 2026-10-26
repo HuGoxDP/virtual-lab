@@ -1,0 +1,100 @@
+// path: src/app/pages/viewer/viewer-loading.component.scss
+
+:host {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: block;
+  background: var(--color-bg);
+}
+
+.cancel {
+  position: absolute;
+  top: var(--space-6);
+  left: var(--space-6);
+  z-index: 3;
+  background: rgba(7, 8, 15, 0.7);
+}
+
+.center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.panel {
+  width: min(340px, 100%);
+  text-align: center;
+}
+
+.ring {
+  position: relative;
+  width: 122px;
+  height: 122px;
+  margin: 0 auto var(--space-8);
+
+  svg {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+  }
+
+  circle {
+    fill: none;
+    stroke-width: 4;
+  }
+
+  .track { stroke: rgba(233, 233, 237, 0.08); }
+
+  .progress {
+    stroke: var(--color-accent);
+    stroke-linecap: round;
+    stroke-dasharray: 264;
+    transition: stroke-dashoffset 0.12s linear;
+  }
+}
+
+.loader-percent {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-heading);
+  font-size: 27px;
+  font-variant-numeric: tabular-nums;
+}
+
+.loader-title {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+
+.loader-bytes {
+  font-size: 12.5px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  height: 3px;
+  margin: var(--space-6) 0;
+  background: rgba(233, 233, 237, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+
+  .fill {
+    height: 100%;
+    background: var(--color-accent);
+    border-radius: 2px;
+    transition: width 0.12s linear;
+  }
+}
+
+.loader-stage {
+  font-size: 11.5px;
+  color: color-mix(in srgb, var(--color-text) 62%, transparent);
+}

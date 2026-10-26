@@ -1,0 +1,61 @@
+// path: src/styles/_legacy.scss
+//
+// Scope for the pages that are not on Nocturne yet. DELETE this file with them:
+//   * `.legacy-admin` (the old /admin) goes in release 2;
+//   * (the catalog left this list in release 1, phase 3; the viewer in release 1, phase 4)
+//
+// The old admin defines its own `.btn`, `.btn-primary`, `.btn-ghost` and `.tag` in a component
+// stylesheet. A component rule is (0,2,0) and always beats a global class, but it only sets the
+// properties it cares about: everything else Nocturne's class sets (justify-content, weight,
+// letter-spacing ...) would leak in. Everything here is wrapped in `:where()` so it adds no
+// specificity: it wins over a Nocturne rule of the same weight by coming later, and loses to any
+// component rule — it only ever fills the gaps with the value the old page had.
+
+$legacy-font: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+$legacy-hosts: 'app-admin';
+
+// Pages used to inherit these from the old body; Nocturne's body is Inter 15px/1.55.
+:where(#{$legacy-hosts}) {
+  font-family: $legacy-font;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #1a1a2e;
+}
+
+// Only the host is wrapped in :where(): the element selectors keep their own weight, so they tie with
+// Nocturne's `h1`, `p`, `a` and win by coming later.
+:where(#{$legacy-hosts}) {
+  h1, h2, h3, h4, h5, h6 {
+    font-family: revert;
+    font-size: revert;
+    font-weight: revert;
+    line-height: revert;
+    letter-spacing: revert;
+    text-transform: revert;
+    margin: 0;
+  }
+
+  p { margin: 0; }
+
+  a,
+  a:hover {
+    color: inherit;
+    text-decoration: none;
+  }
+}
+
+// Component classes the old admin shares by name with Nocturne.
+:where(.legacy-admin) {
+  .btn {
+    justify-content: normal;
+    font-family: inherit;
+    font-weight: 400;
+    line-height: revert;
+    text-decoration: none;
+  }
+
+  .tag {
+    align-items: normal;
+    letter-spacing: normal;
+  }
+}

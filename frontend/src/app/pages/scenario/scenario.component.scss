@@ -1,0 +1,126 @@
+// path: src/app/pages/scenario/scenario.component.scss
+// Prototype screen 2b. Tokens only; layout lives here.
+
+:host { display: block; min-height: 100vh; background: var(--color-bg); }
+
+$gutter: clamp(14px, 4vw, 40px);
+// Below this the sidebar drops under the content and the sticky launch bar takes over (prototype: 860).
+$narrow: 859px;
+
+// ── header slots ──
+.back { flex: none; text-decoration: none; }
+.crumbs {
+  display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; overflow: hidden;
+  color: color-mix(in srgb, var(--color-text) 66%, transparent);
+}
+.crumb-sep { opacity: 0.5; }
+.crumb-category { white-space: nowrap; }
+.crumb-title { color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+// ── states ──
+.state {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-4);
+  padding: 96px 20px; text-align: center; min-height: 50vh; justify-content: center;
+  > vl-icon { color: color-mix(in srgb, var(--color-text) 34%, transparent); }
+}
+.state-title { margin: 0; font-family: var(--font-heading); font-size: 18px; letter-spacing: 0; }
+.state-text { margin: 0; max-width: 44ch; font-size: 13px; line-height: 1.6; }
+.spinner {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 2px solid var(--color-divider); border-top-color: var(--color-accent);
+  animation: vl-orbit 0.8s linear infinite;
+}
+
+// ── banner ──
+.banner { position: relative; height: clamp(180px, 26vw, 300px); overflow: hidden; }
+.banner-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.banner-fade {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, var(--color-bg) 2%, rgba(22, 24, 38, 0.5) 46%, transparent);
+}
+
+// ── body ──
+.layout {
+  position: relative; display: flex; flex-wrap: wrap; align-items: flex-start;
+  gap: clamp(20px, 3vw, 44px); max-width: 1180px; margin: clamp(-70px, -7vw, -48px) auto 0;
+  padding: 0 $gutter 64px;
+}
+.content { flex: 1 1 380px; min-width: 0; animation: vl-rise 0.3s ease both; }
+.kicker { letter-spacing: 0.14em; }
+.title {
+  margin: var(--space-3) 0 var(--space-4); font-size: clamp(26px, 4vw, 42px); line-height: 1.1;
+  letter-spacing: -0.02em; text-wrap: balance; overflow-wrap: anywhere;
+}
+.byline {
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); margin-bottom: var(--space-8);
+  font-size: 12.5px; color: color-mix(in srgb, var(--color-text) 66%, transparent);
+}
+.byline-item { display: inline-flex; align-items: center; gap: 6px; }
+.description {
+  margin: 0 0 var(--space-8); max-width: 66ch; font-size: clamp(14px, 1.6vw, 16px); line-height: 1.75;
+  color: color-mix(in srgb, var(--color-text) 88%, transparent); text-wrap: pretty;
+  white-space: pre-line; overflow-wrap: anywhere;
+}
+
+.block-title {
+  margin: 0 0 var(--space-4); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+}
+
+ul.features, ul.related { list-style: none; margin: 0 0 var(--space-8); padding: 0; display: grid; gap: var(--space-3); }
+ul.features { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+ul.related { grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); margin-bottom: 0; }
+
+.feature {
+  display: flex; gap: 11px; padding: var(--space-4); background: var(--color-surface); border-radius: var(--radius-md);
+}
+.feature-icon { font-size: 19px; color: var(--color-accent); }
+.feature-text { min-width: 0; }
+.feature-title { font-size: 13.5px; margin-bottom: 2px; overflow-wrap: anywhere; }
+.feature-sub { font-size: 11.5px; line-height: 1.45; overflow-wrap: anywhere; }
+
+.related-item {
+  display: flex; gap: 11px; align-items: center; padding: var(--space-3); font-size: 13px;
+  color: var(--color-text); background: var(--color-surface); border: 1px solid transparent;
+  border-radius: var(--radius-md); text-decoration: none;
+  &:hover { border-color: var(--color-accent); color: var(--color-text); }
+}
+.related-thumb {
+  position: relative; width: 44px; height: 36px; flex: none; overflow: hidden; border-radius: var(--radius-sm);
+  img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+}
+.related-text { min-width: 0; }
+.related-title, .related-category { display: block; }
+.related-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.related-category { font-size: 11px; color: color-mix(in srgb, var(--color-text) 60%, transparent); }
+
+// ── sidebar ──
+.side {
+  flex: 0 1 300px; align-self: flex-start; position: sticky; top: 76px;
+  padding: var(--space-6); background: var(--color-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
+}
+.launch { font-size: 15px; min-height: 46px; margin-top: 0; }
+
+.meta { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; font-size: 12.5px; }
+.meta-row { display: flex; justify-content: space-between; gap: var(--space-4); }
+.meta dt, .meta dd { margin: 0; }
+.meta dd { text-align: right; overflow-wrap: anywhere; }
+.meta dd.mono { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+
+.side-actions { display: flex; gap: var(--space-2); }
+.copy { flex: 1; font-size: 12.5px; }
+.manual-link { margin-top: var(--space-3); font-size: 12px; }
+
+// The launch bar exists only on a narrow screen, where it keeps the main action in thumb reach.
+.launch-bar {
+  display: none; position: sticky; bottom: 0; z-index: 20; padding: var(--space-3) $gutter;
+  background: rgba(22, 24, 38, 0.94); backdrop-filter: blur(14px); border-top: 1px solid var(--color-divider);
+  .btn { min-height: 48px; font-size: 15px; margin-top: 0; }
+}
+
+@media (max-width: $narrow) {
+  .side { position: static; flex: 1 1 100%; }
+  .launch-bar { display: block; }
+  // The sidebar's own button would be a second copy of the bar's.
+  .side .launch, .side .launch + .hr { display: none; }
+}

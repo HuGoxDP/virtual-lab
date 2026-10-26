@@ -1,0 +1,35 @@
+// path: src/app/ui/site-header/site-header.component.scss
+
+.site-header {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-4) var(--space-6);
+  padding: var(--space-3) clamp(14px, 4vw, 40px);
+  background: rgba(22, 24, 38, 0.86); backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.brand {
+  display: flex; align-items: center; gap: 10px; margin-right: auto; min-width: 0;
+  color: inherit; text-decoration: none;
+}
+.brand-text { min-width: 0; }
+.brand-name {
+  display: block; font-family: var(--font-heading); font-weight: 500; font-size: 17px;
+  letter-spacing: -0.01em; line-height: 1.2; white-space: nowrap;
+}
+.brand-sub {
+  display: block; font-size: 11px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: color-mix(in srgb, var(--color-text) 62%, transparent);
+}
+
+// The slots are transparent wrappers in `full`, so what a page projects (a search field with its own
+// flex-basis, an account button) lays out as a direct child of the header, exactly as in the prototype.
+.slot-start, .slot-end { display: contents; }
+
+.is-logo-only {
+  gap: var(--space-4);
+  .slot-start {
+    display: flex; align-items: center; gap: var(--space-4); flex: 1 1 0; min-width: 0; overflow: hidden;
+  }
+}

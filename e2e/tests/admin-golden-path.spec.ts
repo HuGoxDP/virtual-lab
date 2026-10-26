@@ -1,7 +1,7 @@
 // e2e/tests/admin-golden-path.spec.ts
 //
-// test-plan.md §4.11 #98 and §7 (F12): the whole publishing round trip driven
-// through the UI — token, create, upload, publish, it appears for students and
+// test-plan.md §4.11 #98 and §7 (F12), and #136 (release 1, phase 3: DW-3.8, DW-3.10): the whole
+// publishing round trip driven through the UI — token, create, upload, publish, it appears for students and
 // plays, then delete.
 //
 // Every endpoint behind this screen is covered by the backend suite. The screen
@@ -71,6 +71,12 @@ test.describe('admin golden path', () => {
       await editor.locator('textarea').nth(0).fill('Створено автотестом.');
       await editor.locator('textarea').nth(1).fill('Рядок каталогу, створений e2e-тестом.');
 
+      // "Що всередині": one entry, with an icon picked from the hosted set.
+      await editor.getByRole('button', { name: '+ Додати пункт' }).click();
+      await editor.getByLabel('Іконка пункту 1').selectOption('atom');
+      await editor.getByLabel('Заголовок пункту 1').fill('Е2Е-пункт');
+      await editor.getByLabel('Підпис пункту 1').fill('Додано з форми');
+
       await page.getByRole('button', { name: 'Зберегти' }).click();
       created = true;
 
@@ -94,6 +100,12 @@ test.describe('admin golden path', () => {
           { message: 'the scenario should be reachable in the public catalog' })
         .toBe(200);
 
+      // The entry reaches the student's scenario page.
+      await page.goto(`/scenario/${id}`);
+      await expect(page.locator('.feature')).toHaveCount(1);
+      await expect(page.locator('.feature')).toContainText('Е2Е-пункт');
+      await expect(page.locator('.feature')).toContainText('Додано з форми');
+
       // ── it plays ──────────────────────────────────
       await page.goto(`/play/${id}`);
       await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
@@ -116,6 +128,41 @@ test.describe('admin golden path', () => {
         .toBe(404);
     } finally {
       if (created) await deleteScenario(id);
+    }
+  });
+
+  test('DW-3.8 up to six "Що всередині" entries; a seventh is blocked', async ({ page }) => {
+    await signIn(page);
+    await page.getByRole('button', { name: '+ Новий сценарій' }).click();
+
+    const add = page.getByRole('button', { name: '+ Додати пункт' });
+    for (let i = 0; i < 6; i++) await add.click();
+
+    await expect(page.locator('.feature-row')).toHaveCount(6);
+    await expect(add).toBeDisabled();
+  });
+
+  test('DW-3.8 a server 400 on the entries is shown with the server\'s own message', async ({ page }) => {
+    const id = uniqueScenarioId('badfeat');
+    try {
+      await signIn(page);
+      await page.getByRole('button', { name: '+ Новий сценарій' }).click();
+
+      const editor = page.locator('.editor');
+      await editor.locator('input').nth(0).fill(id);
+      await editor.locator('input').nth(1).fill('Погані пункти');
+      await editor.locator('input').nth(2).fill('test');
+      await editor.locator('input').nth(3).fill('Test');
+      await editor.getByRole('button', { name: '+ Додати пункт' }).click(); // left with an empty title
+
+      await page.getByRole('button', { name: 'Зберегти' }).click();
+
+      await expect(page.locator('.banner-error')).toContainText('features[0].title');
+      // Nothing was created, and the editor stays open so the input is not lost.
+      await expect(page.locator('.editor')).toBeVisible();
+      expect((await fetch(`${BASE_URL}/api/catalog/${encodeURIComponent(id)}`)).status).toBe(404);
+    } finally {
+      await deleteScenario(id);
     }
   });
 
