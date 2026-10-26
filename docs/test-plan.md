@@ -437,6 +437,21 @@ Specs: `viewer-profiler.spec.ts`, `viewer.component.spec.ts`, `viewer-hud.compon
 153. [U] Failures and stale loads: lookup failure, missing archive, failed download, ZIP and streamed engine
      failure (no telemetry launch), a superseded restart cannot overwrite a newer result (DW-4.5).
 
+#### Viewer — profiler lock and guard, unit (release 1, phase 5 fix-forward)
+
+Same harness; only the guard's `setInterval`/`clearInterval` are faked (`vi.useFakeTimers({ toFake })`).
+
+154. [U] `diagnosticsAllowed` is false at the moment the engine receives each load (ZIP, streamed, restart),
+     with and without `?diag=1`, even when the test opened the gate first; `?diag=1` still shows the build
+     stamp with the gate shut (DW-5.3).
+155. [U] A scenario that re-opened the gate during load (ZIP and streamed) is closed the moment the run starts,
+     with a warning; a well-behaved scenario produces none (DW-5.3).
+156. [U] The 1000 ms guard: a re-opened gate stays open at 999 ms and is closed at 1000 ms; an opened overlay is
+     hidden; repeats on later ticks; one interval across load and restarts; armed at load start so a load
+     that re-opens the gate and then fails is still closed on the tick; none before a load begins (DW-5.3).
+157. [U] Destroy: `clearInterval` fires, no timer remains, a gate re-opened afterwards is not re-closed, the
+     gate is left shut, and a streamed load still in flight cannot re-arm the guard (DW-5.3).
+
 ### 4.11 Golden paths (E2E)
 
 97. **Student**: open `/` → filter by category → search → open the scenario page (`/scenario/:id`) →

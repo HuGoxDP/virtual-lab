@@ -4,6 +4,10 @@
 // exit and byte-signal reset, driven with the engine and the services replaced by doubles (jsdom has no
 // WebGL2). Seams: `ViewerComponent.supportsWebGL2` is stubbed to true and the protected
 // `createApplication` returns a fake `Application`. DW-4.1, DW-4.2, DW-4.4.
+//
+// Release 1, phase 5 fix-forward - test-plan scenarios 154-157: the profiler gate before each load path
+// (ZIP, streamed, restart; with and without ?diag=1), the post-load enforce, the 1000 ms guard, the guard
+// armed at load start, and its clear on destroy. DW-5.3.
 
 import { TestBed, ComponentFixture } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
@@ -402,6 +406,227 @@ describe('ViewerComponent load pipeline (scenarios 149-153)', () => {
       slow.resolve(); // the stale one finishes afterwards and must not flip it back to running
       await first;
       expect(viewer.state()).toBe('error');
+    });
+  });
+
+  describe('154-157 profiler lock and guard', () => {
+    // Only the guard's interval is faked: `vi.waitFor` and the promise chain keep real time.
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] }); });
+    afterEach(() => {
+      TestBed.resetTestingModule(); // destroys the fixture while the fake clock is still installed
+      vi.useRealTimers();
+    });
+
+    // `vi.waitFor` advances fake timers while it polls, which would tick the guard under the test's feet.
+    const settle = async (f: ComponentFixture<ViewerComponent>, check: () => boolean) => {
+      for (let i = 0; i < 200 && !check(); i++) await new Promise<void>(r => setTimeout(r));
+      expect(check()).toBe(true);
+      f.detectChanges();
+    };
+    const running = (f: ComponentFixture<ViewerComponent>) => settle(f, () => f.componentInstance.state() === 'running');
+    const until = settle;
+
+    /** Spy on the guard's own interval (the 1000 ms one); other faked timers are not ours to count. */
+    const guardIntervals = () => vi.spyOn(globalThis, 'setInterval');
+    const guardCalls = (spy: ReturnType<typeof guardIntervals>) => spy.mock.calls.filter(c => c[1] === 1000);
+
+    /** Records the gate at the moment the engine is asked to load. */
+    const gateAtLoad = (seen: boolean[]) => async () => { seen.push(MemoryProfiler.diagnosticsAllowed); };
+
+    describe('154 the gate is shut before every load path, with and without ?diag=1', () => {
+      for (const query of [{}, { diag: '1' }] as Record<string, string>[]) {
+        const label = 'diag' in query ? 'with ?diag=1' : 'without ?diag=1';
+
+        it(`DW-5.3 ZIP load ${label}`, async () => {
+          const seen: boolean[] = [];
+          const { fixture } = setup({ query, arrange: d => d.app.loadScenarioFromBuffer.mockImplementation(gateAtLoad(seen)) });
+          await running(fixture);
+          expect(seen).toEqual([false]);
+        });
+
+        it(`DW-5.3 streamed load ${label}`, async () => {
+          const seen: boolean[] = [];
+          const { fixture } = setup({
+            query: { ...query, stream: '1' },
+            arrange: d => d.app.loadScenarioFromManifest.mockImplementation(gateAtLoad(seen)),
+          });
+          await running(fixture);
+          expect(seen).toEqual([false]);
+        });
+
+        it(`DW-5.3 restart ${label}`, async () => {
+          const seen: boolean[] = [];
+          const { fixture, viewer, app } = setup({ query });
+          await running(fixture);
+          MemoryProfiler.diagnosticsAllowed = true; // a scenario re-opened it while running
+          app.loadScenarioFromBuffer.mockImplementationOnce(gateAtLoad(seen));
+          await viewer.restart();
+          expect(seen).toEqual([false]);
+        });
+      }
+
+      it('DW-5.3 ?diag=1 still shows the build stamp while the gate stays shut', async () => {
+        const { fixture, viewer } = setup({ query: { diag: '1' } });
+        await running(fixture);
+        expect(viewer.buildStampVisible()).toBe(true);
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
+      });
+    });
+
+    describe('155 post-load enforcement', () => {
+      it('DW-5.3 a scenario that re-opened the gate during load is closed the moment it is running, with a warning', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const { fixture } = setup({
+          arrange: d => d.app.loadScenarioFromBuffer.mockImplementation(async () => { MemoryProfiler.diagnosticsAllowed = true; }),
+        });
+        await running(fixture);
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(false); // no timer has ticked
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('opened the profiler'));
+      });
+
+      it('DW-5.3 a streamed scenario that re-opened the gate during load is closed the moment it is running', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const { fixture } = setup({
+          query: { stream: '1' },
+          arrange: d => d.app.loadScenarioFromManifest.mockImplementation(async () => { MemoryProfiler.diagnosticsAllowed = true; }),
+        });
+        await running(fixture);
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
+      });
+
+      it('a well-behaved scenario produces no warning', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const { fixture } = setup();
+        await running(fixture);
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('opened the profiler'));
+      });
+    });
+
+    describe('156 the 1000 ms guard', () => {
+      it('DW-5.3 re-closes a gate re-opened while running, on the next 1000 ms tick and not before', async () => {
+        const { fixture } = setup();
+        await running(fixture);
+        MemoryProfiler.diagnosticsAllowed = true;
+        vi.advanceTimersByTime(999);
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(true);
+        vi.advanceTimersByTime(1);
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
+      });
+
+      it('DW-5.3 hides an overlay a running scenario opened', async () => {
+        const { fixture } = setup();
+        await running(fixture);
+        // jsdom has no canvas 2D context for the real overlay, so its visibility is simulated.
+        let visible = true;
+        vi.spyOn(MemoryProfiler, 'isOverlayVisible', 'get').mockImplementation(() => visible);
+        const hide = vi.spyOn(MemoryProfiler, 'hideOverlay').mockImplementation(() => { visible = false; });
+        vi.advanceTimersByTime(999);
+        expect(hide).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(1);
+        expect(hide).toHaveBeenCalled();
+        expect(visible).toBe(false);
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
+      });
+
+      it('keeps guarding on every later tick', async () => {
+        const { fixture } = setup();
+        await running(fixture);
+        for (let i = 0; i < 3; i++) {
+          MemoryProfiler.diagnosticsAllowed = true;
+          vi.advanceTimersByTime(1000);
+          expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
+        }
+      });
+
+      it('one interval serves the load and every restart', async () => {
+        const spy = guardIntervals();
+        const { fixture, viewer } = setup();
+        await running(fixture);
+        await viewer.restart();
+        await viewer.restart();
+        expect(guardCalls(spy)).toHaveLength(1);
+      });
+
+      it('DW-5.3 the guard runs from load start: a gate re-opened by a load that then fails is closed on the tick', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const { fixture, viewer } = setup({
+          arrange: d => d.app.loadScenarioFromBuffer.mockImplementation(async () => {
+            MemoryProfiler.diagnosticsAllowed = true;
+            throw new Error('entry point failed');
+          }),
+        });
+        await until(fixture, () => viewer.state() === 'error');
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(true);
+        vi.advanceTimersByTime(1000);
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
+      });
+
+      it('DW-5.3 the same for a streamed load that fails', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const { fixture, viewer } = setup({
+          query: { stream: '1' },
+          arrange: d => d.app.loadScenarioFromManifest.mockImplementation(async () => {
+            MemoryProfiler.diagnosticsAllowed = true;
+            throw new Error('entry point failed');
+          }),
+        });
+        await until(fixture, () => viewer.state() === 'error');
+        vi.advanceTimersByTime(1000);
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
+      });
+
+      it('no interval is started before a scenario load begins (lookup failure)', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const spy = guardIntervals();
+        const { fixture, viewer } = setup({ arrange: d => d.service.fetchScenarioById.mockRejectedValue(new Error('404')) });
+        await until(fixture, () => viewer.state() === 'error');
+        expect(guardCalls(spy)).toHaveLength(0);
+      });
+    });
+
+    describe('157 destroy clears the guard', () => {
+      it('DW-5.3 no interval remains and a gate re-opened after destroy is not re-closed', async () => {
+        const spy = guardIntervals();
+        const clear = vi.spyOn(globalThis, 'clearInterval');
+        const { fixture } = setup();
+        await running(fixture);
+        expect(guardCalls(spy)).toHaveLength(1);
+        const id = spy.mock.results[spy.mock.calls.findIndex(c => c[1] === 1000)].value;
+        expect(clear).not.toHaveBeenCalledWith(id);
+
+        fixture.destroy();
+        expect(clear).toHaveBeenCalledWith(id); // exactly the guard's interval is cleared
+        expect(vi.getTimerCount()).toBe(0);
+
+        MemoryProfiler.diagnosticsAllowed = true;
+        vi.advanceTimersByTime(5000);
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(true);
+      });
+
+      it('destroy leaves the gate shut', async () => {
+        const { fixture } = setup();
+        await running(fixture);
+        MemoryProfiler.diagnosticsAllowed = true;
+        fixture.destroy();
+        expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
+      });
+
+      it('a streamed load still in flight at destroy cannot re-arm the guard afterwards', async () => {
+        const spy = guardIntervals();
+        const hold = deferred<void>();
+        const { fixture, viewer } = setup({
+          query: { stream: '1' },
+          arrange: d => d.app.loadScenarioFromManifest.mockImplementationOnce(() => hold.promise),
+        });
+        await until(fixture, () => viewer.state() === 'loading-engine');
+        fixture.destroy();
+        expect(vi.getTimerCount()).toBe(0);
+        hold.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(vi.getTimerCount()).toBe(0);
+        expect(guardCalls(spy)).toHaveLength(1); // armed at load start only, never again after destroy
+      });
     });
   });
 });

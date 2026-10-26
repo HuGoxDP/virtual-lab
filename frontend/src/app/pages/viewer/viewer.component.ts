@@ -206,6 +206,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+    this.loadToken++; // a load still in flight is now stale: it must not re-arm the profiler guard
 
     // Stop streaming a possibly-large archive into a dead component.
     this.downloadAbort?.abort();
@@ -342,7 +343,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    */
   private async startStreaming(manifestUrl: string, token: number): Promise<void> {
     this.setState('loading-engine', 0, STAGE_ENGINE);
-    lockProfiler();
+    this.armProfilerGuard();
 
     try {
       if (!this.app) throw new Error('Engine not initialized');
@@ -379,7 +380,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
     if (!this.app) throw new Error('Engine not initialized');
 
-    lockProfiler();
+    this.armProfilerGuard();
     await this.app.loadScenarioFromBuffer(
       zipBuffer,
       (progress: IScenarioLoadProgress) => {
@@ -406,9 +407,17 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     if (enforceProfilerOff()) {
       console.warn('[ViewerComponent] Scenario opened the profiler; closed it.');
     }
-    if (this.profilerGuard === null) {
-      this.profilerGuard = setInterval(enforceProfilerOff, PROFILER_GUARD_INTERVAL_MS);
-    }
+    this.armProfilerGuard();
+  }
+
+  /**
+   * Shuts the gate and starts the periodic re-check (once per component). Called at load *start*, not
+   * only after success: a scenario's entry point runs during the load, so one that re-opens the gate
+   * and then fails or stalls would otherwise stay open until the component is destroyed.
+   */
+  private armProfilerGuard(): void {
+    lockProfiler();
+    this.profilerGuard ??= setInterval(enforceProfilerOff, PROFILER_GUARD_INTERVAL_MS);
   }
 
   // ==================== VIEWER CONTROLS ====================
