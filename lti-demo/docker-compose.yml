@@ -140,8 +140,13 @@ services:
       ADMIN_TOKEN: ${LTI_PLATFORM_ADMIN_TOKEN:-lti-demo-admin-token}
       # The backend calls https://moodle.lti.test (token endpoint, AGS) and must trust the demo CA.
       NODE_EXTRA_CA_CERTS: /certs/ca.crt
+      # LTI tool: public origin, the secret in the registration URL (demo value), key kept on a volume.
+      LTI_PUBLIC_URL: https://lab.lti.test
+      LTI_REGISTRATION_SECRET: ${LTI_REGISTRATION_SECRET:-lti-demo-registration-secret}
+      LTI_TOOL_KEY_FILE: /srv/lti/tool-key.pem
     volumes:
       - lti_platform_archives:/srv/archives
+      - lti_platform_lti:/srv/lti
       - lti_platform_assets:/srv/assets
       - ./certs:/certs:ro
     depends_on:
@@ -182,3 +187,4 @@ volumes:
   lti_platform_pgdata:
   lti_platform_archives:
   lti_platform_assets:
+  lti_platform_lti:

@@ -44,9 +44,15 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       PORT: ${API_PORT}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      # LTI 1.3 tool (optional; /api/lti answers 503 while LTI_PUBLIC_URL is empty). See .env.example.
+      LTI_PUBLIC_URL: ${LTI_PUBLIC_URL:-}
+      LTI_REGISTRATION_SECRET: ${LTI_REGISTRATION_SECRET:-}
+      LTI_TOOL_KEY_FILE: /srv/lti/tool-key.pem
     volumes:
       # Content-addressed archives. Written here, served by nginx.
       - virtual_lab_archives:/srv/archives
+      # The LTI tool's RSA key, generated on first start and kept across rebuilds.
+      - virtual_lab_lti:/srv/lti
       # Per-asset store for streamed scenarios — the same idea at a finer grain.
       - virtual_lab_assets:/srv/assets
     depends_on:
@@ -93,3 +99,5 @@ volumes:
     name: virtual_lab_archives
   virtual_lab_assets:
     name: virtual_lab_assets
+  virtual_lab_lti:
+    name: virtual_lab_lti

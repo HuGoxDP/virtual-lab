@@ -12,6 +12,7 @@ const { runMigrations } = require('./migrations');
 const storage = require('./storage');
 const { validateScenarioArchive } = require('./archive-validation');
 const { validateFeatures } = require('./catalog-input');
+const { createLtiRouter } = require('./lti');
 
 const app = express();
 
@@ -813,6 +814,10 @@ app.get('/api/telemetry/summary', requireAdmin, async (req, res) => {
     res.status(500).json({ error: 'Помилка сервера' });
   }
 });
+
+// ── LTI 1.3 tool (Moodle and other LMS platforms) ────
+// Its own module and router; answers 503 until LTI_PUBLIC_URL is set, and touches nothing else here.
+app.use('/api/lti', createLtiRouter({ pool, env: process.env }));
 
 // ── Health check ─────────────────────────────────────
 

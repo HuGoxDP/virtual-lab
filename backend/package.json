@@ -16,6 +16,7 @@
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "express-rate-limit": "^8.6.1",
+    "jose": "^6.2.13",
     "multer": "^2.2.0",
     "node-stream-zip": "^1.16.0",
     "pg": "^8.13.0"

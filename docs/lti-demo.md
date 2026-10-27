@@ -108,3 +108,59 @@ docker compose exec moodle-db mariadb -ubn_moodle -plti-demo-moodle-db bitnami_m
   `backend` `npm run publish:release` pointed at the stand before demonstrating a launch.
 - Moodle's init script (`moodle/seed.php`) runs once per Moodle volume (Bitnami marker); to re-run it:
   `docker compose exec moodle php /docker-entrypoint-init.d/10-seed.php`.
+
+## LTI registration and launch (Phase 4 backend)
+
+The platform backend is an LTI 1.3 tool (`backend/lti/`, mounted at `/api/lti`; env in `.env.example`). The stand sets
+`LTI_PUBLIC_URL=https://lab.lti.test`, `LTI_REGISTRATION_SECRET` (default `lti-demo-registration-secret`, override with
+`LTI_REGISTRATION_SECRET` in `lti-demo/.env`) and keeps the tool's RSA key on the `lti_platform_lti` volume.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/lti/jwks` | the tool's public key |
+| `GET /api/lti/register?secret=...` | Dynamic Registration (Moodle appends `openid_configuration` and `registration_token`) |
+| `GET\|POST /api/lti/login` | OIDC initiation |
+| `POST /api/lti/launch` | `id_token` validation, session cookie `lti_session`, redirect to `/play/:id?lti=1` or `/lti/pick` |
+
+After changing backend code or nginx, rebuild only the platform: `docker compose up -d --build platform-api platform-web`,
+then `docker compose restart proxy` (the proxy caches the old container address of `platform-web`).
+
+### Register the tool in Moodle (browser, the normal way)
+
+1. Log in as `admin`, open Manage tools (`https://moodle.lti.test/mod/lti/toolconfigure.php`).
+2. In *Tool URL or registration URL* paste
+   `https://lab.lti.test/api/lti/register?secret=lti-demo-registration-secret` and press *Add LTI Advantage*.
+3. The window shows "Інструмент зареєстровано" and closes itself. The tool appears as *Pending*: press *Activate*.
+4. In course LAB101 add an *External tool* activity, choose the tool, and put `scenario_id=circuits` into
+   *Custom parameters* (Phase 5's deep link will set this for the teacher).
+
+### Smoke without a browser (what was run for DW-4.4, 2026-10-28)
+
+All requests from the host with `R="--resolve moodle.lti.test:443:127.0.0.1 --resolve lab.lti.test:443:127.0.0.1 --cacert certs/ca.crt --ssl-no-revoke"`
+and cookie jars; Moodle's login form needs its `logintoken` first.
+
+```text
+1. admin login (POST /login/index.php with logintoken)                      -> 303, MoodleSession cookie
+2. GET /mod/lti/startltiadvregistration.php?url=<register URL>&sesskey=...    -> 302 to <register URL>&openid_configuration=...&registration_token=...
+3. GET that Location                                                         -> 200 "Інструмент зареєстровано"
+   platform log: [LTI] registered platform https://moodle.lti.test as client FHPGYDKOYPWeRVW
+   platform db:  lti_registrations = (https://moodle.lti.test, FHPGYDKOYPWeRVW, {1}, .../mod/lti/auth.php, .../token.php, .../certs.php)
+4. activate the tool + create the activity (no plain link exists: the tool list is rendered by JS):
+   docker compose cp activity.php moodle:/tmp/ && docker compose exec moodle php /tmp/activity.php
+   (sets mdl_lti_types.state = LTI_TOOL_STATE_CONFIGURED, adds "Circuits smoke" to LAB101 -> cmid=2)
+5. student login, GET /mod/lti/launch.php?id=2                                -> 200, auto-submit form to https://lab.lti.test/api/lti/login
+6. POST that form to /api/lti/login                                          -> 302 to https://moodle.lti.test/mod/lti/auth.php?...state&nonce..., Set-Cookie lti_state_<state>
+7. GET the Location with the student's Moodle cookie                          -> 200, auto-submit form with id_token + state
+8. POST id_token + state + the lti_state cookie to /api/lti/launch            -> 303 Location: /play/circuits?lti=1
+   Set-Cookie: lti_session=...; Path=/; Max-Age=14400; HttpOnly; Secure; SameSite=None
+   lti_sessions row: sub=4 role=learner context_id=2 resource_link_id=1 scenario_id=circuits message_type=resource
+                     lineitem_url=https://moodle.lti.test/mod/lti/services.php/2/lineitems/2/lineitem?type_id=1
+9. POST the same body again                                                  -> 403 (state already used)
+```
+
+Not exercised on the stand (covered by the fake-Moodle tests): the teacher's deep-linking launch, which needs Phase 6's
+`/lti/pick` page to be useful; `/play/circuits?lti=1` itself is Phase 6.
+
+Nginx note: `location ^~ /api/lti/` in `nginx/nginx.conf` sends no `X-Frame-Options` and no platform CSP; the LTI router sets
+its own (`default-src 'none'`; the registration page adds a nonce and the platform's origin as `frame-ancestors`).
+`LTI_REGISTRATION_SECRET` must be at least 16 characters, otherwise registration answers 503. The registration secret sits in a URL: it lands in nginx access logs and browser history, so rotate it after registering.

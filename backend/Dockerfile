@@ -11,12 +11,13 @@ RUN npm install --omit=dev
 # by backend/.dockerignore, so this stays small.
 COPY *.js ./
 COPY migrations ./migrations
+COPY lti ./lti
 
 # Archive volume mountpoint. Creating it here with the right owner means the
 # named volume inherits that ownership on first use, so the unprivileged
 # process can write uploads.
-RUN mkdir -p /srv/archives/objects /srv/archives/tmp \
- && chown -R node:node /srv/archives
+RUN mkdir -p /srv/archives/objects /srv/archives/tmp /srv/lti \
+ && chown -R node:node /srv/archives /srv/lti
 
 # Drop root: the process reads its own files and writes only to /srv/archives.
 USER node

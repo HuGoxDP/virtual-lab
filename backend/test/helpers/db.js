@@ -46,7 +46,7 @@ async function prepareSchema(pool) {
 }
 
 async function truncateAll(pool) {
-  await pool.query('TRUNCATE scenarios, scenario_sessions, categories RESTART IDENTITY CASCADE');
+  await pool.query('TRUNCATE scenarios, scenario_sessions, categories, lti_registrations, lti_states, lti_sessions RESTART IDENTITY CASCADE');
 }
 
 /**
