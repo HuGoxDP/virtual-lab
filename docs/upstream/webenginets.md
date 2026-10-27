@@ -83,8 +83,9 @@ one: `Texture2D.ktx2TranscoderPath` is a URL **this platform** serves, and the f
 `three/examples/jsm/libs/basis/`. So `-s DYNAMIC_EXECUTION=0` is a request to make to three.js,
 not a change the engine can apply.
 
-The decision here does not change: keep the CSP (`nginx/csp.conf`), accept that KTX2 does not
-transcode.
+*Superseded by player isolation:* the page's CSP (`nginx/csp.conf`) still has no `'unsafe-eval'`, but KTX2
+now transcodes inside the sandboxed player frame, whose own CSP (the engine's `player.nginx.conf`) grants it;
+`e2e/tests/ktx2-render.spec.ts` pins that. What follows is the decision as it stood before.
 
 What did change is that the condition is now **detectable rather than silent**:
 `MemoryReport.renderer.textureFormats` reports `RGBA8` for a KTX2 asset that failed to transcode,
@@ -112,8 +113,8 @@ the numbers without the panel.
 MemoryProfiler.diagnosticsAllowed = new URLSearchParams(location.search).has("diag");
 ```
 
-**Action for this repo:** the viewer's close-after-load workaround can be replaced by this. Keep
-the E2E test — it now guards a guarantee instead of a race.
+**Done here:** the close-after-load workaround is gone. The host sends `diag: false` to the player and the
+latch (one-way since the player-isolation work) holds it. The E2E test stays.
 
 ### 4b. The report could not say what a texture was transcoded to — **fixed**
 

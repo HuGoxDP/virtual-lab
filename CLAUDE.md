@@ -305,8 +305,10 @@ Consequences to respect:
   signals directly (`ScenarioService.scenarios/loading/error/categories`) instead of subscribing,
   and derive with `computed`. The engine's `requestAnimationFrame` loop is outside change detection
   by construction, so it needs no special handling.
-- **Always dispose the engine.** `ViewerComponent.ngOnDestroy` calls `app.dispose()`; without it
-  the WebGL context leaks and a few navigations exhaust the browser's context limit.
+- **Always dispose the player host.** `ViewerComponent.ngOnDestroy` calls `this.host?.dispose()`, which
+  removes the frame; the engine and its WebGL context live in that frame and go with it. Without it the
+  frames and contexts leak and a few navigations exhaust the browser's context limit (an e2e runs ten
+  round trips and checks none is left).
 - UI strings are Ukrainian. Code comments and identifiers should be English (the codebase
   currently mixes Russian/Ukrainian/English comments — new code is English).
 - **`fakeAsync()` does not work** — it is a zone.js helper and this app is zoneless. Use

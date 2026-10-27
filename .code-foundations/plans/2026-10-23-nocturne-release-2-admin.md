@@ -258,7 +258,7 @@ scenarioTitle: string|null, actorLabel, action, details, createdAt}`; `GET /api/
 **Security-sensitive:** yes
 
 **File hints:** `backend/storage.js` (`OBJECT_NAME` accepts only `<sha>.zip` — generalise per store),
-the `^~ /scenarios/` location in the nginx server config (moved under `templates/` by Phase 1), `backend/archive-validation.js`, `backend/scripts/catalog-metadata.mjs:49`,
+the `^~ /scenarios/` location in `nginx/nginx.conf` (nginx has no `templates/` directory: the player-isolation plan added `/player/` there, not a template split), `backend/archive-validation.js`, `backend/scripts/catalog-metadata.mjs:49`,
 `backend/scripts/publish-release.mjs:175`.
 
 **Done when:**

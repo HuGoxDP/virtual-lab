@@ -193,13 +193,13 @@ jobs:
             -v "$RUNNER_TEMP/snippets/player.nginx.conf:/etc/nginx/snippets/player.nginx.conf:ro" \
             nginx:alpine nginx -t
 
-      # The CSP allows exactly one inline script — the import map, which nginx
-      # nonces. A second one would be blocked at run time, and a blocked import
-      # map means no scenario runs at all, so it is worth failing here.
+      # The platform page runs no scenario code: script-src is 'self' alone, so an
+      # import map (which would need a nonce) or an inline handler would be blocked
+      # at run time. The built page is checked again by check-csp-assumptions.mjs.
       - name: index.html matches the CSP
         run: |
-          if ! grep -q '<script type="importmap">' frontend/src/index.html; then
-            echo "::error::no import map in index.html — nginx's sub_filter has nothing to nonce"
+          if grep -q '<script type="importmap">' frontend/src/index.html; then
+            echo "::error::import map in index.html — the page no longer resolves the engine; script-src has no nonce"
             exit 1
           fi
           if grep -nE '\son(load|click|error|submit)\s*=' frontend/src/index.html; then
