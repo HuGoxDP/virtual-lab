@@ -2,7 +2,7 @@
 **Created:** 2026-10-23
 **Status:** in-progress
 **Started:** 2026-10-27 12:37
-**Current Phase:** 2
+**Current Phase:** 3
 **Superseded in part (Phase 1):** by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
 **Complexity:** complex
 **Review cadence:** 2
@@ -177,7 +177,7 @@ moderator's PUT `{isPublished}` maps to approve/unpublish (so `true` on a row wi
 **Edge cases:** `:vid` not of `:id` → 404; current version cannot be deleted; >50 versions → 409; two concurrent
 approves → one 409; accept/restore are single transactions; `?version=` not 64-hex → 400; dedup re-upload refreshes
 the object's mtime so GC cannot race it; the backfill reads `is_published IS TRUE` (the column is nullable);
-`from-archive` takes the id from untrusted manifest data — it must match `^[a-z0-9][a-z0-9-]{1,99}$` (400 with a
+the upload route reads the scenario's owner and status under a row lock (`SELECT … FOR UPDATE`) inside its transaction, so a concurrent approve cannot let an author's upload land as current on a just-published row; `from-archive` takes the id from untrusted manifest data — it must match `^[a-z0-9][a-z0-9-]{1,99}$` (400 with a
 hint to rebuild with ScenarioCreator otherwise, never a 500); a draft preview's exit goes back to the admin
 `Файл` tab via a `returnTo` that must be a relative `/admin/…` path (a non-published scenario has no public page).
 **Depends on:** Phase 2 | **Unlocks:** Phase 4
@@ -495,6 +495,7 @@ at 1440 px and 390 px. (The hostile-archive check in Firefox and Safari belongs 
 ---
 ## Notes
 - Do not issue author keys in production until the player-isolation plan (its Phase 5) is deployed; bootstrap `ADMIN_TOKEN` keeps working throughout.
+- Phase 2 removed the 503 "ADMIN_TOKEN unset" answer: Phase 5 drops the now-dead 503 branch in `frontend/src/app/services/admin.service.ts` and corrects `docs/code-standards.md:96` (auth middleware no longer answers 503).
 - **Do not release between Phase 5 and Phase 6:** `/admin/legacy` is moderators-only, so authors would have no upload UI in that window.
 - **Residual risk:** `/editor/` shares the platform origin (`nginx/editor.conf`); an editor preview of an imported
   archive still runs there. Moving the editor's preview onto the player is the editor's task — add it to `PLAN.md` §3.
@@ -519,3 +520,10 @@ _To be filled during /code-foundations:build_
 
 ### Phase 1: Player isolation (Gate: Standard)
 - [x] SKIPPED — completed by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) (virtual-lab 9b0ae09, 2bf3a12; WebEngineTS 02fdc1f)
+
+### Phase 2: Keys, roles and authorization (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (first attempt interrupted by a session end after its two refactor commits; a resumed agent audited and finished it)
+- [x] REVIEW: Verification passed
+- [x] Committed
+Commit: 6bc48e7 (route split), 6ee54c4 (transactions), e8b526e (keys, roles, journal)
+Summary: Backend routes now live in actor modules under `backend/routes/`, each mutation in one transaction; personal SHA-256 keys with `author`/`moderator` roles (ADMIN_TOKEN = bootstrap moderator) gate every admin route via `authenticate`/`requireRole`/`canEditScenario`, authors are limited to content fields of their own unpublished rows, every mutation writes an `audit_events` row via `audit.record(client, …)`, failed auth and author uploads are rate-limited (`limitAuthorUploads` is reusable), and archive validation caps entry bytes/count; backend suite 610/610.
