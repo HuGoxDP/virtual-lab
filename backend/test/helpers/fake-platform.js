@@ -12,6 +12,8 @@ const LAUNCH_URL = `${TOOL}/api/lti/launch`;
 const CLIENT_ID = 'client-1';
 const DEPLOYMENT_ID = '1';
 const REGISTRATION_TOKEN = 'reg-token-123';
+const ACCESS_TOKEN = 'ags-token-1';
+const LINEITEM = `${PLATFORM}/lineitem/7`;
 
 const CLAIM = 'https://purl.imsglobal.org/spec/lti/claim/';
 const NS_TOOL = 'https://purl.imsglobal.org/spec/lti-tool-configuration';
@@ -102,6 +104,19 @@ async function createFakePlatform() {
     /** Bodies POSTed to the registration endpoint. */
     registrations: [],
 
+    /**
+     * The Assignment and Grade Services side (token endpoint, Results, Scores). Each reply is `{ status, body }`
+     * and is mutated per test; `tokenRequests` / `scores` record what the tool sent.
+     */
+    ags: {
+      token: { status: 200, body: { access_token: ACCESS_TOKEN, token_type: 'Bearer', expires_in: 3600 } },
+      results: { status: 200, body: [] },
+      score: { status: 200, body: {} },
+      tokenRequests: [],
+      resultRequests: [],
+      scores: [],
+    },
+
     /** The injected `fetch`. */
     async fetch(url, init = {}) {
       platform.calls.push({ url, init });
@@ -110,6 +125,24 @@ async function createFakePlatform() {
         if (init.headers?.Authorization !== `Bearer ${REGISTRATION_TOKEN}`) return jsonResponse({}, 401);
         platform.registrations.push(JSON.parse(init.body));
         return jsonResponse(platform.registrationReply.body, platform.registrationReply.status);
+      }
+      const ags = platform.ags;
+      const target = new URL(url);
+      const authorised = init.headers?.Authorization === `Bearer ${ACCESS_TOKEN}`;
+      if (url === `${PLATFORM}/token`) {
+        ags.tokenRequests.push({ form: new URLSearchParams(init.body), init });
+        if (ags.token.throws) throw new Error('connect ECONNREFUSED');
+        return jsonResponse(ags.token.body, ags.token.status);
+      }
+      if (target.pathname === '/lineitem/7/results') {
+        ags.resultRequests.push({ url, init, authorised });
+        if (ags.results.delayMs) await new Promise(resolve => setTimeout(resolve, ags.results.delayMs));
+        return authorised ? jsonResponse(ags.results.body, ags.results.status) : jsonResponse({}, 401);
+      }
+      if (target.pathname === '/lineitem/7/scores') {
+        if (!authorised) return jsonResponse({}, 401);
+        ags.scores.push({ url, init, body: JSON.parse(init.body) });
+        return jsonResponse(ags.score.body, ags.score.status);
       }
       return jsonResponse({}, 404);
     },
@@ -135,6 +168,6 @@ function unsignedToken(claims) {
 
 module.exports = {
   PLATFORM, TOOL, LAUNCH_URL, CLIENT_ID, DEPLOYMENT_ID, REGISTRATION_TOKEN, REGISTRATION, CLAIM, NS_TOOL,
-  LEARNER, INSTRUCTOR,
+  LEARNER, INSTRUCTOR, ACCESS_TOKEN, LINEITEM,
   createFakePlatform, resourceClaims, deepLinkClaims, unsignedToken,
 };

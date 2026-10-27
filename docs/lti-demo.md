@@ -121,6 +121,9 @@ The platform backend is an LTI 1.3 tool (`backend/lti/`, mounted at `/api/lti`; 
 | `GET /api/lti/register?secret=...` | Dynamic Registration (Moodle appends `openid_configuration` and `registration_token`) |
 | `GET\|POST /api/lti/login` | OIDC initiation |
 | `POST /api/lti/launch` | `id_token` validation, session cookie `lti_session`, redirect to `/play/:id?lti=1` or `/lti/pick` |
+| `GET /api/lti/session` | `{ scenarioId, role, messageType, graded, submitted: { score } \| null }`; `submitted` is asked of Moodle (AGS Results) |
+| `POST /api/lti/submit` | JSON `{ score? }` (0..1): the learner's score to the Moodle gradebook, once (Phase 5) |
+| `POST /api/lti/deep-link` | JSON or form `{ scenarioId }`: the teacher's pick, answered as an auto-submit page to Moodle (Phase 5) |
 
 After changing backend code or nginx, rebuild only the platform: `docker compose up -d --build platform-api platform-web`,
 then `docker compose restart proxy` (the proxy caches the old container address of `platform-web`).
@@ -158,9 +161,61 @@ and cookie jars; Moodle's login form needs its `logintoken` first.
 9. POST the same body again                                                  -> 403 (state already used)
 ```
 
-Not exercised on the stand (covered by the fake-Moodle tests): the teacher's deep-linking launch, which needs Phase 6's
-`/lti/pick` page to be useful; `/play/circuits?lti=1` itself is Phase 6.
+Not exercised on the stand in Phase 4 (covered by the fake-Moodle tests): the teacher's deep-linking launch (done in Phase 5, below);
+`/play/circuits?lti=1` itself is Phase 6.
 
 Nginx note: `location ^~ /api/lti/` in `nginx/nginx.conf` sends no `X-Frame-Options` and no platform CSP; the LTI router sets
 its own (`default-src 'none'`; the registration page adds a nonce and the platform's origin as `frame-ancestors`).
 `LTI_REGISTRATION_SECRET` must be at least 16 characters, otherwise registration answers 503. The registration secret sits in a URL: it lands in nginx access logs and browser history, so rotate it after registering.
+
+## Deep Linking and grades (Phase 5 backend)
+
+Rules, all enforced server-side and pinned by `backend/test/integration/lti-grades.test.js`:
+
+- `scenarios.graded` (migration 008) is set at archive upload from the manifest: only `graded: true` makes it true; a
+  manifest without the key sets false (also over an earlier graded upload); a non-boolean value is a 400.
+- `POST /api/lti/deep-link` (instructor, deep-link session only) answers `text/html`: a form that posts the signed
+  `LtiDeepLinkingResponse` JWT to the platform's return URL. One `ltiResourceLink` item: `url` = the tool launch URL,
+  `custom.scenario_id` = the catalog id, `lineItem.scoreMaximum` = 100. The response has its own CSP
+  (`form-action` and `frame-ancestors` = the platform origin, nonce-only script); nginx leaves `/api/lti/` alone.
+- `POST /api/lti/submit` (learner, resource launch only): refuses with 409 `{ error, score }` when Moodle already holds a
+  grade for the line item (any source), otherwise posts `{ userId, scoreGiven, scoreMaximum: 100, activityProgress:
+  Completed, gradingProgress: FullyGraded }`. A non-graded scenario always reports 1.0; a graded one reports the clamped
+  score, 0 when none. A Moodle failure is a 502 and nothing is claimed submitted. Outbound AGS URLs must be https on the
+  issuer host, redirects refused.
+- Both POSTs reject a foreign `Origin` / non-same-origin `Sec-Fetch-Site` (the session cookie is `SameSite=None`), and
+  `submit` accepts `application/json` only.
+
+### Smoke on the stand (what was run for DW-5.4, 2026-10-28)
+
+Rebuild only the platform (`docker compose up -d --build platform-api platform-web`, `docker compose restart proxy`);
+the log shows `[MIGRATE] applied 008_scenario_graded.sql`. Driven from the host by a throwaway Python client (cookie jar,
+host names mapped to 127.0.0.1, the stand CA); there is no pick page yet, so the pick is a direct POST.
+
+```text
+1. publish Circuits: POST /api/catalog {id: electric-circuits, ...}, then POST /api/scenarios/electric-circuits/archive
+   (admin token, ScenarioCreator/ReleaseScenarios/Circuits.zip)           -> 201; scenarios.graded = true (manifest graded: true)
+2. teacher login; GET /mod/lti/contentitem.php?id=1&course=2 (the Deep Linking launch), follow login -> auth -> launch
+                                                                            -> 303 /lti/pick, session role=instructor message_type=deep-link
+3. POST /api/lti/deep-link {"scenarioId":"electric-circuits"} (Origin: https://lab.lti.test)
+                                                                            -> 200 text/html, CSP: default-src 'none'; script-src 'nonce-...';
+                                                                               form-action https://moodle.lti.test; frame-ancestors https://moodle.lti.test
+4. POST the form's JWT to https://moodle.lti.test/mod/lti/contentitem_return.php?course=2&id=1&sesskey=...  (teacher cookies)
+                                                                            -> 200; Moodle accepts the JWT and hands the form
+                                                                               {toolurl, custom scenario_id=electric-circuits, instructorchoiceacceptgrades: 1,
+                                                                                grade_modgrade_point: 100, lineitemresourceid: electric-circuits}
+5. create the activity from those values (CLI add_moduleinfo, standing in for the teacher's "Save" on the module form;
+   a scripted GET of course/modedit.php answered "Invalid action parameter")
+                                                                            -> cmid=3; mdl_grade_items "Електричні кола" grademax 100
+6. student login; GET /mod/lti/launch.php?id=3, follow login -> auth -> launch -> 303 /play/electric-circuits?lti=1
+   lti_sessions.lineitem_url = https://moodle.lti.test/mod/lti/services.php/2/lineitems/3/lineitem?type_id=1
+7. GET  /api/lti/session                                                    -> {"scenarioId":"electric-circuits","role":"learner","messageType":"resource","graded":true,"submitted":null}
+8. POST /api/lti/submit {"score":0.85}                                      -> 200 {"score":0.85}
+   mdl_grade_grades: itemid=3 userid=4 rawgrade=85 finalgrade=85 rawgrademax=100
+9. GET  /api/lti/session                                                    -> submitted: {"score":0.85}
+10. POST /api/lti/submit {"score":0.1}                                      -> 409 {"error":"Роботу вже здано","score":0.85}
+```
+
+Result: Moodle created the gradebook line item from the Deep Linking `lineItem` (the plan's MEDIUM-confidence assumption
+held; no first-launch line-item fallback was needed). The activity URL is the tool's launch URL, so Moodle matches the tool
+by domain (`typeid` 0 in the form).

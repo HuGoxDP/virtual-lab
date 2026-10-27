@@ -71,6 +71,13 @@ function createStore(pool) {
       return rows[0] || null;
     },
 
+    /** The catalog facts LTI needs about a scenario, or null when the id is unknown. */
+    async getScenario(id) {
+      const { rows } = await pool.query(
+        'SELECT id, title, graded, is_published = true AS "isPublished" FROM scenarios WHERE id = $1', [id]);
+      return rows[0] || null;
+    },
+
     /** Housekeeping: drops expired states and sessions. Called opportunistically on login. */
     async deleteExpired() {
       await pool.query('DELETE FROM lti_states WHERE expires_at <= NOW()');

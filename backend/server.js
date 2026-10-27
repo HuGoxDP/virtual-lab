@@ -535,9 +535,10 @@ async function attachArchive(id, { sha256, bytes, url }, manifest) {
            manifest_id             = $4,
            manifest_version        = $5,
            manifest_engine_version = $6,
+           graded                  = $7,
            storage_kind            = 'local',
            updated_at              = NOW()
-     WHERE id = $7
+     WHERE id = $8
   `, [
     url, sha256, bytes,
     manifest?.id ?? null,
@@ -545,6 +546,8 @@ async function attachArchive(id, { sha256, bytes, url }, manifest) {
     // Which engine build the scenario was compiled against — null for archives
     // predating ScenarioCreator stamping it.
     manifest?.engineVersion ?? null,
+    // Only an explicit `graded: true` makes a scenario graded; re-uploading without the key clears it.
+    manifest?.graded === true,
     id,
   ]);
 }

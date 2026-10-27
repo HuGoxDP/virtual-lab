@@ -71,6 +71,11 @@ async function validateScenarioArchive(filePath, catalogId) {
     const versionProblem = manifestVersionProblem(manifest.manifestVersion);
     if (versionProblem) throw new ArchiveInvalid(versionProblem);
 
+    // `graded` drives LTI grade passback; a string like "false" would silently read as not graded.
+    if (manifest.graded !== undefined && typeof manifest.graded !== 'boolean') {
+      throw new ArchiveInvalid(`Поле graded у ${MANIFEST_NAME} має бути true або false`);
+    }
+
     // entryPoint is relative to scripts/ (see IScenarioManifest.entryPoint).
     const entryPath = SCRIPTS_DIR + String(manifest.entryPoint).replace(/^\/+/, '');
     if (!entries.includes(entryPath)) {

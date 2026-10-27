@@ -7,6 +7,9 @@
 //   GET      /register   Dynamic Registration (guarded by LTI_REGISTRATION_SECRET in the URL)
 //   GET|POST /login      OIDC initiation
 //   POST     /launch     id_token validation, session, redirect into the SPA
+//   GET      /session    what the session may do (scenario, role, graded, already submitted)
+//   POST     /submit     learner's score to the LMS gradebook, once (JSON body only)
+//   POST     /deep-link  teacher's pick: signed Deep Linking response, as an auto-submit page
 //
 // Environment: LTI_PUBLIC_URL (https origin of this tool, required), LTI_REGISTRATION_SECRET,
 // LTI_TOOL_PRIVATE_KEY | LTI_TOOL_KEY_FILE, LTI_SESSION_TTL_SECONDS, LTI_RATE_LIMIT. See .env.example.
@@ -26,10 +29,13 @@ const { createStore } = require('./store');
 const { createRequireLtiSession } = require('./session');
 const { registerTool } = require('./registration');
 const { initiateLogin, completeLaunch } = require('./launch');
-const { LtiError, safeEqual, str } = require('./http');
+const { LtiError, safeEqual, str, parseHttpsUrl } = require('./http');
+const { describeSession, submitScore, requirePublishedScenario } = require('./submission');
+const { buildDeepLinkClaims, deepLinkPage } = require('./deeplink');
 
 const RATE_WINDOW_MS = 15 * 60 * 1000;
 const FORM_BODY_LIMIT = '100kb';
+const JSON_BODY_LIMIT = '10kb';
 const JWKS_TIMEOUT_MS = 5_000;
 
 /** CSP of every response unless a handler widens it: these endpoints return JSON or redirects, never a page. */
@@ -111,6 +117,7 @@ function createLtiRouter({ pool, env = process.env, fetch: fetchFn = globalThis.
   }));
 
   router.use(express.urlencoded({ extended: false, limit: FORM_BODY_LIMIT }));
+  router.use(express.json({ limit: JSON_BODY_LIMIT }));
 
   /** Wraps a handler: expected failures become `{ error }` with their status, anything else a logged 500. */
   const handle = (name, fn) => async (req, res) => {
@@ -119,7 +126,7 @@ function createLtiRouter({ pool, env = process.env, fetch: fetchFn = globalThis.
     } catch (err) {
       if (err instanceof LtiError) {
         console.warn(`[LTI] ${name} rejected (${err.status}): ${err.detail}`);
-        return res.status(err.status).json({ error: err.message });
+        return res.status(err.status).json({ error: err.message, ...err.extra });
       }
       console.error(`[LTI] ${name} error:`, err.message);
       res.status(500).json({ error: 'Помилка сервера' });
@@ -177,6 +184,63 @@ function createLtiRouter({ pool, env = process.env, fetch: fetchFn = globalThis.
     for (const cookie of cookies) res.append('Set-Cookie', cookie);
     // 303: the follow-up is a GET even though the platform's request was a POST.
     res.redirect(303, redirectUrl);
+  }));
+
+  // ── Session-bound endpoints ──
+  // The session cookie is SameSite=None, so a foreign page could make the browser send it. State-changing
+  // requests therefore must come from this tool's own origin (Origin / Sec-Fetch-Site, when the browser sends them).
+  const sessionBound = [requireLtiSession];
+  const sameOriginOnly = (req, res, next) => {
+    const origin = req.get('origin');
+    const site = req.get('sec-fetch-site');
+    if ((origin && origin !== config.publicUrl) || (site && site !== 'same-origin' && site !== 'none')) {
+      return res.status(403).json({ error: 'Запит з чужого джерела відхилено' });
+    }
+    next();
+  };
+  const grades = () => ({ store, fetch: fetchFn, signToolJwt });
+
+  // ── GET /api/lti/session ──
+  router.get('/session', sessionBound, handle('session', async (req, res) => {
+    res.json(await describeSession(req.lti, grades()));
+  }));
+
+  // ── POST /api/lti/submit ──
+  // JSON only: a cross-site HTML form cannot send application/json without a CORS preflight.
+  router.post('/submit', sameOriginOnly, sessionBound, handle('submit', async (req, res) => {
+    if (!req.is('application/json')) throw new LtiError(415, 'Очікується JSON', 'submit needs application/json');
+    res.json(await submitScore(req.lti, req.body?.score, grades()));
+  }));
+
+  // ── POST /api/lti/deep-link ──
+  router.post('/deep-link', sameOriginOnly, sessionBound, handle('deep-link', async (req, res) => {
+    const lti = req.lti;
+    if (lti.messageType !== 'deep-link' || lti.role !== 'instructor' || !lti.deepLinkReturnUrl) {
+      throw new LtiError(403, 'Вибір лабораторної доступний лише викладачу з вікна вибору в LMS',
+        `deep-link refused for ${lti.role}/${lti.messageType}`);
+    }
+    const scenarioId = str(req.body?.scenarioId, 100);
+    if (!scenarioId) throw new LtiError(400, 'Не вказано лабораторну', 'scenarioId missing');
+    const scenario = await requirePublishedScenario(store, scenarioId);
+
+    const registration = await store.getRegistration(lti.issuer, lti.clientId);
+    if (!registration) throw new LtiError(403, 'Платформа не зареєстрована', 'registration vanished');
+
+    // The browser is sent there with a signed token: it must be the platform's own host, like every other endpoint.
+    const returnUrl = parseHttpsUrl(lti.deepLinkReturnUrl);
+    if (!returnUrl || returnUrl.origin !== new URL(registration.issuer).origin) {
+      throw new LtiError(403, 'Некоректна адреса повернення до LMS', 'deep_link_return_url is not on the issuer host');
+    }
+
+    const claims = buildDeepLinkClaims({ session: lti, scenario, launchUrl: `${config.publicUrl}/api/lti/launch` });
+    const jwt = await keys.sign(claims);
+
+    const nonce = crypto.randomBytes(16).toString('base64');
+    // Its own policy (nginx leaves /api/lti/ alone): our nonce'd script runs, the form may go only to the
+    // platform, and only the platform may frame the page.
+    res.set('Content-Security-Policy',
+      `default-src 'none'; script-src 'nonce-${nonce}'; form-action ${returnUrl.origin}; frame-ancestors ${returnUrl.origin}`);
+    res.type('html').send(deepLinkPage({ returnUrl: returnUrl.href, jwt, nonce }));
   }));
 
   // Body-parser failures (oversized or malformed form) would otherwise reach Express's HTML error page.

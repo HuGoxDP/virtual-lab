@@ -4,12 +4,16 @@
 
 const crypto = require('node:crypto');
 
-/** A rejection the caller should see: `status` + a Ukrainian `message`; `detail` goes to the log only. */
+/**
+ * A rejection the caller should see: `status` + a Ukrainian `message`; `detail` goes to the log only;
+ * `extra` fields are merged into the JSON body next to `error`.
+ */
 class LtiError extends Error {
-  constructor(status, message, detail) {
+  constructor(status, message, detail, extra) {
     super(message);
     this.status = status;
     this.detail = detail || message;
+    this.extra = extra;
   }
 }
 
