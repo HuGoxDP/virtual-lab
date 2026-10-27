@@ -41,8 +41,8 @@ test.before(async () => {
   mia = await createKey(pool, 'moderator', 'Mia');
   for (const [id, owner] of [['rl-alice', alice.id], ['rl-bob', bob.id], ['rl-mia', mia.id]]) {
     await pool.query(`
-      INSERT INTO scenarios (id, title, category, category_label, is_published, owner_key_id)
-      VALUES ($1, 'T', 'biology', 'Біологія', false, $2)`, [id, owner]);
+      INSERT INTO scenarios (id, title, category, category_label, status, owner_key_id)
+      VALUES ($1, 'T', 'biology', 'Біологія', 'draft', $2)`, [id, owner]);
   }
 });
 

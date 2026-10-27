@@ -61,4 +61,7 @@ function forbiddenAuthorFields(body) {
   );
 }
 
-module.exports = { validateFeatures, forbiddenAuthorFields, AUTHOR_FORBIDDEN_FIELDS, MAX_FEATURES, MAX_FEATURE_TITLE, MAX_FEATURE_SUBTITLE };
+/** The catalog id a `from-archive` scenario takes from its manifest: a slug of 2-100 characters. */
+const SCENARIO_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,99}$/;
+
+module.exports = { SCENARIO_ID_PATTERN, validateFeatures, forbiddenAuthorFields, AUTHOR_FORBIDDEN_FIELDS, MAX_FEATURES, MAX_FEATURE_TITLE, MAX_FEATURE_SUBTITLE };

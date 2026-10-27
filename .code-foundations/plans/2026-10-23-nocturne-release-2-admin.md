@@ -514,6 +514,16 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 | 4 | 2 | A moderator-created row gets `owner_key_id` = the moderator's key (NULL for bootstrap), `author` defaulting to the key label | default | assumed |
 | 5 | 2 | `MAX_ENTRY_BYTES` 10 MiB / `MAX_ARCHIVE_ENTRIES` 20 000 kept — measured real maxima are 3 059 bytes and 31 entries | assumption verification | assumed |
 | 6 | 2 | `AUTH_FAILURES_PER_WINDOW` is env-configurable too (default 30 per 15 min) | default | assumed |
+| 7 | 3 | `from-archive` takes an optional multipart `category` (existing slug); default = first category by `sort_order`; 400 if none exist or slug unknown | default | assumed |
+| 8 | 3 | Uploading bytes identical to the current (or, for an author on a published row, the pending) version creates no version row and still returns 201 | default | assumed |
+| 9 | 3 | A moderator's upload to a published scenario leaves an author's pending proposal in place | default | assumed |
+| 10 | 3 | `moderator_note` is cleared on submit and approve, kept on withdraw and unpublish; `updated_at` bumps on every transition | default | assumed |
+| 11 | 3 | DELETE of a pending version: owner or any moderator; a stranger gets 403 before the version lookup; a foreign `:vid` is 404 | default | assumed |
+| 12 | 3 | `?version=` accepts uppercase hex (lowercased); a wrong bearer on the public by-id route counts toward the failed-auth limiter, then falls back to anonymous | default | assumed |
+| 13 | 3 | A refusal raised after the object is stored can leave an orphan object; GC collects it after `GC_MIN_AGE_MS` | default | assumed |
+| 14 | 3 | The viewer shows an error screen for a malformed `?draft=` rather than a normal run | default | assumed |
+| 15 | 3 | `status` in a PUT/POST body is ignored, not 400 | default | assumed |
+| 16 | 3 | Row-locking routines (`applyTransition`, `installUpload`, …) are covered by real-Postgres integration tests, not mocked-DB unit tests (project convention) | default | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_

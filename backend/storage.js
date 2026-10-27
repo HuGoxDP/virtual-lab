@@ -79,7 +79,11 @@ async function commitArchive(tmpFile) {
 
   let deduplicated = false;
   try {
-    await fsp.access(target);
+    // Touching it doubles as the existence check (it throws when the object is absent), and
+    // refreshes the age GC reads: an object that was collectible a moment ago, because its
+    // last version row was deleted, must not be swept between this upload and its row.
+    const now = new Date();
+    await fsp.utimes(target, now, now);
     deduplicated = true;
     await fsp.unlink(tmpFile);
     console.log(`[STORAGE] об'єкт ${sha256}.zip вже існує — тимчасовий файл видалено, об'єкт перевикористано`);

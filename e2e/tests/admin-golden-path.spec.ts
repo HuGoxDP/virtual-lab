@@ -91,9 +91,15 @@ test.describe('admin golden path', () => {
       await expect(row).toContainText('local');
 
       // ── publish ───────────────────────────────────
-      // A new row is published by default; make the state explicit rather than
-      // assuming it, then drive the toggle if it is not.
+      // Every new row starts as a draft (it has no archive until the upload above, and approving needs
+      // one), so the order is create -> upload -> publish. The old admin's toggle sends isPublished, which
+      // the API maps to approve.
       const publicUrl = `${BASE_URL}/api/catalog/${encodeURIComponent(id)}`;
+
+      expect((await fetch(publicUrl)).status, 'a draft is not in the public catalog').toBe(404);
+      await expect(row.locator('.pill')).toContainText('Приховано');
+      await row.locator('.pill').click();
+      await expect(row.locator('.pill')).toContainText('Опубліковано');
 
       await expect
         .poll(async () => (await fetch(publicUrl)).status,

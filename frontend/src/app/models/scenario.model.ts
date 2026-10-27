@@ -177,8 +177,17 @@ export interface CategoryFilter {
  * (`GET /api/admin/scenarios`).
  */
 export interface AdminScenario extends ScenarioCatalogItem {
-  /** Whether the scenario appears in the public catalog. */
+  /** Workflow status; only `published` scenarios appear in the public catalog. */
+  status: 'draft' | 'review' | 'published' | 'rejected';
+
+  /** Compatibility mirror of `status === 'published'` for readers that predate the workflow. */
   isPublished: boolean;
+
+  /** A moderator's reason for the last rejection, or null. */
+  moderatorNote: string | null;
+
+  /** When the scenario last entered review, or null. */
+  submittedAt: string | null;
 
   /** `local` = archive in our storage, `drive` = legacy external link. */
   storageKind: 'local' | 'drive';

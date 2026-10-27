@@ -35,8 +35,8 @@ test.before(async () => {
   await truncateAll(pool);
   alice = await createKey(pool, 'author', 'Alice');
   await pool.query(`
-    INSERT INTO scenarios (id, title, category, category_label, is_published, owner_key_id)
-    VALUES ('cap-1', 'T', 'biology', 'Біологія', false, $1)`, [alice.id]);
+    INSERT INTO scenarios (id, title, category, category_label, status, owner_key_id)
+    VALUES ('cap-1', 'T', 'biology', 'Біологія', 'draft', $1)`, [alice.id]);
 });
 
 test.beforeEach(() => {

@@ -138,6 +138,9 @@ function makeClient(baseUrl, token) {
     create: fields => call('POST', '/api/catalog', { json: fields }),
     update: (id, fields) => call('PUT', `/api/catalog/${encodeURIComponent(id)}`, { json: fields }),
     remove: id => call('DELETE', `/api/catalog/${encodeURIComponent(id)}`),
+    // Status transitions (POST /api/scenarios/:id/<action>); the server decides what is allowed.
+    approve: id => call('POST', `/api/scenarios/${encodeURIComponent(id)}/approve`),
+    unpublish: id => call('POST', `/api/scenarios/${encodeURIComponent(id)}/unpublish`),
     uploadArchive: (id, filename, bytes) => {
       const form = new FormData();
       form.append('archive', new Blob([bytes], { type: 'application/zip' }), filename);
@@ -177,6 +180,9 @@ function catalogFields(manifest, meta, isNew) {
   return fields;
 }
 
+/** Whether an admin row is live; `status` is the truth, `isPublished` its compatibility mirror. */
+const isPublishedRow = row => (row.status ?? (row.isPublished ? 'published' : 'draft')) === 'published';
+
 async function publishOne(api, { file, manifest, meta, existing, dryRun }) {
   const id = manifest.id;
   const isNew = !existing;
@@ -187,8 +193,8 @@ async function publishOne(api, { file, manifest, meta, existing, dryRun }) {
   if (dryRun) {
     notes.push(isNew ? 'would create' : 'would update');
     notes.push(`would upload ${path.basename(file)}`);
-    if (existing && existing.isPublished !== published) {
-      notes.push(`would set published=${published}`);
+    if (isNew ? published : isPublishedRow(existing) !== published) {
+      notes.push(published ? 'would approve' : 'would unpublish');
     }
     return { id, notes, uploaded: null };
   }
@@ -202,11 +208,11 @@ async function publishOne(api, { file, manifest, meta, existing, dryRun }) {
   const bytes = await readFile(file);
   const uploaded = await api.uploadArchive(id, path.basename(file), bytes);
 
-  // `is_published` is not part of POST /api/catalog — new rows default to true,
-  // so bench scenes need a follow-up PUT to be hidden.
-  if (isNew ? published !== true : existing.isPublished !== published) {
-    await api.update(id, { isPublished: published });
-    notes.push(`published=${published}`);
+  // Every new row starts as a draft, and approving needs an archive - hence upload first, then
+  // approve. A row that should not be public stays a draft (or is unpublished if it was live).
+  if (isNew ? published : isPublishedRow(existing) !== published) {
+    await (published ? api.approve(id) : api.unpublish(id));
+    notes.push(published ? 'approved' : 'unpublished');
   }
 
   notes.push(isNew ? 'created' : 'updated');

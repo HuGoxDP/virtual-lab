@@ -36,6 +36,8 @@ if (!bootstrapToken() && require.main === module) {
 app.use(catalogPublic.router);
 app.use(require('./routes/catalog-admin').router);
 app.use(require('./routes/archives').router);
+app.use(require('./routes/workflow').router);
+app.use(require('./routes/versions').router);
 app.use(require('./routes/storage-admin').router);
 app.use(require('./routes/telemetry').router);
 app.use(require('./routes/keys').router);

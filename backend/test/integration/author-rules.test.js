@@ -64,10 +64,10 @@ const categoryCount = async () => (await pool.query('SELECT COUNT(*)::int AS n F
 
 async function insertOwned(id, owner, { published = false } = {}) {
   await pool.query(`
-    INSERT INTO scenarios (id, title, category, category_label, is_published, owner_key_id)
+    INSERT INTO scenarios (id, title, category, category_label, status, owner_key_id)
     VALUES ($1, 'Title', 'biology', 'Біологія', $2, $3)
-    ON CONFLICT (id) DO UPDATE SET is_published = $2, owner_key_id = $3, title = 'Title'
-  `, [id, published, owner]);
+    ON CONFLICT (id) DO UPDATE SET status = $2, owner_key_id = $3, title = 'Title'
+  `, [id, published ? 'published' : 'draft', owner]);
 }
 
 const newScenario = (id, extra = {}) => ({ id, title: 'T', category: 'biology', ...extra });
@@ -85,7 +85,7 @@ test('181. POST by an author (DW-2.4)', async t => {
 
   await t.test('the row is unpublished, owned by the key, and authored by its label', async () => {
     const created = await row(res.body.id);
-    assert.equal(created.is_published, false);
+    assert.equal(created.status, 'draft');
     assert.equal(created.owner_key_id, alice.id);
     assert.equal(created.author, 'Alice');
     assert.equal(created.version, '2.0.0');
@@ -132,7 +132,7 @@ test('181. forbidden fields are 400 for an author, on POST and on PUT (DW-2.4)',
         .send({ title: 'Sneaky', [field]: field === 'isPublished' ? true : 'x' }).expect(400);
       const unchanged = await row('ar-guarded');
       assert.equal(unchanged.title, 'Title');
-      assert.equal(unchanged.is_published, false);
+      assert.equal(unchanged.status, 'draft');
     });
   }
 
@@ -142,11 +142,11 @@ test('181. forbidden fields are 400 for an author, on POST and on PUT (DW-2.4)',
 
   await t.test('a moderator may send every one of them', async () => {
     await request(app).put('/api/catalog/ar-guarded').set(mia.auth)
-      .send({ author: 'Named By Mia', isPublished: true, imageUrl: '/i.png', scenarioUrl: '/scenarios/x.zip' })
+      .send({ author: 'Named By Mia', isPublished: false, imageUrl: '/i.png', scenarioUrl: '/scenarios/x.zip' })
       .expect(200);
     const changed = await row('ar-guarded');
     assert.equal(changed.author, 'Named By Mia');
-    assert.equal(changed.is_published, true);
+    assert.equal(changed.status, 'draft', 'isPublished:false on a draft is a no-op');
   });
 });
 
@@ -254,7 +254,7 @@ test('181. moderators: author defaults to the key label, bootstrap has none', as
   const byKey = await row('ar-mod-1');
   assert.equal(byKey.author, 'Mia');
   assert.equal(byKey.owner_key_id, mia.id);
-  assert.equal(byKey.is_published, true, 'a moderator-created row is published as before');
+  assert.equal(byKey.status, 'draft', 'every new row starts as a draft: it has no archive to approve');
 
   await request(app).post('/api/catalog').set(mia.auth)
     .send({ id: 'ar-mod-2', title: 'T', category: 'biology', categoryLabel: 'Біологія', author: 'Dr. Named' }).expect(201);
@@ -267,7 +267,7 @@ test('181. moderators: author defaults to the key label, bootstrap has none', as
   assert.equal(boot.owner_key_id, null);
 });
 
-test('181. archive upload: owner while unpublished, moderator any time (DW-2.4)', async t => {
+test('181. archive upload: owner in any status but review, moderator any time (DW-2.4, DW-3.3)', async t => {
   if (skipUnlessDb(t)) return;
   await insertOwned('ar-up-draft', alice.id);
   await insertOwned('ar-up-live', alice.id, { published: true });
@@ -279,9 +279,10 @@ test('181. archive upload: owner while unpublished, moderator any time (DW-2.4)'
     assert.match((await row('ar-up-draft')).archive_sha256, /^[0-9a-f]{64}$/);
   });
 
-  await t.test('into an own PUBLISHED scenario -> 403, nothing attached, temp file released', async () => {
-    await upload('ar-up-live', alice).expect(403);
-    assert.equal((await row('ar-up-live')).archive_sha256, null);
+  await t.test('into an own PUBLISHED scenario -> 201 as a pending version, the row is untouched (Phase 3)', async () => {
+    const res = await upload('ar-up-live', alice).expect(201);
+    assert.equal(res.body.version.state, 'pending');
+    assert.equal((await row('ar-up-live')).archive_sha256, null, 'students keep what they had');
     assert.deepEqual(await fsp.readdir(storage.TMP_DIR), []);
   });
 

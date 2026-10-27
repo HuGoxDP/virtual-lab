@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 
 const { app, pool } = require('../../server');
-const { isAvailable, prepareSchema, truncateAll, seedScenarios } = require('../helpers/db');
+const { isAvailable, prepareSchema, truncateAll, seedScenarios, addCurrentVersion } = require('../helpers/db');
 
 const TOKEN = process.env.ADMIN_TOKEN;
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
@@ -44,6 +44,17 @@ const GUARDED = [
   ['get', '/api/admin/scenarios'],
   ['get', '/api/telemetry/summary'],
   ['post', '/api/scenarios/solar-system/archive'],
+  ['post', '/api/scenarios/from-archive'],
+  ['post', '/api/scenarios/solar-system/submit'],
+  ['post', '/api/scenarios/solar-system/withdraw'],
+  ['post', '/api/scenarios/solar-system/approve'],
+  ['post', '/api/scenarios/solar-system/reject'],
+  ['post', '/api/scenarios/solar-system/unpublish'],
+  ['get', '/api/scenarios/solar-system/versions'],
+  ['post', '/api/scenarios/solar-system/versions/1/accept'],
+  ['post', '/api/scenarios/solar-system/versions/1/reject'],
+  ['post', '/api/scenarios/solar-system/versions/1/restore'],
+  ['delete', '/api/scenarios/solar-system/versions/1'],
 ];
 
 test('admin routes reject anonymous callers', async t => {
@@ -146,6 +157,7 @@ test('GET /api/admin/scenarios exposes what the catalog hides', async t => {
   await t.test('surfaces the publish flag and storage state', () => {
     const hidden = res.body.scenarios.find(s => s.id === 'hidden-one');
     assert.equal(hidden.isPublished, false);
+    assert.equal(hidden.status, 'draft');
     assert.equal(hidden.storageKind, 'drive');
     assert.equal(hidden.manifestId, null);
   });
@@ -172,6 +184,37 @@ test('catalog CRUD', async t => {
     await request(app).post('/api/catalog').set(AUTH)
       .send({ id, title: 'Probe again', category: 'test', categoryLabel: 'Test' })
       .expect(409);
+  });
+
+  await t.test('a new row starts as a draft: not in the public catalog, isPublished false (DW-3.8)', async () => {
+    await request(app).get(`/api/catalog/${id}`).expect(404);
+    const admin = await request(app).get('/api/admin/scenarios').set(AUTH).expect(200);
+    const row = admin.body.scenarios.find(s => s.id === id);
+    assert.equal(row.status, 'draft');
+    assert.equal(row.isPublished, false);
+  });
+
+  await t.test('isPublished:true on a row without an archive -> 409, nothing changes (DW-3.8)', async () => {
+    await request(app).put(`/api/catalog/${id}`).set(AUTH).send({ isPublished: true, title: 'Not yet' }).expect(409);
+    const admin = await request(app).get('/api/admin/scenarios').set(AUTH).expect(200);
+    const row = admin.body.scenarios.find(s => s.id === id);
+    assert.equal(row.status, 'draft');
+    assert.equal(row.title, 'Probe', 'the refused PUT wrote nothing');
+  });
+
+  await t.test('isPublished in a POST is ignored (DW-3.8)', async () => {
+    await request(app).post('/api/catalog').set(AUTH)
+      .send({ id: 'crud-ignored', title: 'T', category: 'test', categoryLabel: 'Test', isPublished: true })
+      .expect(201);
+    await request(app).get('/api/catalog/crud-ignored').expect(404);
+    await request(app).delete('/api/catalog/crud-ignored').set(AUTH).expect(200);
+  });
+
+  await t.test('with an archive, isPublished:true publishes it (DW-3.8)', async () => {
+    await addCurrentVersion(pool, id);
+    await request(app).put(`/api/catalog/${id}`).set(AUTH).send({ isPublished: true }).expect(200);
+    const res = await request(app).get(`/api/catalog/${id}`).expect(200);
+    assert.equal(res.body.title, 'Probe');
   });
 
   await t.test('updates only the fields supplied', async () => {

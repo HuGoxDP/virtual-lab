@@ -171,7 +171,11 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   is engine API and a measurement tool, developed separately, not a student control. The host always sends
   `diag: false` and never calls `toggleDiagnostics()`, and the engine's `diagnosticsAllowed` latches at
   `false`, so a scenario's own `showOverlay()` / `enableToggle()` (the Backquote hotkey) are inert; there
-  is no page-side guard. `?diag=1` shows only the engine build stamp, read from the player with
+  is no page-side guard. **Draft preview:** `/play/:id?draft=<sha256>&returnTo=/admin/…` plays one version of a
+  scenario that may not be published (owner/moderator via the session bearer); a malformed `draft` is an error
+  screen, a preview never streams, and `returnTo` is honoured only with `draft` and only as a relative `/admin…` path
+  (`validReturnTo`: no scheme, `//`, backslash, `..`) — it is the exit target of `Вийти` and of the error screen's
+  way out, since a non-published scenario has no public page. `?diag=1` shows only the engine build stamp, read from the player with
   `PlayerHost.measure()` about a second after the run starts; the HUD has no diagnostics control. Whether
   the overlay belongs in a scenario is ScenarioCreator's question; the platform never shows it.
 - `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit (including the
@@ -179,7 +183,8 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   (`AdminService`), so it dies with the tab.
 - `src/app/services/scenario.service.ts` — catalog state as **signals**, paged fetching (a response for an
   older request is dropped, so the newest filter always wins), `fetchScenarioById` (with `related`), and
-  the streamed ZIP download with progress and abort. (`GET /api/config` stays on the backend; the
+  the streamed ZIP download with progress and abort. `fetchScenarioById(id, version?)` with a `version` adds
+  `?version=` and the session's bearer (from `AdminService`) — a draft preview; the plain lookup carries no credential. (`GET /api/config` stays on the backend; the
   frontend no longer reads it — the footer's archive-limit line went with the footer's main block.)
 - `src/app/services/admin.service.ts` — admin token + CRUD + upload with progress.
 - `src/app/services/telemetry.service.ts` — anonymous session log; failures are swallowed, since
@@ -191,7 +196,7 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
 
 **Backend** (`backend/`, Express 4 — `server.js` wires the middleware and mounts one router per concern in `routes/`: `catalog-public`, `catalog-admin`, `archives`, `storage-admin`, `telemetry`, `keys`, `health`)
 - `GET /api/catalog?category&q&sort=new|title&limit&offset`, `GET /api/catalog/:id` — published
-  scenarios only (`is_published = true`). Each item carries `archiveBytes`, `updatedAt` and
+  scenarios only (`status = 'published'`). Each item carries `archiveBytes`, `updatedAt` and
   `features` ("Що всередині"); the list also returns `categories` (visible, with `icon` and published
   `count`, by `categories.sort_order`) and an unfiltered `summary`; the by-id route adds `related`
   (<=2, same category first). `categories.label` is canonical over `scenarios.category_label`; a POST/PUT
@@ -217,15 +222,46 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
     **Author uploads are limited per key** (`AUTHOR_UPLOADS_PER_HOUR`, 20 → 429; moderators and the
     bootstrap are exempt) by `limitAuthorUploads` in `rate-limits.js`, which any route that receives an
     archive must use. Both are in-memory fixed windows: one backend process.
-  - **Author vs moderator.** An author: `POST /api/catalog` (row created *unpublished*, owned by the key,
+  - **Author vs moderator.** An author: `POST /api/catalog` (row created as a *draft*, owned by the key,
     `author` = the key's label, `category` must be an existing slug — 400 otherwise, `categoryLabel`
     ignored), `PUT` on their own scenarios (content fields `title, description, fullDescription, category,
-    version, features` only) and `POST .../archive` while the scenario is unpublished, and `GET
+    version, features` only) and `POST .../archive` (any status but review), and `GET
     /api/admin/scenarios` shows only their rows. Sending `scenarioUrl, manifestUrl, imageUrl, archive*,
     author` or `isPublished` is a 400 (`forbiddenAuthorFields` in `catalog-input.js`). A moderator (key or
     bootstrap) does all of that on anything, plus `DELETE`, storage and GC, telemetry summary and
     `/api/keys*`; creating a category by an unknown slug is moderator-only. Existing rows have no owner, so
     only moderators touch them.
+  - **Publishing workflow (`workflow.js`, `routes/workflow.js`).** `scenarios.status`: `draft → review →
+    published | rejected`, unpublish returns to `draft`; `moderator_note` (a rejection's reason) and `submitted_at`
+    come with it. **Every new row starts as `draft`** (it has no archive; approve needs one), so the order is create →
+    upload → approve (`publish:release` does exactly that). `POST /api/scenarios/:id/{submit|withdraw|approve|reject|
+    unpublish}`: the `TRANSITIONS` table is the one statement of who (owner or moderator / moderator) and from which
+    status; `submit` and `approve` need a current archive version; wrong status → 409, not allowed → 403, and
+    `applyTransition` locks the row `FOR UPDATE`, so two concurrent approves give one 409. Each success writes a
+    `scenario.<action>` audit row. `reject {note?}` defaults to "Потрібні уточнення від модератора.", ≤2000 chars.
+    **Compatibility:** admin rows carry `isPublished = status === 'published'`; a moderator's `PUT {isPublished}`
+    is approve/unpublish (`true` on a row without an archive is a 409); an `isPublished` in a POST is ignored. Delete
+    the field once nothing reads it (the old admin goes in Phase 6).
+  - **Versions (`versions.js`, `routes/versions.js`, table `scenario_versions`, migration 008).** One `current`
+    version per scenario is what students get and `scenarios.archive_*` / `scenario_url` always mirror it (the public
+    routes never read the table); at most one `pending` (an author's new archive for a **published** scenario, invisible
+    to students until a moderator accepts it) and any number `archived`, at most 50 per scenario. Upload
+    (`versions.installUpload`, under the scenario's row lock): draft/rejected → new current (old archived, a pending row
+    deleted); review → 409; published → moderator: current, author: pending (replacing the earlier one); identical
+    bytes to the current one change nothing. `GET …/versions` (owner/moderator), `POST …/versions/:vid/{accept|reject|
+    restore}` (moderator; reject deletes the pending row), `DELETE …/versions/:vid` (archived: moderator; pending: owner
+    or moderator; current: 409). A `:vid` of another scenario is a 404. A deleted row's object is left to GC.
+    **Every version row is a GC reference** (`referencedArchives` unions scenarios and versions); a dedup re-upload
+    refreshes the object's mtime so GC cannot race it. Migration `009` drops `is_published` — the point of no return
+    (`pg_dump` first; the down-migration is in its header).
+  - **`POST /api/scenarios/from-archive`** (author or moderator, multipart `archive`, optional `category` slug,
+    default the first category): creates a **draft** from the ZIP's manifest (id = manifest id, which must match
+    `^[a-z0-9][a-z0-9-]{1,99}$` — it is untrusted data — else 400 with a hint to rebuild with ScenarioCreator; 409 if
+    taken), owned by the caller, counted against the author upload limit; nothing is left behind on a refusal.
+  - **Draft preview:** `GET /api/catalog/:id?version=<sha256>` returns the public projection with that version's
+    archive and `Cache-Control: no-store` (not 64-hex → 400). A published scenario's versions are public; any other
+    status needs the owner or a moderator (`optionalAuthenticate`: the viewer sends the session bearer), everyone else
+    gets the same 404 as for an unknown hash. A wrong credential here still counts against the failed-auth limiter.
   - **Journal** (`audit.js`): every authenticated mutation writes one `audit_events` row through
     `audit.record(client, principal, action, scenarioId?, details?)` *inside the route's own transaction*, so
     it commits and rolls back with the change. `scenario_id` has no foreign key: history outlives the
@@ -240,9 +276,9 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   Collection is decided by "no row references this hash", never by "a row was deleted" — dedup
   means one object may back several rows. Objects younger than `GC_MIN_AGE_MS` are spared, because
   `commitArchive` stores an object before the row that points at it.
-- `POST /api/scenarios/:id/archive` — the owning author while the scenario is unpublished (published →
-  403), or a moderator; multipart field `archive`; validates the ZIP (`archive-validation.js`, with the
-  formats from `player-formats.js`), then stores it under its sha256 and repoints the scenario at it.
+- `POST /api/scenarios/:id/archive` — the owning author (in any status but review → 409; on a published scenario it
+  becomes a *pending* version) or a moderator; multipart field `archive`; validates the ZIP (`archive-validation.js`, with the
+  formats from `player-formats.js`), then stores it under its sha256 and records it as a version (see Versions above).
   Authors are untrusted uploaders, so validation is capped: at most `MAX_ENTRY_BYTES` (10 MiB) is read
   from any manifest or scene/prefab entry — counted on the decompressed stream, because a declared size can
   lie — and at most `MAX_ARCHIVE_ENTRIES` (20 000) entries, the count read from the end-of-central-directory
@@ -354,8 +390,8 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 610 tests; needs docker-compose.test.yml up
-cd frontend && npx ng test --no-watch   # 293 tests
+cd backend  && npm test           # 1090+ tests; needs docker-compose.test.yml up
+cd frontend && npx ng test --no-watch   # 309 tests
 cd frontend && npm run test:scripts     # the CSP checker's own tests (node --test)
 cd frontend && npm run build && npm run check:csp   # built index.html: no import map, nonce or blob: script-src
 cd e2e      && npm test           # 104 Playwright tests (a few skip: by design, or editor-csp without its stack);

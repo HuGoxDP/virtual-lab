@@ -24,7 +24,7 @@ process.env.ARCHIVE_ROOT = ARCHIVE_ROOT;
 const { app, pool } = require('../../server');
 const storage = require('../../storage');
 const { failedAuth, authorUploads } = require('../../rate-limits');
-const { isAvailable, prepareSchema, truncateAll, seedScenarios } = require('../helpers/db');
+const { isAvailable, prepareSchema, truncateAll, seedScenarios, addCurrentVersion } = require('../helpers/db');
 const { validArchive } = require('../helpers/fixtures');
 const { createKey, revokeKey } = require('../helpers/keys');
 
@@ -83,14 +83,29 @@ const DENIED = { anonymous: 401, unknown: 403, revoked: 403, authorA: 403, autho
 
 let counter = 0;
 
-/** Rows every cell starts from: `rt-own` is Alice's, unpublished; `rt-del` is a throwaway. */
+/** Version ids of the fixtures below, refreshed by `resetFixtures`. */
+let fx = {};
+
+/**
+ * Rows every cell starts from: `rt-own` is Alice's draft with a current archive; `rt-rev` her
+ * scenario in review; `rt-pub` her published one with a pending and an archived version beside
+ * the current; `rt-del` is a throwaway.
+ */
 async function resetFixtures() {
   await pool.query("DELETE FROM scenarios WHERE id LIKE 'rt-%'");
   await pool.query(`
-    INSERT INTO scenarios (id, title, category, category_label, is_published, owner_key_id)
-    VALUES ('rt-own', 'Own', 'biology', 'Біологія', false, $1),
-           ('rt-del', 'Delete me', 'biology', 'Біологія', false, NULL)
+    INSERT INTO scenarios (id, title, category, category_label, status, owner_key_id)
+    VALUES ('rt-own', 'Own', 'biology', 'Біологія', 'draft', $1),
+           ('rt-rev', 'In review', 'biology', 'Біологія', 'review', $1),
+           ('rt-pub', 'Live', 'biology', 'Біологія', 'published', $1),
+           ('rt-del', 'Delete me', 'biology', 'Біологія', 'draft', NULL)
   `, [keys.authorA.id]);
+  for (const id of ['rt-own', 'rt-rev']) await addCurrentVersion(pool, id, id === 'rt-own' ? 'a'.repeat(64) : 'b'.repeat(64));
+  await addCurrentVersion(pool, 'rt-pub', 'c'.repeat(64));
+  const { rows } = await pool.query(`
+    INSERT INTO scenario_versions (scenario_id, sha256, bytes, state)
+    VALUES ('rt-pub', $1, 1, 'pending'), ('rt-pub', $2, 1, 'archived') RETURNING id, state`, ['d'.repeat(64), 'e'.repeat(64)]);
+  fx = Object.fromEntries(rows.map(r => [r.state, r.id]));
 }
 
 const count = async sql => (await pool.query(sql)).rows[0].n;
@@ -157,6 +172,44 @@ const ROUTES = [
     name: 'GET /api/auth/me', ok: 200, allowed: ANY_PRINCIPAL,
     send: (r, h) => r.get('/api/auth/me').set(h),
   },
+  // ── Phase 3: the workflow and the version history ──
+  ...[['submit', 'rt-own', ['authorA', ...MODERATORS]], ['withdraw', 'rt-rev', ['authorA', ...MODERATORS]],
+    ['approve', 'rt-own', MODERATORS], ['reject', 'rt-rev', MODERATORS], ['unpublish', 'rt-pub', MODERATORS]]
+    .map(([action, id, allowed]) => ({
+      name: `POST /api/scenarios/${id}/${action}`, ok: 200, allowed,
+      send: (r, h) => r.post(`/api/scenarios/${id}/${action}`).set(h),
+      state: async () => (await pool.query('SELECT status FROM scenarios WHERE id = $1', [id])).rows[0].status,
+    })),
+  {
+    name: 'GET /api/scenarios/rt-own/versions', ok: 200, allowed: ['authorA', ...MODERATORS],
+    send: (r, h) => r.get('/api/scenarios/rt-own/versions').set(h),
+  },
+  ...['accept', 'reject'].map(action => ({
+    name: `POST /api/scenarios/rt-pub/versions/:vid/${action} (pending)`, ok: 200, allowed: MODERATORS,
+    send: (r, h) => r.post(`/api/scenarios/rt-pub/versions/${fx.pending}/${action}`).set(h),
+    state: async () => (await pool.query('SELECT state FROM scenario_versions WHERE id = $1', [fx.pending])).rows[0]?.state,
+  })),
+  {
+    name: 'POST /api/scenarios/rt-pub/versions/:vid/restore (archived)', ok: 200, allowed: MODERATORS,
+    send: (r, h) => r.post(`/api/scenarios/rt-pub/versions/${fx.archived}/restore`).set(h),
+    state: async () => (await pool.query('SELECT state FROM scenario_versions WHERE id = $1', [fx.archived])).rows[0]?.state,
+  },
+  {
+    name: 'DELETE /api/scenarios/rt-pub/versions/:vid (archived)', ok: 200, allowed: MODERATORS,
+    send: (r, h) => r.delete(`/api/scenarios/rt-pub/versions/${fx.archived}`).set(h),
+    state: async () => (await pool.query('SELECT state FROM scenario_versions WHERE id = $1', [fx.archived])).rows[0]?.state,
+  },
+  {
+    name: 'DELETE /api/scenarios/rt-pub/versions/:vid (pending)', ok: 200, allowed: ['authorA', ...MODERATORS],
+    send: (r, h) => r.delete(`/api/scenarios/rt-pub/versions/${fx.pending}`).set(h),
+    state: async () => (await pool.query('SELECT state FROM scenario_versions WHERE id = $1', [fx.pending])).rows[0]?.state,
+  },
+  {
+    name: 'POST /api/scenarios/from-archive', ok: 201, allowed: ANY_PRINCIPAL,
+    send: (r, h) => r.post('/api/scenarios/from-archive').set(h)
+      .attach('archive', validArchive({ id: 'rt-from-archive' }), 'scenario.zip'),
+    state: () => count('SELECT COUNT(*)::int AS n FROM scenarios'),
+  },
 ];
 
 test('179. route table: every admin route x every caller (DW-2.3)', async t => {
@@ -188,7 +241,7 @@ test('179. an author sees only their own scenarios; a moderator sees all', async
   await resetFixtures();
 
   const mine = await request(app).get('/api/admin/scenarios').set(keys.authorA.auth).expect(200);
-  assert.deepEqual(mine.body.scenarios.map(s => s.id), ['rt-own']);
+  assert.deepEqual(mine.body.scenarios.map(s => s.id).sort(), ['rt-own', 'rt-pub', 'rt-rev']);
   assert.equal(mine.body.scenarios[0].ownerKeyId, keys.authorA.id);
 
   const other = await request(app).get('/api/admin/scenarios').set(keys.authorB.auth).expect(200);

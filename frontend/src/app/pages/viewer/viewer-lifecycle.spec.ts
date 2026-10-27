@@ -716,3 +716,99 @@ describe('ViewerComponent on PlayerHost', () => {
     });
   });
 });
+
+// Test-plan scenario 196 (DW-3.5): a draft preview - `?draft=<sha256>` plays that version and its exit
+// goes back to the admin through a validated `returnTo`.
+describe('ViewerComponent draft preview (?draft=)', () => {
+  const HASH = 'ab'.repeat(32);
+
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    vi.restoreAllMocks();
+  });
+
+  function preview(query: Record<string, string>) {
+    const made = setup({ query });
+    const navigateByUrl = vi.spyOn(TestBed.inject(Router), 'navigateByUrl').mockResolvedValue(true);
+    return { ...made, navigateByUrl };
+  }
+
+  it('DW-3.5 asks the service for exactly that version and runs it', async () => {
+    const { fixture, service } = preview({ draft: HASH });
+    await running(fixture);
+    expect(service.fetchScenarioById).toHaveBeenCalledWith('solar-system', HASH);
+  });
+
+  it('a normal run asks for no version', async () => {
+    const { fixture, service } = preview({});
+    await running(fixture);
+    expect(service.fetchScenarioById).toHaveBeenCalledWith('solar-system', undefined);
+  });
+
+  it('an uppercase hash is lowercased before it is sent', async () => {
+    const { fixture, service } = preview({ draft: HASH.toUpperCase() });
+    await running(fixture);
+    expect(service.fetchScenarioById).toHaveBeenCalledWith('solar-system', HASH);
+  });
+
+  it('a malformed ?draft= is an error screen: nothing is fetched and no frame starts', async () => {
+    for (const draft of ['abc', HASH.slice(1), `${HASH}0`, `${HASH.slice(1)}g`, '']) {
+      const { fixture, viewer, service, host } = preview({ draft });
+      await until(fixture, () => viewer.state() === 'error');
+      expect(viewer.errorMessage()).toBe('Посилання на чернетку некоректне.');
+      expect(service.fetchScenarioById).not.toHaveBeenCalled();
+      expect(host.load).not.toHaveBeenCalled();
+      TestBed.resetTestingModule();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('a preview never streams, even with ?stream=1: it is that one ZIP', async () => {
+    const { fixture, service, host } = preview({ draft: HASH, stream: '1' });
+    await running(fixture);
+    expect(service.downloadScenarioZip).toHaveBeenCalled();
+    expect(host.load.mock.calls[0][0].kind).toBe('blob');
+  });
+
+  it('DW-3.5 exit goes to a relative /admin returnTo', async () => {
+    const returnTo = '/admin/scenarios/solar-system?tab=file#top';
+    const { fixture, viewer, navigate, navigateByUrl } = preview({ draft: HASH, returnTo });
+    await running(fixture);
+    viewer.exit();
+    expect(navigateByUrl).toHaveBeenCalledWith(returnTo);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('DW-3.5 a returnTo off the site or outside /admin is ignored: exit goes to the scenario page', async () => {
+    for (const returnTo of ['https://evil.example', '//evil.example', '/\evil.example', '/catalog', 'admin/x',
+      'javascript:alert(1)', '/admin/../catalog', '/administrator']) {
+      const { fixture, viewer, navigate, navigateByUrl } = preview({ draft: HASH, returnTo });
+      await running(fixture);
+      viewer.exit();
+      expect(navigateByUrl, returnTo).not.toHaveBeenCalled();
+      expect(navigate, returnTo).toHaveBeenCalledWith(['/scenario', 'solar-system']);
+      TestBed.resetTestingModule();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('returnTo without ?draft= is ignored: only a preview exits to the admin', async () => {
+    const { fixture, viewer, navigate, navigateByUrl } = preview({ returnTo: '/admin/scenarios' });
+    await running(fixture);
+    viewer.exit();
+    expect(navigateByUrl).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith(['/scenario', 'solar-system']);
+  });
+
+  it('the error screen way out is the returnTo too (the lookup 404s for anonymous or foreign drafts)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { fixture, viewer } = setup({
+      query: { draft: HASH, returnTo: '/admin/x' },
+      arrange: d => d.service.fetchScenarioById.mockRejectedValue(new Error('404')),
+    });
+    const navigateByUrl = vi.spyOn(TestBed.inject(Router), 'navigateByUrl').mockResolvedValue(true);
+    await until(fixture, () => viewer.state() === 'error');
+    viewer.goBack();
+    expect(navigateByUrl).toHaveBeenCalledWith('/admin/x');
+  });
+});

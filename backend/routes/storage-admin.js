@@ -20,12 +20,19 @@ const router = express.Router();
  */
 const GC_MIN_AGE_MS = Number(process.env.GC_MIN_AGE_MS || 60 * 60 * 1000);
 
-/** Every archive hash the catalog still points at. */
+/**
+ * Every archive hash something still points at: a scenario's own archive and every version
+ * row (current, pending or archived). A version row is a reference until it is deleted; the
+ * scenario's column mirrors its current version, so the union only differs for a row that
+ * predates the history.
+ */
 async function referencedArchives() {
-  const { rows } = await pool.query(
-    'SELECT DISTINCT archive_sha256 FROM scenarios WHERE archive_sha256 IS NOT NULL'
-  );
-  return new Set(rows.map(row => row.archive_sha256));
+  const { rows } = await pool.query(`
+    SELECT archive_sha256 AS sha256 FROM scenarios WHERE archive_sha256 IS NOT NULL
+    UNION
+    SELECT sha256 FROM scenario_versions
+  `);
+  return new Set(rows.map(row => row.sha256));
 }
 
 const sumBytes = objects => objects.reduce((total, o) => total + o.bytes, 0);

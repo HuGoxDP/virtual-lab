@@ -10,6 +10,9 @@ const { pool, inTransaction } = require('../db');
 const { authorize, canEditScenario } = require('../auth');
 const audit = require('../audit');
 const { validateFeatures, forbiddenAuthorFields } = require('../catalog-input');
+const { ADMIN_COLUMNS } = require('../scenario-rows');
+const { applyTransition } = require('../workflow');
+const { httpError, sendError } = require('../http-error');
 
 const router = express.Router();
 
@@ -32,26 +35,7 @@ router.get('/api/admin/scenarios', authorize('author'), async (req, res) => {
 
   try {
     const { rows } = await pool.query(`
-      SELECT
-        id, title, description,
-        full_description   AS "fullDescription",
-        category,
-        category_label     AS "categoryLabel",
-        image_url          AS "imageUrl",
-        scenario_url       AS "scenarioUrl",
-        manifest_url       AS "manifestUrl",
-        version, author,
-        upload_date        AS "uploadDate",
-        is_published       AS "isPublished",
-        storage_kind       AS "storageKind",
-        archive_sha256     AS "archiveSha256",
-        archive_bytes      AS "archiveBytes",
-        manifest_id        AS "manifestId",
-        manifest_version   AS "manifestVersion",
-        manifest_engine_version AS "manifestEngineVersion",
-        owner_key_id       AS "ownerKeyId",
-        updated_at         AS "updatedAt",
-        CASE WHEN jsonb_typeof(features) = 'array' THEN features ELSE '[]'::jsonb END AS features
+      SELECT ${ADMIN_COLUMNS}
       FROM scenarios
       WHERE ($1::int IS NULL OR owner_key_id = $1)
       ORDER BY created_at DESC
@@ -77,9 +61,10 @@ async function ensureCategory(db, slug, label) {
 }
 
 // ── POST /api/catalog ────────────────────────────────
-// Author: the row is created unpublished, owned by the key, `author` = the key's
-// label, and `category` must already exist. Moderator: as before (an unknown
-// slug creates its category from `categoryLabel`).
+// Every new row starts as `draft` - it has no archive yet, and approving needs one - whatever
+// the caller sends (`isPublished` is ignored for a moderator, refused for an author). Author:
+// owned by the key, `author` = the key's label, `category` must already exist. Moderator: an
+// unknown slug creates its category from `categoryLabel`.
 router.post('/api/catalog', authorize('author'), async (req, res) => {
   const { principal } = req;
   const byAuthor = isAuthor(principal);
@@ -116,10 +101,10 @@ router.post('/api/catalog', authorize('author'), async (req, res) => {
       const { rows } = await db.query(`
         INSERT INTO scenarios
         (id, title, description, full_description, category, category_label,
-         image_url, scenario_url, version, author, features, is_published, owner_key_id)
+         image_url, scenario_url, version, author, features, owner_key_id)
         VALUES ($1,$2,$3,$4,$5,
-                COALESCE($6::text, (SELECT label FROM categories WHERE slug = $14::text)),
-                $7,$8,$9,$10,$11::jsonb,$12,$13)
+                COALESCE($6::text, (SELECT label FROM categories WHERE slug = $13::text)),
+                $7,$8,$9,$10,$11::jsonb,$12)
           RETURNING id
       `, [
         id, title,
@@ -133,7 +118,6 @@ router.post('/api/catalog', authorize('author'), async (req, res) => {
         // names it, defaulting to their key's label (the bootstrap has none).
         byAuthor ? principal.label : (author || (principal.keyId == null ? null : principal.label)),
         JSON.stringify(checked.value),
-        !byAuthor,
         principal.keyId,
         category,
       ]);
@@ -179,6 +163,9 @@ router.put('/api/catalog/:id', authorize('author'), async (req, res) => {
   if (categoryLabel !== undefined && typeof categoryLabel !== 'string') {
     return res.status(400).json({ error: 'categoryLabel має бути рядком' });
   }
+  if (isPublished !== undefined && typeof isPublished !== 'boolean') {
+    return res.status(400).json({ error: 'isPublished має бути булевим' });
+  }
 
   // Собираем только те поля, которые пришли в запросе
   const fields = [];
@@ -206,14 +193,13 @@ router.put('/api/catalog/:id', authorize('author'), async (req, res) => {
   addField('manifestUrl', 'manifest_url', manifestUrl);
   addField('version', 'version', version);
   addField('author', 'author', author);
-  addField('isPublished', 'is_published', isPublished);
   if (checked) {
     fields.push(`features = $${paramIndex++}::jsonb`);
     values.push(JSON.stringify(checked.value));
     changed.push('features');
   }
 
-  if (fields.length === 0) {
+  if (fields.length === 0 && isPublished === undefined) {
     return res.status(400).json({ error: 'Не вказано жодного поля для оновлення' });
   }
 
@@ -222,28 +208,35 @@ router.put('/api/catalog/:id', authorize('author'), async (req, res) => {
 
   try {
     values.push(id); // последний параметр — WHERE id = $N
-    const outcome = await inTransaction(async db => {
+    await inTransaction(async db => {
       // Locked, so the ownership read below cannot go stale before the write.
-      const { rows } = await db.query('SELECT owner_key_id FROM scenarios WHERE id = $1 FOR UPDATE', [id]);
-      if (!rows[0]) return { status: 404, error: 'Сценарій не знайдено' };
-      if (!canEditScenario(principal, rows[0])) return { status: 403, error: 'Це не ваш сценарій' };
+      const { rows } = await db.query('SELECT owner_key_id, status FROM scenarios WHERE id = $1 FOR UPDATE', [id]);
+      if (!rows[0]) throw httpError(404, 'Сценарій не знайдено');
+      if (!canEditScenario(principal, rows[0])) throw httpError(403, 'Це не ваш сценарій');
+
+      // Compatibility for the old admin: `isPublished` is approve / unpublish. Asking for the
+      // state the row is already in is a no-op; approving a row with no archive is a 409.
+      // Done before any write, so a refusal changes nothing.
+      if (isPublished === true && rows[0].status !== 'published') {
+        await applyTransition(db, principal, id, 'approve');
+      } else if (isPublished === false && rows[0].status === 'published') {
+        await applyTransition(db, principal, id, 'unpublish');
+      }
 
       if (category !== undefined) {
         if (!byAuthor) await ensureCategory(db, category, categoryLabel);
-        else if (!(await categoryExists(db, category))) return { status: 400, error: 'Невідома категорія' };
+        else if (!(await categoryExists(db, category))) throw httpError(400, 'Невідома категорія');
       }
 
-      await db.query(`UPDATE scenarios SET ${fields.join(', ')} WHERE id = $${paramIndex}`, values);
-      await audit.record(db, principal, 'scenario.update', id, { fields: changed });
-      return { status: 200 };
+      if (changed.length > 0) {
+        await db.query(`UPDATE scenarios SET ${fields.join(', ')} WHERE id = $${paramIndex}`, values);
+        await audit.record(db, principal, 'scenario.update', id, { fields: changed });
+      }
     });
-
-    if (outcome.status !== 200) return res.status(outcome.status).json({ error: outcome.error });
 
     res.json({ message: 'Сценарій оновлено', id });
   } catch (err) {
-    console.error('[API] PUT /api/catalog/:id error:', err.message);
-    res.status(500).json({ error: 'Помилка сервера' });
+    sendError(res, err, 'PUT /api/catalog/:id');
   }
 });
 

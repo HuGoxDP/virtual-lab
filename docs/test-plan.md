@@ -571,6 +571,41 @@ independently of `auth.js`. Scenarios 17-23 above still hold for the bootstrap m
 186. [U] Pure routines: `requireRole` ranking, `canEditScenario` (unowned and key-less cases), `createWindowCounter` (window
      expiry, `Retry-After`), `limitAuthorUploads` exemptions, `parsePositiveInt` fallbacks, `forbiddenAuthorFields`,
      `sha256Hex` (DW-2.2, DW-2.3, DW-2.4, DW-2.6).
+187. [I] Migrations 008/009 (DW-3.1): applied twice (and 008 again after 009) on a rebuilt pre-008 schema; `is_published`
+     TRUE/FALSE/NULL -> published/draft/draft; one `current` version per archived row, none for streaming-only rows;
+     the catalog shows exactly the published ones; status check, one current / one pending per scenario, cascade.
+188. [I] Transition matrix (DW-3.2): every (status x action x {owner, other author, moderator, bootstrap, anonymous}) ->
+     200/401/403/409 with one audit event per success and none per refusal; no archive -> 409 for submit and approve;
+     reject note default / trimmed / 2000 ok / 2001 -> 400 / non-string -> 400; note and `submitted_at` lifecycle;
+     two concurrent approves -> one 409; submit racing withdraw; a PUT cannot set `status`.
+189. [I] Upload by status (DW-3.3): draft and rejected -> new current (old archived, pending row deleted, same bytes a
+     no-op); review -> 409 and nothing stored; published by moderator -> current, by author -> pending (a second
+     replaces it; the public catalog keeps the old URL until accept); stranger 403, unknown 404; the 51st version -> 409;
+     an author's upload racing an approve never becomes current on the published row.
+190. [I] Version routes (DW-3.4): list (owner/moderator), accept, reject (row deleted), restore, delete (archived by a
+     moderator, pending by its owner or a moderator, current -> 409), unpublish keeps a pending row, `:vid` of another
+     scenario or malformed -> 404, role table, racing accept/restore leave one current version.
+191. [I] Version preview (DW-3.5): `GET /api/catalog/:id?version=` - published versions public (pending included),
+     draft/review/rejected only for owner and moderators, everyone else 404; 63/65/non-hex/repeated -> 400; foreign hash
+     404; `Cache-Control: no-store` on every answer; a wrong credential counts against the address (429).
+192. [I] `from-archive` (DW-3.6): valid ZIP -> draft owned by the caller with manifest fields and `{scenario, version,
+     manifest, warnings}`; taken id -> 409 (also racing); manifest ids of 101 characters, with `/`, spaces, dots, uppercase
+     -> 400 with a hint; invalid ZIPs, unknown category -> 400 with no row, object or temp file; upload limit applies.
+193. [I] GC and versions (DW-3.7): current, pending and archived objects survive a sweep however old; a deleted or rejected
+     version's object (and a deleted scenario's) is collectible once older than `GC_MIN_AGE_MS`; a shared object lives
+     until the last reference; a dedup re-upload refreshes mtime (also [U] in `storage.test.js`).
+194. [U] Pure routines: the transition table's shape, `parseRejectNote`, `sendError`, `optionalAuthenticate` without a
+     lookup, `SCENARIO_ID_PATTERN` (DW-3.2, DW-3.5, DW-3.6).
+195. [U] `publish:release` (DW-3.8): a new row is created, uploaded, then approved; an existing draft is approved, a live
+     row is left, a bench scene is unpublished; a dry run writes nothing. Compatibility: `PUT {isPublished}` approves /
+     unpublishes (409 without an archive), a POST ignores it, every guarded route is in the route table (179).
+196. [F] Viewer draft preview (DW-3.5): `?draft=` is parsed (64 hex, lowercased, malformed -> error screen), the service sends
+     `?version=` with the session bearer only for a preview, `returnTo` is honoured only for a draft and only as a relative
+     `/admin...` path (`https://evil.example`, `//evil`, backslash, `..` ignored), `goBack` follows it too; a preview
+     never streams.
+197. [E2E] `e2e/tests/draft-preview.spec.ts` (DW-3.5): a draft's version is a 404 anonymously and plays for the signed-in
+     owner/moderator, Вийти goes to the validated `returnTo`, a hostile one is ignored; `admin-golden-path.spec.ts` now
+     creates, uploads, then publishes through the toggle (a new row is a draft).
 
 
 ### 4.11 Golden paths (E2E)

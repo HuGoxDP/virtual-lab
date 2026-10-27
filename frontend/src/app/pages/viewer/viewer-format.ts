@@ -89,3 +89,32 @@ export function isPauseShortcut(event: KeyboardEvent): boolean {
   const target = event.target;
   return !(target instanceof Element && target.closest(SPACE_OWNERS));
 }
+
+/** A version hash in `?draft=`: exactly what the API's `?version=` accepts. */
+const DRAFT_HASH = /^[0-9a-f]{64}$/i;
+
+/** The sha256 of a draft preview from `?draft=`, lowercased; `null` when the parameter is absent or malformed. */
+export function parseDraftHash(raw: string | null): string | null {
+  return raw !== null && DRAFT_HASH.test(raw) ? raw.toLowerCase() : null;
+}
+
+/**
+ * Where a draft preview's exit goes: `?returnTo=` only when it is a relative path into `/admin`.
+ *
+ * `returnTo` comes from the URL, so anyone can craft a link; navigating to it blindly would make the
+ * viewer an open redirect. Accepted: `/admin` or `/admin/...` (optionally with a query or fragment),
+ * and nothing that resolves off this origin - no scheme, no `//host`, no backslash (browsers read `\`
+ * as `/`), no control characters or spaces, no `..` segment that could climb out of `/admin`.
+ */
+export function validReturnTo(raw: string | null): string | null {
+  if (raw === null || !/^\/admin(?:[/?#]|$)/.test(raw)) return null;
+  if (/[\\\s\u0000-\u001f\u007f]/.test(raw)) return null;
+  const path = raw.split(/[?#]/, 1)[0];
+  if (path.split('/').some(segment => segment === '..' || segment === '.')) return null;
+  try {
+    const url = new URL(raw, 'http://placeholder.invalid');
+    return url.origin === 'http://placeholder.invalid' && url.pathname.startsWith('/admin') ? raw : null;
+  } catch {
+    return null;
+  }
+}

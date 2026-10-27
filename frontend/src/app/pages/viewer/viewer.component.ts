@@ -29,7 +29,9 @@ import {
   absoluteUrl,
   isPauseShortcut,
   mapPlayerError,
+  parseDraftHash,
   readFlag,
+  validReturnTo,
 } from './viewer-format';
 import { ViewerHudComponent } from './viewer-hud.component';
 import { ViewerLoadingComponent } from './viewer-loading.component';
@@ -142,6 +144,17 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    */
   readonly streamingRequested = signal(false);
 
+  /**
+   * The version hash of a draft preview (`?draft=<sha256>`), or `null` for a normal run. The viewer then
+   * asks the API for that version (with the session's bearer, since a non-published scenario answers only
+   * its owner or a moderator) and never takes the streaming path: a preview is that one ZIP.
+   */
+  private draftHash: string | null = null;
+  /** `?draft=` was present but is not a sha256: an error screen rather than a silent normal run. */
+  private draftMalformed = false;
+  /** Where a draft preview's exit goes (a validated `/admin/...` path); `null` = the scenario's page. */
+  private returnTo: string | null = null;
+
   readonly isLoading = computed(
     () => this.state() === 'downloading' || this.state() === 'loading-engine'
   );
@@ -161,6 +174,11 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     const query = this.route.snapshot.queryParamMap;
     this.buildStampVisible.set(readFlag(query.get('diag')));
     this.streamingRequested.set(readFlag(query.get('stream')));
+    const rawDraft = query.get('draft');
+    this.draftHash = parseDraftHash(rawDraft);
+    this.draftMalformed = rawDraft !== null && this.draftHash === null;
+    // Honoured only for a draft preview: that is the one run whose scenario has no public page to exit to.
+    this.returnTo = this.draftHash ? validReturnTo(query.get('returnTo')) : null;
 
     // Probe before starting: a machine without WebGL2 should see the explanation, not a frame that
     // fails inside the sandbox.
@@ -269,11 +287,15 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   private async openScenario(id: string): Promise<void> {
     const token = ++this.loadToken;
     this.setState('downloading', 0, 'Отримання даних сценарію');
+    if (this.draftMalformed) {
+      this.showError('Посилання на чернетку некоректне.');
+      return;
+    }
 
     let scenario: ScenarioCatalogItem;
 
     try {
-      scenario = await this.scenarioService.fetchScenarioById(id);
+      scenario = await this.scenarioService.fetchScenarioById(id, this.draftHash ?? undefined);
       if (token !== this.loadToken) return;
 
       this.scenarioId = scenario.id;
@@ -300,7 +322,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    * 3. The player's engine unpacks it, validates the manifest and executes the entry point
    */
   private async startLoading(scenario: ScenarioCatalogItem, token: number): Promise<void> {
-    if (this.streamingRequested() && scenario.manifestUrl) {
+    if (this.streamingRequested() && scenario.manifestUrl && !this.draftHash) {
       // No download step: the engine in the frame fetches scripts and assets itself, in priority order.
       const source: PlayerLoadSource = { kind: 'manifest', url: absoluteUrl(scenario.manifestUrl, location.href) };
       this.loadedSource.set(source);
@@ -472,11 +494,19 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
   /** HUD "Вийти" and the loader's "Скасувати": back to the scenario's own page. */
   exit(): void {
+    if (this.returnTo) {
+      void this.router.navigateByUrl(this.returnTo);
+      return;
+    }
     void this.router.navigate(this.routeId ? ['/scenario', this.routeId] : ['/catalog']);
   }
 
   /** The error, unsupported and context-lost screens keep their way out: the catalog. */
   goBack(): void {
+    if (this.returnTo) {
+      void this.router.navigateByUrl(this.returnTo);
+      return;
+    }
     void this.router.navigate(['/catalog']);
   }
 }

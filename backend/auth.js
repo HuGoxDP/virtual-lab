@@ -85,6 +85,32 @@ async function authenticate(req, res, next) {
   res.status(403).json({ error: 'Невірний токен' });
 }
 
+/**
+ * For a public route that shows more to its owner or a moderator: sets `req.principal`
+ * when a valid credential is presented and otherwise carries on anonymously. A presented
+ * credential that is wrong still counts against the address (this route would otherwise
+ * be a free place to guess tokens) and answers 429 once the address is over the limit;
+ * it is not a 403, because a stale session token must not break a public page.
+ */
+async function optionalAuthenticate(req, res, next) {
+  const header = req.get('authorization') || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!token) return next();
+
+  try {
+    const principal = await resolvePrincipal(token);
+    if (principal) req.principal = principal;
+    else if (!failedAuth.consume(req.ip)) {
+      res.set('Retry-After', String(failedAuth.retryAfterSeconds(req.ip)));
+      return res.status(429).json({ error: 'Забагато невдалих спроб входу: спробуйте пізніше' });
+    }
+  } catch (err) {
+    console.error('[AUTH] lookup error:', err.message);
+    return res.status(500).json({ error: 'Помилка сервера' });
+  }
+  next();
+}
+
 /** Passes principals of `role` or higher (a moderator may do what an author may). */
 function requireRole(role) {
   return (req, res, next) => {
@@ -110,6 +136,7 @@ module.exports = {
   tokensMatch,
   sha256Hex,
   authenticate,
+  optionalAuthenticate,
   requireRole,
   authorize,
   canEditScenario,

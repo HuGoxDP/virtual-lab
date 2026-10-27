@@ -17,7 +17,7 @@ function row(id: string, overrides: Partial<AdminScenario> = {}): AdminScenario 
   return {
     id, title: `T ${id}`, description: '', fullDescription: '', category: 'physics', categoryLabel: 'Фізика',
     imageUrl: '', scenarioUrl: '', version: '1.0.0', author: 'A', archiveBytes: null, updatedAt: '2026-10-01T00:00:00Z',
-    features: [], isPublished: true, storageKind: 'local', archiveSha256: null, manifestId: null,
+    features: [], status: 'published', isPublished: true, moderatorNote: null, submittedAt: null, storageKind: 'local', archiveSha256: null, manifestId: null,
     manifestVersion: null, manifestEngineVersion: null,
     ...overrides,
   };
