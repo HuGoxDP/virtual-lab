@@ -5,7 +5,7 @@
 const express = require('express');
 const multer = require('multer');
 
-const { pool, scenarioExists } = require('../db');
+const { inTransaction, scenarioExists } = require('../db');
 const { requireAdmin } = require('../auth');
 const { MAX_ARCHIVE_BYTES } = require('../config');
 const storage = require('../storage');
@@ -40,8 +40,8 @@ function receiveArchive(req, res, next) {
 }
 
 /** Points a scenario at a stored object and records its integrity metadata. */
-async function attachArchive(id, { sha256, bytes, url }, manifest) {
-  await pool.query(`
+async function attachArchive(db, id, { sha256, bytes, url }, manifest) {
+  await db.query(`
     UPDATE scenarios
        SET scenario_url            = $1,
            archive_sha256          = $2,
@@ -96,7 +96,7 @@ router.post('/api/scenarios/:id/archive', requireAdmin, receiveArchive, async (r
     consumed = true;
     console.log(`[ARCHIVE] ${id}: sha256=${result.sha256} ${result.deduplicated ? '(вже є в сховищі, дедуп)' : '(новий об\'єкт збережено)'}`);
 
-    await attachArchive(id, result, manifest);
+    await inTransaction(db => attachArchive(db, id, result, manifest));
     console.log(`[ARCHIVE] ${id}: запис каталогу оновлено → ${result.url} (${result.bytes} bytes)`);
 
     res.status(201).json({ id, ...result, manifestId: manifest.id, warnings });

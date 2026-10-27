@@ -190,10 +190,10 @@ router.put('/api/catalog/:id', requireAdmin, async (req, res) => {
 // ── DELETE /api/catalog/:id ──────────────────────────
 router.delete('/api/catalog/:id', requireAdmin, async (req, res) => {
   try {
-    const { rowCount } = await pool.query(
-      'DELETE FROM scenarios WHERE id = $1',
-      [req.params.id]
-    );
+    const rowCount = await inTransaction(async db => {
+      const result = await db.query('DELETE FROM scenarios WHERE id = $1', [req.params.id]);
+      return result.rowCount;
+    });
 
     if (rowCount === 0) {
       return res.status(404).json({ error: 'Сценарій не знайдено' });
