@@ -155,7 +155,8 @@ This is the platform half of the engine's asset-streaming **Stage 0**
       than `db/` because the backend build context is `./backend`; `db/init.sql` stays the
       Postgres-entrypoint baseline and seed.
 - [x] **Object storage.** Decision: **a plain Docker volume (`virtual_lab_archives`) served by the
-      existing nginx**, recorded in `CLAUDE.md`. MinIO is deferred to Stage 3 of
+      existing nginx**, recorded in `CLAUDE.md`. An S3-compatible store (SeaweedFS, Garage
+      or hosted S3; not MinIO, whose repository was archived on 2026-04-25) is deferred to Stage 3 of
       `scenario-delivery-migration.md`, where presigned URLs and scale actually matter. The volume
       is mounted rw into `backend` and **ro** into `frontend`.
 - [x] **Content-addressed archives.** `backend/storage.js` stores `<sha256>.zip`, public path

@@ -69,6 +69,7 @@ Three containers behind one port (`docker-compose.yml`):
 browser → nginx :80 ─┬─ /            → Angular SPA (static)
                      ├─ /scenarios/* → archives volume (content-addressed ZIPs)
                      ├─ /a/*         → assets volume (per-asset store, streaming)
+                     ├─ /player/*    → the engine's sandboxed player (static, own CSP)
                      └─ /api/*       → backend:3000 (Express)
                                           └─ database:5432 (PostgreSQL)
 ```
@@ -80,14 +81,17 @@ Runtime flow for playing a scenario:
    the archive from `scenario_url` — always `/scenarios/<sha256>.zip`, served straight off the
    archives volume by nginx. There is no fallback and no proxy: the server never fetches an
    archive from anywhere. An off-origin `scenario_url` is a misconfigured row.
-3. The ZIP `ArrayBuffer` goes to `Application.loadScenarioFromBuffer`, which unpacks it,
-   validates the manifest, and runs the scenario's entry point.
+3. The viewer keeps the ZIP as a `Blob` and hands it to `PlayerHost`, which passes it to the sandboxed
+   player (`/player/player.html`, an `<iframe>` on an opaque origin). **Inside the frame**
+   `Application.loadScenarioFromBuffer` unpacks it, validates the manifest and runs the scenario's entry
+   point. The platform page runs no scenario code and holds no engine: a scenario cannot reach the API,
+   the admin token in `sessionStorage` or `/editor/`.
 
 ## Scenario storage
 
-**Decision (Phase 1): a plain Docker volume served by the existing nginx.** MinIO/S3 was the
-alternative and is deferred until presigned URLs or horizontal scale actually matter
-(`docs/scenario-delivery-migration.md`, Stage 3).
+**Decision (Phase 1): a plain Docker volume served by the existing nginx.** An S3-compatible object
+store (SeaweedFS, Garage or hosted S3 are the candidates) is deferred until presigned URLs or
+horizontal scale actually matter (`docs/scenario-delivery-migration.md`, Stage 3).
 
 - Archives are **content-addressed**: `virtual_lab_archives:/srv/archives/objects/<sha256>.zip`,
   public path `/scenarios/<sha256>.zip`. The name is the content, so the object is immutable —
@@ -135,8 +139,9 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   coexist — the row does not commit to one delivery path.
 - **The viewer takes this path only with `?stream=1`.** It is measurably *not* faster to first
   frame on the hardware tested and holds ~2.9× the texture VRAM, so defaulting to it would be a
-  student-visible regression for an unproven win (`../../.claude-shared/PLAN.md`). A streamed run keeps no buffer,
-  so **restart is disabled** for it.
+  student-visible regression for an unproven win (`../../.claude-shared/PLAN.md`). A streamed run keeps no
+  buffer, only its manifest URL, so **restart opens a fresh frame on the same manifest**. The URL is
+  absolutised against `location.href` first: the player refuses a relative one.
 - There is deliberately **no `scenario_assets` table and no `/api/scenarios/:id/manifest`**: the
   manifest already lists every asset and is served statically, so both would duplicate it without
   a reader. Add the table when GC (R5) needs reference counting.
@@ -153,17 +158,22 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   related scenarios, copy link (falls back to a selectable field when the Clipboard API is missing — the
   server runs plain HTTP), not-found and error states, a sticky launch bar on narrow
   screens. The viewer's exit target.
-- `src/app/pages/viewer/` — the 3D host: canvas, load progress, error states, engine lifecycle,
-  restart / fullscreen, WebGL2 probe and context-loss handling. The `MemoryProfiler` overlay is **off on
-  the platform**: it is engine API and a measurement tool, developed separately, not a student
-  control. `viewer-profiler.ts` sets `MemoryProfiler.diagnosticsAllowed = false` before every load
-  (`lockProfiler()`), unconditionally, so a scenario's own `showOverlay()` / `enableToggle()` (the
-  Backquote hotkey) — `solar-system` calls both — are inert. With today's two-way engine setter a
-  scenario can still re-open the gate later, so `enforceProfilerOff()` also runs after load and once
-  a second while the viewer lives. `?diag=1` shows only the `BuildInfo` stamp, never the overlay, and
-  the HUD has no diagnostics control. Whether the overlay belongs in a scenario is ScenarioCreator's
-  question; the platform never shows it. (Player-isolation phase 5 keeps this by always sending
-  `diag: false`; the engine's latching setter will make the periodic check redundant.)
+- `src/app/pages/viewer/` — the 3D host. It drives `PlayerHost` (from `WebEngineTS/player-host`, the only
+  engine import the app has) and holds no engine: the scenario renders in the player frame the host
+  creates. The page owns load progress, error states (a handshake, origin or version failure becomes
+  Ukrainian copy; a runtime error inside the scenario shows nothing and keeps the scene), the WebGL2
+  probe, context loss, cancel/exit and fullscreen (of `.viewer-container`; the frame gets no `fullscreen`
+  permission). **Restart is always a fresh frame** — the old one is removed — from the retained `Blob`
+  (ZIP, no second download) or the manifest URL (`?stream=1`). **Pause** is the HUD button or **Space with
+  either focus**: with the host focused the page handles it, with the frame focused (the viewer focuses it
+  after load) the engine's player does, and both end in the player's `paused` report; one key press never
+  toggles twice. FPS also comes from the player. The `MemoryProfiler` overlay is **off on the platform**: it
+  is engine API and a measurement tool, developed separately, not a student control. The host always sends
+  `diag: false` and never calls `toggleDiagnostics()`, and the engine's `diagnosticsAllowed` latches at
+  `false`, so a scenario's own `showOverlay()` / `enableToggle()` (the Backquote hotkey) are inert; there
+  is no page-side guard. `?diag=1` shows only the engine build stamp, read from the player with
+  `PlayerHost.measure()` about a second after the run starts; the HUD has no diagnostics control. Whether
+  the overlay belongs in a scenario is ScenarioCreator's question; the platform never shows it.
 - `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit (including the
   "Що всередині" editor, up to six entries), publish toggle, delete, archive upload with progress. The token lives in `sessionStorage`
   (`AdminService`), so it dies with the tab.
@@ -220,13 +230,24 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
 - `backend/migrations/*.sql` — every schema change after the baseline. Idempotent DDL, applied by
   the backend on boot. **Add schema changes here, never to `init.sql`.**
 
-**CSP** (`nginx/csp.conf`) — every directive was measured, not guessed, and two are load-bearing:
-`script-src blob:` (the engine executes scenario scripts from blob URLs — without it *nothing
-runs*) and a **nonce** for the inline import map, because **Chromium ignores CSP hashes for import
-maps**. nginx stamps `$request_id` onto the tag with `sub_filter`. `'unsafe-eval'` is deliberately
-absent, which means KTX2 transcoding cannot run — nothing loads a `.ktx2` today, and a test keeps
-that decision explicit. `add_header` does not inherit into a location that sets its own, so
-`csp.conf` is `include`d in each.
+**CSP** (`nginx/csp.conf`) — every directive was measured, not guessed. The platform page runs no
+scenario code, so `script-src` is **`'self'`** alone: no `blob:` and no nonce on `/`. `frame-src 'self'`
+admits the player frame. `'unsafe-eval'` is deliberately absent (the platform page never needs it, and
+`csp.spec.ts` keeps it out). `worker-src` and `img-src` still allow `blob:` (decoded textures; nothing
+there executes). Two other policies sit beside it:
+
+- **`/player/`** carries the engine's own header snippet, `player.nginx.conf` (copied out of the tarball
+  by `Dockerfile.frontend`): a CSP that names `$scheme://$http_host` rather than `'self'`, `'unsafe-eval'`
+  for the KTX2 transcoder, `frame-ancestors 'self'`, `sandbox allow-scripts allow-pointer-lock`, and no
+  `X-Frame-Options`. The headers belong to the engine; do not loosen them here. `^~ /player/` keeps the
+  static-asset regex block off it, and any other path under it is a 404.
+- **`/editor/`** (`docker-compose.editor.yml`) still has an inline import map and still runs on the
+  platform origin. `editor.conf` stamps the CSP nonce on it with `sub_filter` (Chromium ignores CSP
+  hashes for import maps) and includes `csp-editor.conf`, which keeps `blob:` and the nonce.
+
+`ACAO: *` is set on exactly what the opaque frame fetches (its `Origin` is `null`): the player files, the
+engine bundle, the basis transcoder and `/a/`. `add_header` does not inherit into a location that sets its
+own, so `csp.conf` is `include`d in each.
 
 **nginx** (`nginx/nginx.conf`) — SPA fallback, `/api/` reverse proxy, `^~ /scenarios/` archive
 serving (the `^~` is required or the `.zip` regex block wins), `no-cache` on `index.html`,
@@ -234,29 +255,43 @@ serving (the `^~` is required or the `.zip` regex block wins), `no-cache` on `in
 
 ## Engine integration (the part that is easy to break)
 
-The engine is resolved **twice, differently**, and both paths must stay in sync:
+**The page no longer imports the engine.** The Angular app imports only `WebEngineTS/player-host`
+(`PlayerHost`, an engine-free host client that is bundled with the app). The engine runs in the
+sandboxed player frame, and everything the frame loads is a static file the platform serves out of the
+tarball:
 
-- **Build time / types:** `WebEngineTS: file:WebEngineTS-0.1.0.tgz` in `frontend/package.json`.
-  `angular.json` lists `WebEngineTS` under `externalDependencies`, so Angular does not bundle it.
-- **Runtime:** the import map in `frontend/src/index.html` maps `"WebEngineTS"` to
-  `/assets/WebEngineTS.standalone.js`, copied by the `angular.json` assets rule from
-  `node_modules/WebEngineTS/dist`. The **standalone** build has Three.js bundled inside, which is
-  why `three` is not a dependency here (only `@types/three`).
+- **Build time:** `WebEngineTS: file:WebEngineTS-0.1.0.tgz` in `frontend/package.json`. The `angular.json`
+  assets rules copy from `node_modules/WebEngineTS/dist` the standalone bundle to
+  `/assets/WebEngineTS.standalone.js` (Three.js is bundled inside it, which is why `three` is not a
+  dependency here, only `@types/three`) and `player/{player.html,player.js}` to `/player/`.
+  `Dockerfile.frontend` also copies `player.nginx.conf` into the nginx image, because nginx cannot
+  include from `node_modules` at run time.
+- **Runtime:** there is **no import map on `/`**. The viewer gives `PlayerHost` the player URL
+  (`/player/player.html`), the bundle URL and the transcoder path; the player sets
+  `Scenario.engineModuleUrl`, so the engine's pre-linker rewrites a scenario's bare `"WebEngineTS"`
+  import to that absolute URL.
+- **`WebEngineTS` is no longer under `externalDependencies` in `angular.json`, and must not go back:**
+  esbuild treats it as covering subpaths, which leaves `WebEngineTS/player-host` an unresolvable bare
+  import.
 
 Consequences to respect:
-- Import only from `"WebEngineTS"`. Never from `three` or from engine internals — the engine
-  hides Three.js on purpose, and a second Three.js instance would break its `instanceof` checks.
+- Import only from `"WebEngineTS/player-host"`. Never from `"WebEngineTS"` itself (that would pull a
+  second engine into the page), `three` or engine internals — the engine hides Three.js on purpose, and
+  a second Three.js instance would break its `instanceof` checks.
+- The player's files, headers and handshake are the engine's. Changing them is an engine change plus
+  `release:local`, which refuses a tarball that lacks `dist/player/`.
 - `frontend/WebEngineTS-0.1.0.tgz` **is intentionally committed** (there is no registry to fetch
   it from at Docker build time). Do not gitignore it.
 - `Dockerfile.frontend` uses `npm install`, not `npm ci`, on purpose: the lockfile is generated on
   Windows where `@napi-rs/nice` resolves to a native MSVC binary, while Alpine falls back to the
   wasm runtime and pulls `@emnapi/*` peers the Windows lockfile cannot record.
-- **The KTX2 transcoder is served by the host, not the engine.** `ViewerComponent` sets
-  `Texture2D.ktx2TranscoderPath = '/assets/basis/'` before any scenario loads. The engine's
-  default is `/basis/`, which 404s here because Angular publishes `src/assets` under `/assets` —
-  and it fails **silently** until a scenario actually ships `.ktx2` textures. The transcoder
-  itself lives in `frontend/src/assets/basis/` (`basis_transcoder.js` + `.wasm`) and is committed
-  for the same reason as the engine tarball: nothing fetches it at build time.
+- **The KTX2 transcoder is served by the host, not the engine.** The viewer passes
+  `transcoderPath: '/assets/basis/'` to `PlayerHost`; the player sets `Texture2D.ktx2TranscoderPath`
+  from it before any scenario loads. The engine's default is `/basis/`, which 404s here because Angular
+  publishes `src/assets` under `/assets` — and it fails **silently** until a scenario actually ships
+  `.ktx2` textures. KTX2 transcodes inside the frame (`e2e/tests/ktx2-render.spec.ts` renders one). The
+  transcoder itself lives in `frontend/src/assets/basis/` (`basis_transcoder.js` + `.wasm`) and is
+  committed for the same reason as the engine tarball: nothing fetches it at build time.
 
 ## Angular conventions
 
@@ -284,10 +319,18 @@ Consequences to respect:
 ```bash
 # Tests
 cd backend  && npm test           # 348 tests; needs docker-compose.test.yml up
-cd frontend && npx ng test --no-watch   # 226 tests
-cd e2e      && npm test           # 56 Playwright tests (8 skip by design); needs the stack up AND a published
-                                  # catalog — see e2e/README.md
+cd frontend && npx ng test --no-watch   # 293 tests
+cd frontend && npm run test:scripts     # the CSP checker's own tests (node --test)
+cd frontend && npm run build && npm run check:csp   # built index.html: no import map, nonce or blob: script-src
+cd e2e      && npm test           # 104 Playwright tests (a few skip: by design, or editor-csp without its stack);
+                                  # needs the stack up AND a published catalog — see e2e/README.md
 docker compose -f docker-compose.test.yml up -d   # throwaway Postgres on :55432
+
+# /editor/'s import-map nonce (editor-csp.spec.ts) needs a stack that serves /editor/. A self-contained
+# harness (real frontend image + editor.conf + csp-editor.conf, stub upstreams) is in e2e/editor-csp-harness/:
+docker compose -p vl-editor-csp -f e2e/editor-csp-harness/docker-compose.yml up --build -d
+cd e2e && ADMIN_TOKEN=x E2E_BASE_URL=http://localhost:8046 npx playwright test editor-csp
+docker compose -p vl-editor-csp -f e2e/editor-csp-harness/docker-compose.yml down --remove-orphans --rmi local
 
 # Publishing a ScenarioCreator release into the catalog
 cd backend && npm run publish:release -- --dry-run

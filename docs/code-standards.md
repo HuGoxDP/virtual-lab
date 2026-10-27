@@ -117,8 +117,9 @@ because `fetch` cannot report upload progress.
   `pages/*` import `services/*` and `models/*`; services never import pages. No barrel files.
 - Backend: `node:` builtins → packages → local modules (`./storage`, `./archive-validation`).
   CommonJS (`require`) in `backend/*.js`; scripts under `backend/scripts/` are `.mjs`.
-- The engine is the only external runtime dependency of the viewer, and it is never bundled
-  (`externalDependencies` + import map in `index.html`).
+- The engine is the only external runtime dependency of the viewer, and the page never bundles or
+  imports it: the app imports only `WebEngineTS/player-host`, and the engine runs in the sandboxed
+  player frame (no import map on `/`).
 ```javascript
 // backend/server.js:3
 const crypto = require('node:crypto');
