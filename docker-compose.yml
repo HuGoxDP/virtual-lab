@@ -44,6 +44,11 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       PORT: ${API_PORT}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      # Optional limits; an empty value falls back to the backend default.
+      AUTHOR_UPLOADS_PER_HOUR: ${AUTHOR_UPLOADS_PER_HOUR:-}
+      AUTH_FAILURES_PER_WINDOW: ${AUTH_FAILURES_PER_WINDOW:-}
+      MAX_ENTRY_BYTES: ${MAX_ENTRY_BYTES:-}
+      MAX_ARCHIVE_ENTRIES: ${MAX_ARCHIVE_ENTRIES:-}
     volumes:
       # Content-addressed archives. Written here, served by nginx.
       - virtual_lab_archives:/srv/archives

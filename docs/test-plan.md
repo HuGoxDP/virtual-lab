@@ -148,12 +148,13 @@ Legend: **[U]** unit · **[I]** integration · **[C]** component · **[E]** E2E.
 
 17. [I] No `Authorization` header → 401 on `POST`, `PUT`, `DELETE`, `/api/admin/scenarios`,
     `/api/telemetry/summary`, both archive endpoints.
-18. [I] `Authorization: Bearer <wrong>` → 403.
+18. [I] `Authorization: Bearer <wrong>` → 403 (counted against the address; see 183).
 19. [I] Correct token → 2xx.
 20. [I] Header without the `Bearer ` prefix → 401.
 21. [I] Token of the correct value but different length → 403, no crash
     (`timingSafeEqual` throws on length mismatch; the length guard must catch it).
-22. [I] `ADMIN_TOKEN` unset → 503 on every admin route, while `GET`s stay 200.
+22. [I] **Superseded by 180 (release 2, phase 2):** with `ADMIN_TOKEN` unset the bootstrap is off — its value
+    is just an unknown token (403), personal keys still work, and nothing answers 503; `GET`s stay 200.
 23. [I] All `GET /api/catalog*` remain public with no header.
 
 ### 4.3 Download proxy — **deleted 2026-08-13, scenarios 24–35 retired**
@@ -535,6 +536,42 @@ engine from inside the player frame (`e2e/helpers/engine.ts`). `viewer-profiler.
      it, and asserts in the frame that the load did not fail or hang, the texture is 16x16, both transcoder
      files were requested from `/assets/basis/`, the renderer reports a compressed GPU format (not RGBA8)
      and the scene drew.
+
+#### Nocturne release 2, phase 2: keys, roles and authorization
+
+Specs: `backend/test/integration/{keys,route-table,author-rules,audit,rate-limits,archive-caps,migration-007}.test.js`,
+`backend/test/unit/{archive-caps,auth-and-limits}.test.js`. Keys are inserted through `test/helpers/keys.js`, hashed
+independently of `auth.js`. Scenarios 17-23 above still hold for the bootstrap moderator.
+
+178. [I] Keys (DW-2.2): `POST /api/keys` returns `{id, label, role, token}` once (201, `no-store`); the row holds only a
+     64-hex SHA-256; `GET /api/keys` lists no token or hash; captured console output never contains a token;
+     `/api/auth/me` answers author, moderator key and bootstrap (`keyId` null) and 403 once revoked; revoking is
+     idempotent and 404 for an unknown id; `role: "admin"`, empty and 101-character labels are 400.
+179. [I] Route table (DW-2.3): {anonymous, unknown, revoked, author A, author B, moderator key, bootstrap} x every guarded
+     route -> 401 / 403 / success, one table; a denied call leaves state untouched; an author lists only their own
+     rows, a moderator all; public GETs stay public.
+180. [I] Dirty headers (DW-2.3): `Bearer ` empty, bare `Bearer`, Basic, lowercase `bearer` -> 401; two spaces and a 10 KB
+     token -> 403; a duplicated header never admits a bad credential; `ADMIN_TOKEN` unset -> keys work, no 503.
+181. [I] Author field rules (DW-2.4): each forbidden field (`scenarioUrl`, `manifestUrl`, `imageUrl`, `author`, `isPublished`,
+     `archive*`) -> 400 on POST and PUT; unknown `category` -> 400 and no category row; `categoryLabel` ignored; POST by
+     an author -> unpublished, owned, `author` = key label; another author's scenario -> 403; moderator POST keeps
+     create-on-unknown-slug; upload into one's own unpublished scenario 201, into a published one 403.
+182. [I] Audit (DW-2.5): one `audit_events` row per authenticated mutation (create, update, delete, archive, key create and
+     revoke, non-dry-run GC); none for reads, telemetry, dry runs or refused requests; the row rolls back with a failed
+     transaction; history survives deleting the scenario.
+183. [I] Rate limits (DW-2.6): failed authentication 29/30/31 -> 403/403/429 per address, successes never counted, a valid key
+     never limited, addresses independent; author uploads 20 -> 201 and the 21st 429 per key, a moderator's and the
+     bootstrap's 21st succeed; `last_used_at` moves on use.
+184. [U/I] Archive caps (DW-2.6): a manifest of `MAX_ENTRY_BYTES` + 1, an oversize scene or prefab, `MAX_ARCHIVE_ENTRIES` + 1
+     entries and a zip bomb that lies about its size -> 400 without reading past the cap; the entry count is read from
+     the end-of-central-directory record before the directory is parsed; a corrupt entry is still "unreadable"; a
+     rejected upload stores nothing and leaves no temp file.
+185. [I] Migration 007 (DW-2.7): applies twice without error; role check, unique `token_hash`, `owner_key_id` foreign key,
+     no foreign key on `audit_events.scenario_id`.
+186. [U] Pure routines: `requireRole` ranking, `canEditScenario` (unowned and key-less cases), `createWindowCounter` (window
+     expiry, `Retry-After`), `limitAuthorUploads` exemptions, `parsePositiveInt` fallbacks, `forbiddenAuthorFields`,
+     `sha256Hex` (DW-2.2, DW-2.3, DW-2.4, DW-2.6).
+
 
 ### 4.11 Golden paths (E2E)
 

@@ -9,7 +9,7 @@ const cors = require('cors');
 const { runMigrations } = require('./migrations');
 const storage = require('./storage');
 const { pool } = require('./db');
-const { ADMIN_TOKEN, tokensMatch } = require('./auth');
+const { bootstrapToken, tokensMatch } = require('./auth');
 const { parseMaxArchiveBytes } = require('./config');
 const catalogPublic = require('./routes/catalog-public');
 const { parseLimit, parseOffset, escapeLikePattern, parseSort } = catalogPublic;
@@ -29,8 +29,8 @@ app.use(express.json());
 // would bucket every client under the proxy's address.
 app.set('trust proxy', 1);
 
-if (!ADMIN_TOKEN && require.main === module) {
-  console.warn('[AUTH] ADMIN_TOKEN is not set — catalog writes are disabled');
+if (!bootstrapToken() && require.main === module) {
+  console.warn('[AUTH] ADMIN_TOKEN is not set — bootstrap moderator is off (personal keys still work)');
 }
 
 app.use(catalogPublic.router);
@@ -38,6 +38,7 @@ app.use(require('./routes/catalog-admin').router);
 app.use(require('./routes/archives').router);
 app.use(require('./routes/storage-admin').router);
 app.use(require('./routes/telemetry').router);
+app.use(require('./routes/keys').router);
 app.use(require('./routes/health').router);
 
 // ── Start ────────────────────────────────────────────

@@ -46,4 +46,19 @@ function validateFeatures(input) {
   return { value };
 }
 
-module.exports = { validateFeatures, MAX_FEATURES, MAX_FEATURE_TITLE, MAX_FEATURE_SUBTITLE };
+/**
+ * Fields an author key may never send. Everything that points at storage or
+ * decides visibility or attribution is a moderator's: `scenarioUrl`,
+ * `manifestUrl`, `imageUrl`, any `archive*`, `author`, `isPublished`.
+ * (`categoryLabel` is not here: it is ignored, not refused.)
+ */
+const AUTHOR_FORBIDDEN_FIELDS = ['scenarioUrl', 'manifestUrl', 'imageUrl', 'author', 'isPublished'];
+
+/** The names in `body` an author may not send, in the order found; empty when the body is clean. */
+function forbiddenAuthorFields(body) {
+  return Object.keys(body ?? {}).filter(
+    key => AUTHOR_FORBIDDEN_FIELDS.includes(key) || key.startsWith('archive')
+  );
+}
+
+module.exports = { validateFeatures, forbiddenAuthorFields, AUTHOR_FORBIDDEN_FIELDS, MAX_FEATURES, MAX_FEATURE_TITLE, MAX_FEATURE_SUBTITLE };

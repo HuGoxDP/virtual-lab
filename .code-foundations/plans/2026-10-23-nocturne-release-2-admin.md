@@ -1,6 +1,8 @@
 # Plan: Release 2 — admin, roles and scenario isolation on Nocturne
 **Created:** 2026-10-23
-**Status:** ready
+**Status:** in-progress
+**Started:** 2026-10-27 12:37
+**Current Phase:** 2
 **Superseded in part (Phase 1):** by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
 **Complexity:** complex
 **Review cadence:** 2
@@ -504,6 +506,13 @@ at 1440 px and 390 px. (The hostile-archive check in Firefox and Safari belongs 
 ## Decided During Build
 _Filled by /code-foundations:build — one row per decision an agent made or question it raised:_
 | # | Phase | Decision or question | Source | Status |
+|---|---|---|---|---|
+| 1 | 2 | Lowercase `bearer` and a missing scheme answer 401 (treated as no credential) | existing behaviour, test 180 | assumed |
+| 2 | 2 | Failed-auth and author-upload limiters are in-memory fixed windows (one backend process); a shared store would go behind `createWindowCounter` | plan + default | assumed |
+| 3 | 2 | `ADMIN_TOKEN` is read per request, not at load | default | assumed |
+| 4 | 2 | A moderator-created row gets `owner_key_id` = the moderator's key (NULL for bootstrap), `author` defaulting to the key label | default | assumed |
+| 5 | 2 | `MAX_ENTRY_BYTES` 10 MiB / `MAX_ARCHIVE_ENTRIES` 20 000 kept — measured real maxima are 3 059 bytes and 31 entries | assumption verification | assumed |
+| 6 | 2 | `AUTH_FAILURES_PER_WINDOW` is env-configurable too (default 30 per 15 min) | default | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_

@@ -1,6 +1,12 @@
 // backend/config.js
 //
-// Limits read once at load and shared by more than one route module.
+// Limits read once at load and shared by more than one module.
+
+/** A junk, zero or negative value falls back to the default rather than disabling a cap. */
+function parsePositiveInt(raw, fallback) {
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
 
 /**
  * Largest archive accepted on upload.
@@ -12,12 +18,32 @@
  */
 const DEFAULT_MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
 
-/** Read once at load; a junk value falls back to the default rather than disabling the cap. */
 function parseMaxArchiveBytes(raw) {
-  const value = Number(raw);
-  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_MAX_ARCHIVE_BYTES;
+  return parsePositiveInt(raw, DEFAULT_MAX_ARCHIVE_BYTES);
 }
 
 const MAX_ARCHIVE_BYTES = parseMaxArchiveBytes(process.env.MAX_ARCHIVE_BYTES);
 
-module.exports = { MAX_ARCHIVE_BYTES, parseMaxArchiveBytes };
+/**
+ * Archive-validation caps. The largest real manifest or scene entry measured
+ * 3 KB and the largest real archive 31 entries (ScenarioCreator release plus
+ * the dev stack's store, 2026-10-27), so these leave three orders of magnitude.
+ */
+const MAX_ENTRY_BYTES = parsePositiveInt(process.env.MAX_ENTRY_BYTES, 10 * 1024 * 1024);
+const MAX_ARCHIVE_ENTRIES = parsePositiveInt(process.env.MAX_ARCHIVE_ENTRIES, 20_000);
+
+/** Uploads one author key may start per hour (moderators and the bootstrap token are exempt). */
+const AUTHOR_UPLOADS_PER_HOUR = parsePositiveInt(process.env.AUTHOR_UPLOADS_PER_HOUR, 20);
+
+/** Failed credential checks one address may make per 15 minutes before it is answered 429. */
+const AUTH_FAILURES_PER_WINDOW = parsePositiveInt(process.env.AUTH_FAILURES_PER_WINDOW, 30);
+
+module.exports = {
+  MAX_ARCHIVE_BYTES,
+  MAX_ENTRY_BYTES,
+  MAX_ARCHIVE_ENTRIES,
+  AUTHOR_UPLOADS_PER_HOUR,
+  AUTH_FAILURES_PER_WINDOW,
+  parseMaxArchiveBytes,
+  parsePositiveInt,
+};

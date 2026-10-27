@@ -5,8 +5,10 @@
 const express = require('express');
 const multer = require('multer');
 
-const { inTransaction, scenarioExists } = require('../db');
-const { requireAdmin } = require('../auth');
+const { pool, inTransaction } = require('../db');
+const { authorize, canEditScenario } = require('../auth');
+const { limitAuthorUploads } = require('../rate-limits');
+const audit = require('../audit');
 const { MAX_ARCHIVE_BYTES } = require('../config');
 const storage = require('../storage');
 const { validateScenarioArchive } = require('../archive-validation');
@@ -64,27 +66,37 @@ async function attachArchive(db, id, { sha256, bytes, url }, manifest) {
 }
 
 /**
- * POST /api/scenarios/:id/archive   (admin, multipart field "archive")
+ * POST /api/scenarios/:id/archive   (author who owns it while unpublished, or moderator;
+ * multipart field "archive")
  *
  * Stores the upload as /scenarios/<sha256>.zip and repoints the scenario at it.
- * Identical content uploaded twice reuses the same object.
+ * Identical content uploaded twice reuses the same object. Author uploads are
+ * rate-limited per key (`limitAuthorUploads`) before the body is read.
  */
-router.post('/api/scenarios/:id/archive', requireAdmin, receiveArchive, async (req, res) => {
+router.post('/api/scenarios/:id/archive', authorize('author'), limitAuthorUploads, receiveArchive, async (req, res) => {
   const { id } = req.params;
+  const { principal } = req;
   const tmpFile = req.file?.path;
 
   // commitArchive either renames the temp file into the store or deletes it;
   // every other exit path — including the early 404 — must clean up itself.
   let consumed = false;
 
-  try {
+  /** Does the work and returns the response; throws only for a failure. */
+  async function ingest() {
     if (!tmpFile) {
-      return res.status(400).json({ error: 'Очікується файл у полі "archive"' });
+      return { status: 400, body: { error: 'Очікується файл у полі "archive"' } };
     }
     console.log(`[ARCHIVE] ${id}: прийнято файл ${req.file.originalname} (${req.file.size} bytes)`);
 
-    if (!(await scenarioExists(id))) {
-      return res.status(404).json({ error: 'Сценарій не знайдено' });
+    const { rows } = await pool.query('SELECT owner_key_id, is_published FROM scenarios WHERE id = $1', [id]);
+    if (!rows[0]) return { status: 404, body: { error: 'Сценарій не знайдено' } };
+    if (!canEditScenario(principal, rows[0])) {
+      return { status: 403, body: { error: 'Це не ваш сценарій' } };
+    }
+    // An author's published scenario changes only through a moderated path (a later phase).
+    if (principal.role === 'author' && rows[0].is_published) {
+      return { status: 403, body: { error: 'Опублікований сценарій не можна змінити завантаженням' } };
     }
 
     // Validate before committing — a broken archive must never enter the store.
@@ -96,17 +108,29 @@ router.post('/api/scenarios/:id/archive', requireAdmin, receiveArchive, async (r
     consumed = true;
     console.log(`[ARCHIVE] ${id}: sha256=${result.sha256} ${result.deduplicated ? '(вже є в сховищі, дедуп)' : '(новий об\'єкт збережено)'}`);
 
-    await inTransaction(db => attachArchive(db, id, result, manifest));
+    await inTransaction(async db => {
+      await attachArchive(db, id, result, manifest);
+      await audit.record(db, principal, 'scenario.archive', id, {
+        sha256: result.sha256, bytes: result.bytes, deduplicated: result.deduplicated,
+      });
+    });
     console.log(`[ARCHIVE] ${id}: запис каталогу оновлено → ${result.url} (${result.bytes} bytes)`);
 
-    res.status(201).json({ id, ...result, manifestId: manifest.id, warnings });
+    return { status: 201, body: { id, ...result, manifestId: manifest.id, warnings } };
+  }
+
+  let outcome;
+  try {
+    outcome = await ingest();
   } catch (err) {
     const status = err.status || 500;
     if (status === 500) console.error('[ARCHIVE] Upload error:', err.message);
-    res.status(status).json({ error: err.message });
+    outcome = { status, body: { error: err.message } };
   } finally {
+    // Before the response, not after: a client that reacts to it may look at the temp dir.
     if (!consumed) await storage.discardTemp(tmpFile);
   }
+  res.status(outcome.status).json(outcome.body);
 });
 
 module.exports = { router };

@@ -6,7 +6,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 
 const { pool, scenarioExists } = require('../db');
-const { requireAdmin } = require('../auth');
+const { authorize } = require('../auth');
 
 const router = express.Router();
 
@@ -98,12 +98,12 @@ router.post('/api/telemetry/session/:id/end', telemetryLimiter, async (req, res)
 });
 
 /**
- * GET /api/telemetry/summary?days=30   (admin)
+ * GET /api/telemetry/summary?days=30   (moderator)
  *
  * Launches and median duration per scenario. Median rather than mean: one tab
  * left open for hours would otherwise dominate the average.
  */
-router.get('/api/telemetry/summary', requireAdmin, async (req, res) => {
+router.get('/api/telemetry/summary', authorize('moderator'), async (req, res) => {
   const days = Math.min(Math.max(Number.parseInt(req.query.days, 10) || 30, 1), 365);
 
   try {

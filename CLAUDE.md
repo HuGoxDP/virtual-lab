@@ -189,7 +189,7 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   that lives inside the ZIP. The engine never sees this model.
 - `src/environments/environment.ts` — `catalogUrl`, currently `/api/catalog`.
 
-**Backend** (`backend/`, Express 4 — `server.js` plus a few small modules)
+**Backend** (`backend/`, Express 4 — `server.js` wires the middleware and mounts one router per concern in `routes/`: `catalog-public`, `catalog-admin`, `archives`, `storage-admin`, `telemetry`, `keys`, `health`)
 - `GET /api/catalog?category&q&sort=new|title&limit&offset`, `GET /api/catalog/:id` — published
   scenarios only (`is_published = true`). Each item carries `archiveBytes`, `updatedAt` and
   `features` ("Що всередині"); the list also returns `categories` (visible, with `icon` and published
@@ -201,25 +201,59 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
 - `GET /api/config` — public, `{maxArchiveBytes}`. The cap is `MAX_ARCHIVE_BYTES` (default 200 MiB,
   read once at load); an oversize upload is a 413. multer's limit is set to cap + 1 because busboy fires
   on *reaching* `fileSize`, not exceeding it. nginx's `client_max_body_size` (512m) must stay above it.
-- `POST /api/catalog`, `PUT /api/catalog/:id`, `DELETE /api/catalog/:id` — catalog mutation,
-  **admin only** (`Authorization: Bearer $ADMIN_TOKEN`).
-- `GET /api/admin/scenarios` — admin; every row including unpublished, with storage and manifest
-  metadata.
-- `GET /api/admin/storage` / `POST /api/admin/storage/gc` — admin; what the archive store holds and
+- **Authorization (`auth.js`).** Every write is `Authorization: Bearer <token>`, which resolves to
+  `req.principal = {role: 'author'|'moderator', keyId, label}`. The token is either a **personal publish
+  key** (`publish_keys`, found by the SHA-256 of the token; revoked or unknown → 403) or the bootstrap
+  `ADMIN_TOKEN`, a moderator with `keyId: null` and label `bootstrap`. **Unset `ADMIN_TOKEN` turns only the
+  bootstrap off** — keys keep working and nothing answers 503. No header, or a scheme other than the exact
+  `Bearer ` → 401. `authenticate` / `requireRole(role)` / `authorize(role)` / `canEditScenario(principal, row)`
+  are the whole vocabulary; a route states its role in one place.
+  - **Keys** (`routes/keys.js`, moderator only): `GET /api/keys`, `POST /api/keys {label 1-100, role}` (the
+    token is in that one response and nowhere else: only its SHA-256 is stored, it is never logged or
+    listed), `POST /api/keys/:id/revoke` (idempotent; keys are revoked, never deleted). `GET /api/auth/me` →
+    `{role, label, keyId}` for any valid principal. Each use moves `last_used_at`.
+  - **Failed authentication is limited per address** (`AUTH_FAILURES_PER_WINDOW`, 30 per 15 min → 429);
+    only a presented-and-wrong credential counts and a valid key is checked first, so it is never limited.
+    **Author uploads are limited per key** (`AUTHOR_UPLOADS_PER_HOUR`, 20 → 429; moderators and the
+    bootstrap are exempt) by `limitAuthorUploads` in `rate-limits.js`, which any route that receives an
+    archive must use. Both are in-memory fixed windows: one backend process.
+  - **Author vs moderator.** An author: `POST /api/catalog` (row created *unpublished*, owned by the key,
+    `author` = the key's label, `category` must be an existing slug — 400 otherwise, `categoryLabel`
+    ignored), `PUT` on their own scenarios (content fields `title, description, fullDescription, category,
+    version, features` only) and `POST .../archive` while the scenario is unpublished, and `GET
+    /api/admin/scenarios` shows only their rows. Sending `scenarioUrl, manifestUrl, imageUrl, archive*,
+    author` or `isPublished` is a 400 (`forbiddenAuthorFields` in `catalog-input.js`). A moderator (key or
+    bootstrap) does all of that on anything, plus `DELETE`, storage and GC, telemetry summary and
+    `/api/keys*`; creating a category by an unknown slug is moderator-only. Existing rows have no owner, so
+    only moderators touch them.
+  - **Journal** (`audit.js`): every authenticated mutation writes one `audit_events` row through
+    `audit.record(client, principal, action, scenarioId?, details?)` *inside the route's own transaction*, so
+    it commits and rolls back with the change. `scenario_id` has no foreign key: history outlives the
+    scenario. Reads, telemetry and GC dry runs write nothing. Never put a token in `details`.
+  - Every mutation route runs in one `inTransaction` (`db.js`).
+- `POST /api/catalog`, `PUT /api/catalog/:id` — author (own rows, content fields) or moderator;
+  `DELETE /api/catalog/:id` — moderator.
+- `GET /api/admin/scenarios` — author: own rows; moderator: every row including unpublished, with storage
+  and manifest metadata.
+- `GET /api/admin/storage` / `POST /api/admin/storage/gc` — moderator; what the archive store holds and
   how much of it nothing references. **The sweep is a dry run unless `{"dryRun": false}`.**
   Collection is decided by "no row references this hash", never by "a row was deleted" — dedup
   means one object may back several rows. Objects younger than `GC_MIN_AGE_MS` are spared, because
   `commitArchive` stores an object before the row that points at it.
-- `POST /api/scenarios/:id/archive` — admin, multipart field `archive`; validates the ZIP
-  (`archive-validation.js`, with the formats from `player-formats.js`), then stores it under its
-  sha256 and repoints the scenario at it.
+- `POST /api/scenarios/:id/archive` — the owning author while the scenario is unpublished (published →
+  403), or a moderator; multipart field `archive`; validates the ZIP (`archive-validation.js`, with the
+  formats from `player-formats.js`), then stores it under its sha256 and repoints the scenario at it.
+  Authors are untrusted uploaders, so validation is capped: at most `MAX_ENTRY_BYTES` (10 MiB) is read
+  from any manifest or scene/prefab entry — counted on the decompressed stream, because a declared size can
+  lie — and at most `MAX_ARCHIVE_ENTRIES` (20 000) entries, the count read from the end-of-central-directory
+  record before the directory is parsed; either is a 400, not an out-of-memory.
 - **There is no download proxy and no import-from-URL endpoint.** Both existed for Google Drive
   and are deleted, along with the URL rewriting, confirmation-page scraping and host allowlist
   that backed them. Archives only ever arrive by upload. A test asserts both routes stay 404 —
   the proxy was an open relay once, and code shaped like that with no callers is a liability.
 - `POST /api/telemetry/session` and `.../:id/end` — public, anonymous session log. The end call
   is a POST so `sendBeacon` can deliver it during unload; duration is computed server-side.
-- `GET /api/telemetry/summary` — admin; launches and median duration per scenario.
+- `GET /api/telemetry/summary` — moderator; launches and median duration per scenario.
 - `GET /api/health` — liveness plus a DB ping.
 - `migrations.js` applies `backend/migrations/*.sql` at startup under an advisory lock;
   `storage.js` owns the content-addressed archive store.
@@ -320,7 +354,7 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 348 tests; needs docker-compose.test.yml up
+cd backend  && npm test           # 610 tests; needs docker-compose.test.yml up
 cd frontend && npx ng test --no-watch   # 293 tests
 cd frontend && npm run test:scripts     # the CSP checker's own tests (node --test)
 cd frontend && npm run build && npm run check:csp   # built index.html: no import map, nonce or blob: script-src
@@ -362,7 +396,9 @@ Service names in compose are `database`, `backend`, `frontend` — `Readme.md` s
 3. **One-directional dependency.** Nothing in this repo may be imported by the engine.
 4. **Secrets never in git.** `.env` is untracked and ignored; `.env.example` is the template.
    The pre-Phase-0 password is still in git history — treat it as burned, not as recoverable.
-   Catalog writes need `Authorization: Bearer $ADMIN_TOKEN`.
+   Catalog writes need `Authorization: Bearer <token>`: a personal publish key, or the bootstrap
+   `ADMIN_TOKEN`. **A key's token is shown once, at issue, and stored only as a SHA-256 — never log it,
+   return it again, or put it in an audit row.**
 5. `frontend/node_modules` and `frontend/.angular` were force-added before `.gitignore` covered
    them and have since been untracked (`git rm --cached`, working tree untouched). Do not re-add.
 

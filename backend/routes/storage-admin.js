@@ -4,8 +4,9 @@
 
 const express = require('express');
 
-const { pool } = require('../db');
-const { requireAdmin } = require('../auth');
+const { pool, inTransaction } = require('../db');
+const { authorize } = require('../auth');
+const audit = require('../audit');
 const storage = require('../storage');
 
 const router = express.Router();
@@ -32,13 +33,13 @@ const sumBytes = objects => objects.reduce((total, o) => total + o.bytes, 0);
 const summarise = objects => ({ count: objects.length, bytes: sumBytes(objects) });
 
 /**
- * GET /api/admin/storage   (admin)
+ * GET /api/admin/storage   (moderator)
  *
  * What is in the archive store and how much of it nothing refers to. Read-only
  * on purpose: the roadmap's rule is to report reclaimable bytes before deleting
  * anything, so seeing the number never costs you the files.
  */
-router.get('/api/admin/storage', requireAdmin, async (req, res) => {
+router.get('/api/admin/storage', authorize('moderator'), async (req, res) => {
   try {
     const { referenced, orphans, tooNew } = await storage.classifyObjects(
       await referencedArchives(), GC_MIN_AGE_MS
@@ -67,7 +68,7 @@ router.get('/api/admin/storage', requireAdmin, async (req, res) => {
 });
 
 /**
- * POST /api/admin/storage/gc   (admin)   { dryRun?: boolean }
+ * POST /api/admin/storage/gc   (moderator)   { dryRun?: boolean }
  *
  * Deletes objects no catalog row references. **Dry run unless asked otherwise**
  * — an accidental POST reports instead of deleting, which is the right default
@@ -77,7 +78,7 @@ router.get('/api/admin/storage', requireAdmin, async (req, res) => {
  * may back several rows, and a mistaken delete stays recoverable while its
  * archive is still on disk.
  */
-router.post('/api/admin/storage/gc', requireAdmin, async (req, res) => {
+router.post('/api/admin/storage/gc', authorize('moderator'), async (req, res) => {
   const dryRun = req.body?.dryRun !== false;
 
   try {
@@ -91,6 +92,8 @@ router.post('/api/admin/storage/gc', requireAdmin, async (req, res) => {
 
     const deleted = await storage.deleteObjects(orphans);
     console.log(`[STORAGE] gc removed ${deleted.length} object(s), ${sumBytes(deleted)} bytes`);
+    // A dry run changes nothing and is not journalled; a sweep is.
+    await inTransaction(db => audit.record(db, req.principal, 'storage.gc', null, summarise(deleted)));
 
     res.json({ dryRun: false, deleted: summarise(deleted), protectedByAge: summarise(tooNew) });
   } catch (err) {
