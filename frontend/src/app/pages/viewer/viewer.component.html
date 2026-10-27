@@ -2,30 +2,31 @@
 
 <div class="viewer-container">
 
-  <!-- WebGL canvas — always in DOM for engine init -->
-  <canvas #webglCanvas class="webgl-canvas"></canvas>
+  <!-- The sandboxed player frame is put here by PlayerHost; the scenario runs inside it, never in this page. -->
+  <div #playerHost class="player-host"></div>
 
-  <!-- Running: the HUD floats over the canvas. Pause and FPS belong to the isolated player host
-       (player-isolation phase 5), so neither is fed here and neither renders. -->
+  <!-- Running: the HUD floats over the frame; pause, FPS and the Space hint come from the player. -->
   @if (state() === 'running') {
     <vl-viewer-hud
       [title]="scenarioTitle()"
-      [fps]="null"
-      [canPause]="false"
+      [fps]="fps()"
+      [paused]="paused()"
+      [canPause]="canPause()"
       [canRestart]="canRestart()"
       (exit)="exit()"
+      (togglePause)="togglePause()"
       (restart)="restart()"
       (fullscreen)="toggleFullscreen()"
     />
   }
 
   <!--
-    Which engine build is running. Only under ?diag=1, and deliberately outside
-    the `running` guard: a measurement is quoted against a named build, and the
-    build matters just as much on the error screen as on a working one.
+    Which engine build the player runs. Only under ?diag=1. The page holds no engine, so the build is
+    asked of the player once the scenario is running and appears about a second later; there is
+    nothing to ask on the unsupported or error screens.
   -->
-  @if (buildStampVisible()) {
-    <div class="build-badge">{{ engineBuild }}</div>
+  @if (buildStampVisible() && engineBuild()) {
+    <div class="build-badge">{{ engineBuild() }}</div>
   }
 
   <!-- Orientation hint (portrait phones) -->

@@ -386,11 +386,13 @@ Specs: `catalog-query.spec.ts`, `platform-config.service.spec.ts`, `scenario.ser
 141. [E] `viewer.spec.ts`: loading screen (ring percent, title, "Завантаження архіву — X з Y МБ", stage,
      "Скасувати") then the HUD; "Скасувати" aborts the archive `fetch` and lands on `/scenario/:id`
      (DW-4.1).
-142. [E] `viewer.spec.ts`: HUD at 1440 px — aria-labels, no pause button and no FPS slot, hints without
-     Space, "Вийти" → `/scenario/:id`; at 390 px the hints are hidden and exit / title / buttons stay
+142. [E] `viewer.spec.ts`: HUD at 1440 px — aria-labels, ~~no pause button and no FPS slot, hints without
+     Space~~ (**superseded by 164-171**: the pause button and the FPS slot are now driven by the player),
+     "Вийти" → `/scenario/:id`; at 390 px the hints are hidden and exit / title / buttons stay
      inside the viewport without overlapping (DW-4.2).
 143. [E] `viewer.spec.ts`: restart on a ZIP run is enabled and re-runs from the buffer (second telemetry
-     launch, one archive request); `streaming.spec.ts`: disabled with `?stream=1` (DW-4.4).
+     launch, one archive request); `streaming.spec.ts`: ~~disabled with `?stream=1`~~ - **superseded by 168**:
+     a streamed run restarts in a fresh frame (DW-4.4).
 144. [E] `viewer.spec.ts`: unknown scenario → Nocturne error panel with its way back; no WebGL 2 → Nocturne
      panel (Inter, `--color-bg`); forced context loss → panel with "Перезавантажити" (existing test, F7)
      (DW-4.5).
@@ -420,14 +422,15 @@ Specs: `viewer-profiler.spec.ts`, `viewer.component.spec.ts`, `viewer-hud.compon
 
 #### Viewer — load pipeline and restart, unit (release 1, phase 4 fix-forward)
 
-`viewer-lifecycle.spec.ts`, with the engine (`createApplication` seam, `supportsWebGL2` stub) and
+`viewer-lifecycle.spec.ts`, with the player host (the protected `createPlayerHost` seam returns a fake `PlayerHost`; `supportsWebGL2` stubbed) and
 `ScenarioService` / `TelemetryService` replaced by doubles.
 
 149. [U] `exit()`: `/scenario/:id` with a route id (also after a failed lookup), `/catalog` without one; the
      loader's "Скасувати" exits and destroying the view aborts the archive download without showing an error
      (DW-4.1, DW-4.2).
-150. [U] `canRestart` and the HUD restart button: ZIP run enabled; streamed run (`?stream=1`) disabled, and
-     `restart()` there does nothing; `?stream=1` without a `manifestUrl` falls back to the ZIP; false after
+150. [U] ~~`canRestart` and the HUD restart button: ZIP run enabled; streamed run (`?stream=1`) disabled, and
+     `restart()` there does nothing~~ - **superseded 2026-10-27 by 168** (a streamed run restarts in a fresh frame);
+     still current: `?stream=1` without a `manifestUrl` falls back to the ZIP; false after
      context loss and while a restart is loading (DW-4.4).
 151. [U] `restart()`: same buffer re-run, one download, second telemetry launch; engine failure → error screen
      (Error and non-Error); no-op before an archive has loaded (DW-4.4).
@@ -451,6 +454,87 @@ Same harness; only the guard's `setInterval`/`clearInterval` are faked (`vi.useF
      that re-opens the gate and then fails is still closed on the tick; none before a load begins (DW-5.3).
 157. [U] Destroy: `clearInterval` fires, no timer remains, a gate re-opened afterwards is not re-closed, the
      gate is left shut, and a streamed load still in flight cannot re-arm the guard (DW-5.3).
+
+#### Player isolation, phase 4: serving the player (additive)
+
+Specs: `e2e/tests/player-serving.spec.ts`, `e2e/tests/csp.spec.ts`; the unit change is in
+`viewer-profiler.spec.ts` / `viewer-lifecycle.spec.ts`. The headers come from nginx, so the e2e runs
+need a rebuilt stack.
+
+158. [E] `/player/player.html`: CSP naming the browser's own `scheme://host:port` (never `'self'`),
+     `sandbox allow-scripts allow-pointer-lock` without `allow-same-origin`, `frame-ancestors 'self'`,
+     no `X-Frame-Options` (DW-4.1).
+159. [E] `Access-Control-Allow-Origin: *` for a request with `Origin: null` on `player.html`,
+     `player.js`, the engine bundle, the Basis transcoder (`.js`, `.wasm`) and `/a/` (objects and
+     manifests, also on a 404) (DW-4.1).
+160. [E] `/player/player.js` is not taken by the static-asset regex block (no 30-day cache, no platform
+     CSP, no `X-Frame-Options`); anything else under `/player/` is a 404, never the SPA fallback (DW-4.1).
+161. [E] A top-level visit to `/player/player.html`: `window.origin === 'null'` and the page shows that it
+     refused to run (DW-4.2).
+162. [E] `/`, `/index.html`, `/scenarios/`, `/a/...`, `/api/health` carry the same platform CSP (now with
+     `frame-src 'self'`), `/player/player.html` the player's (DW-4.4).
+163. [U] Release 1's viewer profiler specs (154-157, `viewer-profiler.spec.ts`) re-open the engine gate
+     through `MemoryProfiler._resetDiagnosticsPolicy()`, because the setter now latches at `false`; they
+     still pin the lock before every load and the 1000 ms re-close (DW-4.5).
+
+#### Player isolation, phase 5: the viewer on `PlayerHost`
+
+Specs: `viewer-lifecycle.spec.ts` (rewritten around a fake host), `viewer.component.spec.ts`,
+`viewer-format.spec.ts`, `scripts/check-csp-assumptions.test.mjs` (`npm run test:scripts`);
+e2e `hostile-archive.spec.ts`, `viewer-player.spec.ts`, `viewer.spec.ts`, `streaming.spec.ts`,
+`csp.spec.ts`, `ktx2.spec.ts`, `editor-csp.spec.ts`. The page no longer holds an engine, so e2e reads the
+engine from inside the player frame (`e2e/helpers/engine.ts`). `viewer-profiler.ts` and its spec are gone
+(scenarios 145, 148 and 154-157 are retired: the page has no profiler to lock, the host always sends
+`diag: false` and the engine latches the gate inside the frame; 163 goes with them).
+
+164. [U] The host is built with `/player/player.html`, `/assets/WebEngineTS.standalone.js`,
+     `transcoderPath: '/assets/basis/'`; every load sends `diag: false`, with or without `?diag=1`; the
+     viewer exposes no diagnostics member (DW-5.2, DW-5.5).
+165. [U] Host adapter: `onFps` reaches the HUD as "N FPS" (absent before the first report), `onPaused`
+     flips the pause button, the button asks the host to pause/resume (state is the player's word, never
+     guessed), `onProgress` drives the ring only while loading, `onContextLost` shows the overlay (DW-5.2).
+166. [U] Space: pauses/resumes with the host focused and is consumed; ignored before running, in a control,
+     on repeat, with a modifier, after a context loss and after destroy (DW-5.2).
+167. [U] Error mapping: handshake, origin/version, load (player message, fallback when empty), runtime
+     (no error screen); an error while the archive is still downloading is not shown (DW-5.2).
+168. [U] Blob retention and restart: a ZIP run hands the host a `Blob` of the archive, a streamed run an
+     absolute manifest URL; restart is `host.restart()`, no second download, a fresh frame is not paused
+     and has no stale FPS; restart while paused; superseded restarts; unreported rejection ends in the error
+     screen (DW-5.2).
+169. [U] `?diag=1`: the build stamp is asked of the player (`measure(1)`) once running; failure leaves the
+     scene running; teardown disposes the host once, aborts the download, ends telemetry (DW-5.2).
+170. [E] Hostile archive built in the test (`e2e-` row): `parent`/`top` storage, `parent.document` and
+     `top.location` throw `SecurityError`; own storage/cookie are denied; credentialed and bearer calls to
+     `/api/admin/scenarios` fail as `TypeError`; `top` is not navigated, no popup, the host's token is
+     intact (DW-5.1).
+171. [E] ZIP and `?stream=1`: sandboxed frame (exactly `allow-scripts allow-pointer-lock`), focus goes to
+     the frame, FPS shown, Space with the host focused pauses/resumes the clock in the frame, the HUD button
+     pauses, restart builds a fresh frame (old one detached, no second archive request, not paused afterwards,
+     keyboard in the new frame at once), fullscreen takes the host container, exit leaves no frame, forced
+     context loss shows the overlay, no profiler overlay with `?diag=1` or Backquote (DW-5.2).
+172. [E] Dirty paths: leaving mid-download, leaving mid-load (engine bundle held back), a player that never
+     says hello ends in the error state and loses its frame (DW-5.2).
+173. [E] Ten viewer round trips leave no frame, no WebGL warnings, and the eleventh run still draws (DW-5.4).
+174. [E] `/` has no import map, no `nonce=`, no inline script and a `script-src` of exactly `'self'`;
+     `check-csp-assumptions.mjs` fails on an import map, a nonce, an inline script, a bare `WebEngineTS`
+     import in a bundle, and on `blob:`/nonce/missing `frame-src` in `csp.conf` (DW-5.3).
+175. [E] KTX2: the engine in the frame carries the platform transcoder path and the opaque frame can fetch
+     both transcoder files (`ktx2.spec.ts`; its catalog-scenario render check still waits for a scenario
+     that references `.ktx2`) (DW-5.5). `editor-csp.spec.ts`: `/editor/`'s import map carries the CSP nonce,
+     changing per response, under `csp-editor.conf`; the platform root has neither. It skips on the normal
+     stack and runs on `e2e/editor-csp-harness/` (real frontend image, real `editor.conf` /
+     `csp-editor.conf`, stub editor and backend; commands in `e2e/README.md`) (DW-5.6).
+176. [E] Space, both focus cases, ZIP and `?stream=1` (DW-5.U1): with the frame focused (the default after load) the
+     player handles Space inside the frame and reports `paused`; with the host page focused the host asks the
+     player. Each press is exactly one toggle (the HUD state and the scenario clock agree and do not flip back
+     800 ms later), focus stays in the frame after a pause, and frame Space, host Space and the HUD button
+     interleave on one shared state. `[U]` `viewer-lifecycle.spec.ts` (166) keeps pinning the host route:
+     consumed, ignored in controls, on repeat, with modifiers, before running and after a context loss.
+177. [E] A KTX2 scenario renders through the player (DW-5.5): `ktx2-render.spec.ts` builds an `e2e-` ZIP
+     whose script loads `textures/test.ktx2` (copy of the engine smoke fixture, 16x16) onto a cube, plays
+     it, and asserts in the frame that the load did not fail or hang, the texture is 16x16, both transcoder
+     files were requested from `/assets/basis/`, the renderer reports a compressed GPU format (not RGBA8)
+     and the scene drew.
 
 ### 4.11 Golden paths (E2E)
 

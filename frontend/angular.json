@@ -30,13 +30,15 @@
                 "glob": "WebEngineTS.standalone.js",
                 "input": "node_modules/WebEngineTS/dist",
                 "output": "/assets"
+              },
+              {
+                "glob": "{player.html,player.js}",
+                "input": "node_modules/WebEngineTS/dist/player",
+                "output": "/player"
               }
             ],
             "styles": [
               "src/styles.scss"
-            ],
-            "externalDependencies": [
-              "WebEngineTS"
             ]
           },
           "configurations": {

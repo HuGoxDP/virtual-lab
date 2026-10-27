@@ -15,7 +15,7 @@ list with file anchors.
 | Stage 0 — own the storage, content-addressed | **Phase 1 — Own the storage** ✅ done 2026-08-01 |
 | Stage 1 — manifest + asset table | Phase 1/2 follow-up (new: `scenario_assets`, manifest endpoint) |
 | Stage 2 — progressive delivery | **Phase 6 — Streaming client** |
-| Stage 3 — object store + presigned URLs | Phase 1 alternative (MinIO), deferred until needed |
+| Stage 3 — object store + presigned URLs | Phase 1 alternative (an S3-compatible store), deferred until needed |
 | Stage 4 — LOD streaming + atomic publish | **Phase 2** (publishing) + engine P1.7 Stage 3 |
 
 When the two disagree on *how* or *when*, `implementation-plan.md` wins; this document defines
@@ -74,7 +74,7 @@ Editor ──(Publish: one API call)──> POST /api/scenarios (ZIP or asset se
                      ▼                                          ▼
         Object store (content-addressed)              PostgreSQL
         /a/<sha256>.<ext>  (immutable, dedup)         scenarios + scenario_assets
-        nginx volume → MinIO/S3 (+CDN)                (manifest, hashes, sizes, LODs)
+        nginx volume → S3-compatible store (+CDN)     (manifest, hashes, sizes, LODs)
                      │
                      ▼
         Browser fetches manifest, then assets by priority/LOD
@@ -163,11 +163,20 @@ an offline `docker compose up` still plays the whole catalog.
 *Done when:* measured time-to-first-frame drops materially on the real Solar System scenario.
 
 ### Stage 3 — Object store + presigned delivery (scale & access control)
-- Add **MinIO** (S3-compatible, self-hosted) to `docker-compose.yml`; migrate `/a/*` into it.
+- Add an **S3-compatible object store** and migrate `/a/*` into it. **The Docker volume served by nginx
+  is the current choice and stays it until this stage is actually needed.** The product is not picked:
+  candidates are **SeaweedFS** or **Garage** (self-hosted) and a **hosted S3** service. MinIO is not a
+  candidate: its open-source repository was archived on 2026-04-25, so the platform would adopt a store
+  that no longer gets fixes. Choosing is the first task of this stage, against the requirements
+  below (presigned GET URLs, `ACAO` for the sandboxed player, content-addressed keys).
 - Backend issues **presigned GET URLs**; the browser fetches assets **directly** from the
   store — the backend leaves the data path.
 - Enables private/unpublished scenarios (time-limited links) and horizontal scale; optional
   CDN in front for off-campus delivery.
+- Scenarios play in a sandboxed frame on an opaque origin, so the store must answer `Origin: null` with
+  `Access-Control-Allow-Origin: *` on the assets, exactly as nginx does for `/a/` today. A presigned URL
+  to a **draft** is fetched by the frame, not the host, so a private asset still needs the host to relay
+  it (the player-isolation research, §6: [`../../../.code-foundations/research/2026-10-24-scenario-delivery-and-script-isolation.md`](../../../.code-foundations/research/2026-10-24-scenario-delivery-and-script-isolation.md), at the workspace root, not in this repo).
 
 *Done when:* asset traffic no longer flows through `backend`; unpublished scenarios are not
 publicly readable.

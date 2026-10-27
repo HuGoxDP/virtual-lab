@@ -40,3 +40,52 @@ export function readFlag(raw: string | null): boolean {
   const v = raw.toLowerCase();
   return v === '' || v === '1' || v === 'true';
 }
+
+/** The slice of a player error the viewer maps; structurally `PlayerError` from `WebEngineTS/player-host`. */
+export interface PlayerFailure {
+  code: 'handshake' | 'origin' | 'version' | 'load' | 'runtime';
+  message: string;
+}
+
+/**
+ * What the student reads for a failure of the isolated player, or `null` when nothing should be shown.
+ *
+ * `handshake`, `origin` and `version` mean the frame never became a usable player (blocked, offline, an
+ * incompatible deploy): the engine's own text is for developers, so they get a Ukrainian explanation.
+ * `load` carries the player's message about the scenario itself (a bad manifest, a failed entry point)
+ * and is shown as the old viewer showed the engine's. `runtime` is a script error after a successful
+ * start: the scene stays on screen, so it is not an error screen.
+ */
+export function mapPlayerError(error: PlayerFailure): string | null {
+  switch (error.code) {
+    case 'handshake':
+      return 'Відтворювач сценаріїв не відповів. Оновіть сторінку; якщо помилка повторюється — перевірте з’єднання.';
+    case 'origin':
+    case 'version':
+      return 'Відтворювач сценаріїв не сумісний із цією сторінкою. Оновіть сторінку.';
+    case 'load':
+      return error.message.trim() || 'Не вдалося завантажити сценарій';
+    case 'runtime':
+      return null;
+  }
+}
+
+/** The player rejects relative URLs; a catalog `manifestUrl` is site-relative (`/a/<id>.json`). */
+export function absoluteUrl(url: string, base: string): string {
+  return new URL(url, base).href;
+}
+
+/** Elements for which Space already means something (activate, type, scroll a control). */
+const SPACE_OWNERS = 'button, a[href], input, select, textarea, summary, [contenteditable], [role="button"]';
+
+/**
+ * Whether a keydown is the viewer's "pause" shortcut: a plain, first-press Space that is not
+ * addressed to a control that uses Space itself. Only ever evaluated for keys that reach the host
+ * page; with the scenario frame focused the player handles Space inside the frame instead.
+ */
+export function isPauseShortcut(event: KeyboardEvent): boolean {
+  if (event.code !== 'Space' || event.repeat || event.defaultPrevented) return false;
+  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
+  const target = event.target;
+  return !(target instanceof Element && target.closest(SPACE_OWNERS));
+}

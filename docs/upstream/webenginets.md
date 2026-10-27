@@ -49,6 +49,9 @@ Until then this platform's choice stands: do **not** default to the manifest pat
 
 Found against `0.1.0-local.1792706134341`; shared-index row **G5** in `../../../.claude-shared/ENGINE-GAPS.md`.
 
+**Status for this platform: no longer leaks (since player isolation, virtual-lab `2bf3a12`).** The engine request
+below stays open for any host that reuses one JS realm.
+
 `Time` is a static class. Its `timeScale` setter (`WebEngineTS/src/engine/core/Time.ts:201`) writes
 a static, and the only routine that puts it back to `1.0` is `Time._reset()`
 (`WebEngineTS/src/engine/core/Time.ts:280`, `@internal`, "Useful for testing or scene reloads").
@@ -58,16 +61,13 @@ from `Application`. So a scenario that pauses or slows time (`Time.timeScale = 0
 behind through `dispose()` and the next `loadScenarioFrom*` in the same page — the next scenario
 starts frozen or slowed.
 
-**What is affected:** any host that runs more than one scenario per page load. This platform's viewer
-is a single-page app: leaving `/play/a` and opening `/play/b` reuses the same JS realm and the same
-`Time` statics.
+**What is affected:** any host that runs more than one scenario in one JS realm. This platform's viewer used to:
+leaving `/play/a` and opening `/play/b` reused the same realm and the same `Time` statics. It no longer does (below).
 
-**What the platform does about it:** nothing page-side, on purpose. As of release 1 phase 4 the viewer
-carries no `Time.timeScale` write and no reset — pause, FPS and the scale reset were deliberately not
-built in the page. The platform's fix is **a fresh player frame per run** (the isolated player,
-`WebEngineTS/player-host`, plan `2026-10-24-player-isolation.md` phase 5): every scenario then starts in
-a new JS realm with a new `Time`, so the scale cannot leak, whatever the engine does. Until that ships,
-a scale set by one scenario can carry into the next one opened in the same tab.
+**What the platform does about it:** nothing page-side, on purpose, and it no longer needs to. Every
+scenario - including a restart - runs in **a fresh sandboxed player frame** (`WebEngineTS/player-host`, plan
+`2026-10-24-player-isolation.md` phase 5, virtual-lab `2bf3a12`), a new JS realm with a new `Time`, so a scale set
+by one scenario cannot reach the next, whatever the engine does. The page itself holds no engine.
 
 **What is asked of the engine (optional, it does not block the platform):** call `Time._reset()` from
 `Application.dispose()` (or at the start of a scenario load), so a host that reuses the page is also safe.
@@ -83,8 +83,9 @@ one: `Texture2D.ktx2TranscoderPath` is a URL **this platform** serves, and the f
 `three/examples/jsm/libs/basis/`. So `-s DYNAMIC_EXECUTION=0` is a request to make to three.js,
 not a change the engine can apply.
 
-The decision here does not change: keep the CSP (`nginx/csp.conf`), accept that KTX2 does not
-transcode.
+*Superseded by player isolation:* the page's CSP (`nginx/csp.conf`) still has no `'unsafe-eval'`, but KTX2
+now transcodes inside the sandboxed player frame, whose own CSP (the engine's `player.nginx.conf`) grants it;
+`e2e/tests/ktx2-render.spec.ts` pins that. What follows is the decision as it stood before.
 
 What did change is that the condition is now **detectable rather than silent**:
 `MemoryReport.renderer.textureFormats` reports `RGBA8` for a KTX2 asset that failed to transcode,
@@ -112,8 +113,8 @@ the numbers without the panel.
 MemoryProfiler.diagnosticsAllowed = new URLSearchParams(location.search).has("diag");
 ```
 
-**Action for this repo:** the viewer's close-after-load workaround can be replaced by this. Keep
-the E2E test — it now guards a guarantee instead of a race.
+**Done here:** the close-after-load workaround is gone. The host sends `diag: false` to the player and the
+latch (one-way since the player-isolation work) holds it. The E2E test stays.
 
 ### 4b. The report could not say what a texture was transcoded to — **fixed**
 

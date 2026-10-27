@@ -1,82 +1,129 @@
 #!/usr/bin/env node
-// frontend/scripts/build-csp.mjs
+// frontend/scripts/check-csp-assumptions.mjs
 //
-// Checks that index.html still looks the way the Content-Security-Policy in
-// nginx.conf assumes, and fails the build if it does not.
+// Checks that the built SPA still looks the way the platform's Content-Security-Policy
+// (nginx/csp.conf) assumes, and fails the build if it does not.
 //
-// It does not generate the policy. An earlier version did, because the plan was
-// to allow the inline import map by hash — but **Chromium matches import maps
-// against `script-src` by nonce only and ignores hashes**, so a hash-based
-// policy blocks the import map, "WebEngineTS" never resolves and every scenario
-// fails while the header looks perfectly correct. nginx therefore injects a
-// per-request nonce with `sub_filter`, and the policy is a literal in
-// `nginx/nginx.conf`.
+// Since player-isolation the platform page runs **no scenario code**: scenarios run in a sandboxed
+// frame (`/player/player.html`) on an opaque origin with its own policy. So the page's policy is the
+// plainest one it has had, and these are the things that would silently break it or quietly widen it:
 //
-// What is left to verify is that the two still agree: the `sub_filter` pattern
-// matches the exact opening tag Angular emits, and nothing else inline crept
-// into the document. Both are silent failures at run time, so they are caught
-// here at build time.
+//   - `index.html` carries no import map. The engine is no longer resolved in the page; an import map
+//     (which needs a nonce, which needs `'nonce-…'` in `script-src`) would mean something put engine
+//     code back.
+//   - no other inline <script> and no inline event handler: `script-src` is `'self'` and
+//     `script-src-attr` is `'none'`, so either is blocked at run time and only noticed in a browser.
+//   - no bundle imports the bare specifier `"WebEngineTS"` or `"WebEngineTS/…"`. With no import map such
+//     an import cannot resolve, and the whole app fails to start. (`angular.json` must not list the
+//     engine under `externalDependencies`: esbuild would keep the `player-host` subpath external too.)
+//   - when `nginx/csp.conf` is available (it is not inside the Docker build stage): its `script-src`
+//     has no `blob:` and no nonce, and `frame-src 'self'` is present.
 //
-// Run after `ng build`.
+// Run after `ng build`:  node scripts/check-csp-assumptions.mjs [dist-dir] [path/to/csp.conf]
 
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
-const DIST = process.argv[2] ?? 'dist/university-mock/browser';
+/** Inline scripts of any kind: a <script> without `src`. */
+const INLINE_SCRIPT = /<script(?![^>]*\bsrc=)[^>]*>/gi;
 
-/** Exactly what `sub_filter` in nginx.conf looks for, byte for byte. */
-const IMPORTMAP_TAG = '<script type="importmap">';
+/** Inline event-handler attributes, which `script-src-attr 'none'` blocks. */
+const INLINE_HANDLER = /\son(load|click|error|submit)\s*=/gi;
 
-async function main() {
-  const indexPath = path.join(DIST, 'index.html');
-  const html = await readFile(indexPath, 'utf8');
+/** `from "WebEngineTS"`, `import("WebEngineTS/player-host")`, `import "WebEngineTS"` and the like. */
+const BARE_ENGINE_IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)["']WebEngineTS(?:\/[^"']*)?["']/;
+
+/** @returns {string[]} what is wrong with the document, empty when it matches the policy */
+export function checkIndexHtml(html) {
   const problems = [];
 
-  // ── the nonce injection point ─────────────────────
-  const tags = html.split(IMPORTMAP_TAG).length - 1;
-
-  if (tags === 0) {
+  if (/<script[^>]*\btype\s*=\s*["']importmap["']/i.test(html)) {
     problems.push(
-      `no \`${IMPORTMAP_TAG}\` in index.html — nginx's sub_filter has nothing to add a nonce to, ` +
-      `so the import map would be blocked and no scenario would run`
-    );
-  } else if (tags > 1) {
-    // sub_filter_once is on: only the first occurrence gets a nonce.
-    problems.push(`${tags} import map tags — only the first would receive a nonce`);
-  }
-
-  // ── anything else inline ──────────────────────────
-  // The policy allows exactly one inline script, the nonced import map. Any
-  // other inline <script> or event-handler attribute would be blocked.
-  const inlineScripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>/g)]
-    .map(m => m[0])
-    .filter(tag => !tag.includes('type="importmap"'));
-
-  if (inlineScripts.length > 0) {
-    problems.push(
-      `unexpected inline script(s), which the CSP will block: ${inlineScripts.join(', ')}`
+      'index.html has an import map. The page no longer resolves the engine (the sandboxed player ' +
+      'does); an import map needs a nonce in script-src, which csp.conf no longer grants'
     );
   }
+  if (/\bnonce\s*=/i.test(html)) {
+    problems.push('index.html carries a nonce attribute; script-src has no nonce any more');
+  }
 
-  const handlers = [...html.matchAll(/\son(load|click|error|submit)\s*=/gi)].map(m => m[0].trim());
+  const inline = html.match(INLINE_SCRIPT) ?? [];
+  if (inline.length > 0) {
+    problems.push(`inline script(s), which the CSP blocks: ${inline.join(', ')}`);
+  }
+
+  const handlers = [...html.matchAll(INLINE_HANDLER)].map(m => m[0].trim());
   if (handlers.length > 0) {
     problems.push(
-      `inline event handler(s) ${handlers.join(', ')} — script-src-attr is 'none'. ` +
+      `inline event handler(s) ${handlers.join(', ')} - script-src-attr is 'none'. ` +
       `Angular's critical-CSS inliner emits one; it is disabled in angular.json for this reason`
     );
   }
+  return problems;
+}
+
+/**
+ * @param {Array<{ name: string; text: string }>} files the built JavaScript
+ * @returns {string[]}
+ */
+export function checkBundles(files) {
+  return files
+    .filter(file => BARE_ENGINE_IMPORT.test(file.text))
+    .map(file =>
+      `${file.name} imports a bare "WebEngineTS" specifier. With no import map it cannot resolve and the ` +
+      `app would not start. Keep the engine out of angular.json's externalDependencies and import only ` +
+      `"WebEngineTS/player-host" (which is bundled)`
+    );
+}
+
+/** @returns {string[]} */
+export function checkCsp(cspConf) {
+  const problems = [];
+  const policy = cspConf.match(/add_header\s+Content-Security-Policy\s+"([^"]*)"/)?.[1] ?? '';
+  const scriptSrc = policy.split(';').map(d => d.trim()).find(d => d.startsWith('script-src ')) ?? '';
+
+  if (!policy) problems.push('csp.conf declares no Content-Security-Policy header');
+  if (/(^|\s)blob:/.test(scriptSrc)) problems.push(`script-src allows blob: (${scriptSrc}); the page no longer executes scenario scripts`);
+  if (/'nonce-/.test(scriptSrc)) problems.push(`script-src carries a nonce (${scriptSrc}); the import map it served is gone`);
+  if (!/(^|;)\s*frame-src 'self'(\s|;|$)/.test(policy)) problems.push(`frame-src 'self' is missing; the viewer frames /player/player.html`);
+  return problems;
+}
+
+async function builtScripts(dist) {
+  const names = (await readdir(dist)).filter(name => name.endsWith('.js'));
+  return Promise.all(names.map(async name => ({ name, text: await readFile(path.join(dist, name), 'utf8') })));
+}
+
+async function main() {
+  const dist = process.argv[2] ?? 'dist/university-mock/browser';
+  const cspPath = process.argv[3] ?? path.resolve('..', 'nginx', 'csp.conf');
+
+  const problems = [
+    ...checkIndexHtml(await readFile(path.join(dist, 'index.html'), 'utf8')),
+    ...checkBundles(await builtScripts(dist)),
+  ];
+
+  let cspNote = 'csp.conf not found (expected inside the Docker build stage), so its directives were not checked.';
+  try {
+    problems.push(...checkCsp(await readFile(cspPath, 'utf8')));
+    cspNote = `${cspPath}: no blob:, no nonce in script-src, frame-src 'self'.`;
+  } catch (err) {
+    if (err?.code !== 'ENOENT') throw err;
+  }
 
   if (problems.length > 0) {
-    console.error(`index.html does not match the CSP in nginx/nginx.conf:\n`);
+    console.error('The built app does not match the CSP in nginx/csp.conf:\n');
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
-
-  console.log('index.html matches the CSP: one import map to nonce, nothing else inline.');
+  console.log(`The built app matches the CSP: no import map, nonce or inline script; no bare engine import. ${cspNote}`);
 }
 
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
+}

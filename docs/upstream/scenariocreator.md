@@ -48,9 +48,10 @@ browsers without the extensions — or is shipping both by design? If both, is t
 
 **One constraint to know before switching:** this platform now ships a Content Security Policy
 without `'unsafe-eval'`, and the basis transcoder needs it (see
-[`webenginets.md`](webenginets.md) §2). Turning KTX2 on therefore needs a decision on both sides,
-not just here. `e2e/tests/ktx2.spec.ts` is written to activate itself the moment a scenario
-references a `.ktx2`, so the platform will notice immediately either way.
+[`webenginets.md`](webenginets.md) §2) - but scenarios no longer run on the page: they run in the
+engine's sandboxed player, whose own CSP grants `'unsafe-eval'`, and `e2e/tests/ktx2-render.spec.ts`
+renders a KTX2 scenario through it. So KTX2 content works; whether to ship it is only a content
+decision. `e2e/tests/ktx2.spec.ts` activates itself the moment a catalog scenario references a `.ktx2`.
 
 ---
 
@@ -73,11 +74,12 @@ production scenarios have none of this.
 
 ### Why it matters
 
-It is user-visible, on the scenario a first-time visitor is most likely to open. The platform's
-`?diag=1` gate governs its own button; it cannot govern what content does once running.
+It is user-visible, on the scenario a first-time visitor is most likely to open. A host's own
+switch (the platform once had a `?diag=1` button) cannot govern what content does once running.
 
-Worked around here — the viewer now closes the overlay after load when `?diag=1` is absent, and an
-E2E test holds the line — so nothing is on fire. But the call is presumably left-over debugging
+Worked around here - the player always runs with `diag: false` (the host never turns the profiler on, whatever
+`?diag=1` says) and the engine's `diagnosticsAllowed` latches at `false`, so the call is inert; the old page-side
+guard (`viewer-profiler.ts`) is gone, and an E2E test holds the line — so nothing is on fire. But the call is presumably left-over debugging
 rather than intent.
 
 ### Asked

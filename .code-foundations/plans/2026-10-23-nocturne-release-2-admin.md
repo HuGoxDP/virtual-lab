@@ -1,29 +1,32 @@
 # Plan: Release 2 — admin, roles and scenario isolation on Nocturne
 **Created:** 2026-10-23
 **Status:** ready
+**Superseded in part (Phase 1):** by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
 **Complexity:** complex
 **Review cadence:** 2
 **Check-ins:** checkpoints
 ---
 ## Context
 Catalog writes are guarded by one `ADMIN_TOKEN` that cannot be handed to teachers, there is no author/moderator
-workflow, no archive history, no category management, and a scenario's code runs on the API's origin — so any
-personal key would be readable by the next archive a moderator opens. This plan is **release 2 of 2**: the new
+workflow, no archive history, no category management, and (until the player-isolation plan) a scenario's code ran on
+the API's origin — so any personal key would have been readable by the next archive a moderator opens. This plan is **release 2 of 2**: the new
 admin from the prototype (2e–2m), personal keys with roles, moderation, versions, and scenario isolation.
 **It starts only after release 1** (`.code-foundations/plans/2026-10-23-nocturne-release-1-public.md`) has
 landed: it reuses that plan's Nocturne classes, shared components, `categories` table (with `is_visible`),
-features, the viewer's input-only HUD components and the `Time.timeScale` reset.
+features and the viewer's input-only HUD components. (Release 1 dropped the page-side `Time.timeScale` reset: every
+scenario now runs in a fresh player frame, which is the fix for engine gap G5 — nothing here needs a reset.)
 
 Requirements and decisions: `.code-foundations/research/2026-10-23-nocturne-redesign.md` (sections "Релиз 2",
 "Принятые решения", "Решения по бывшим открытым вопросам"). Key design: `WebEngineTSEditor/docs/unity-editor-plan.md`
 §7 (publish keys, permission matrix, draft for archives of published scenarios). Platform plan: `../../.claude-shared/PLAN.md`
-§2.6 (publish keys) and §2.9 (isolation before keys). Design files: as in release 1's Context.
+§2.6 (publish keys); §2.9 (isolation before keys) is closed by the player-isolation plan. Design files: as in release 1's Context.
 
 **Success criteria:** an author with a personal code uploads, fills metadata and preview, and submits; a moderator
 reviews (static checks + a test run in their browser), publishes or returns with a note; the catalog shows only
 `published`; a new archive for a published scenario reaches students only after a moderator accepts it; moderators
 issue/revoke codes, manage categories and roll back versions; history and activity are visible; scenario code runs
-on a separate origin and can neither read an access code nor call the API as the user; all suites green.
+in the engine's sandboxed player (opaque origin, shipped by the player-isolation plan) and can neither read an
+access code nor call the API as the user; all suites green.
 
 ## Constraints
 - Personal keys are §7's design extended with a role: `publish_keys` (`label`, `role`, `token_hash` SHA-256,
@@ -32,7 +35,7 @@ on a separate origin and can neither read an access code nor call the API as the
 - Session as today: the browser keeps the code in `sessionStorage` until the tab closes or the user signs out.
 - **Ordering policy:** Phase 2 does not consume Phase 1's output, but it follows it so that no author key can
   exist on a build where scenario code shares the platform's origin. In production, issue author keys only once
-  Phase 1 is deployed.
+  the player-isolation plan (its Phase 5) is deployed.
 - Statuses `draft → review → published | rejected`; unpublish returns to `draft`. No "hidden"/"unlisted" statuses;
   a scenario in a hidden category is treated as unpublished by every public endpoint.
 - Authors edit **content fields** of their own scenarios directly in any status (Phase 2's field table); a new
@@ -42,19 +45,16 @@ on a separate origin and can neither read an access code nor call the API as the
 - Existing rows: `published`/`draft` from `is_published`, no owner; `author` stays the display name, defaults to
   the creating key's label, and only moderators edit it.
 - Migrations `007`–`010` (`010`: Phase 4's clearing of external `imageUrl`s); idempotent; `docs/code-standards.md` applies throughout.
-- CSP: platform pages may only gain `frame-src <PLAYER_ORIGIN>` and lose `blob:`/`https:`; nothing else loosens.
+- CSP: the platform pages already gained `frame-src 'self'` and lost `blob:` from `script-src` (player-isolation plan);
+  this plan may still drop `https:` from `img-src` (Phase 4); nothing else loosens.
 - Author-supplied text is rendered as text only — no `innerHTML`, no `bypassSecurityTrust*`.
 - Out of scope: frame capture, headless checks, launch statistics, e-mail, SSO, "recommended" placement.
 
 ## Chosen Approach
-**One player page, origin by configuration** — scenarios run in `/player/` inside an iframe driven by a validated
-`postMessage` protocol; by default it is `sandbox="allow-scripts"` on the same host (opaque origin, no DNS needed);
-with `PLAYER_ORIGIN` set it is served from that separate real origin and sandboxed with
-`allow-scripts allow-same-origin` (the pair is safe only because the origins differ). Backend routes are split into
-modules by actor before new routes are added; archive history is a `scenario_versions` table whose `pending` row is
-§7's "pending archive". **Fallback:** if the spike shows the engine cannot run in an opaque origin,
-`PLAYER_ORIGIN` becomes mandatory — same code; the build records it under "Decided During Build" for the owner,
-because deployment then needs a second host or port.
+**Isolation is delivered by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo), not here:** the engine ships a sandboxed player page, its header snippet and a
+host client (`WebEngineTS/player-host`); the viewer drives it. Opaque origin on the same host only, no `PLAYER_ORIGIN`.
+This plan builds on that for Phase 7's test run. Its own approach: backend routes are split into modules by actor
+before new routes are added; archive history is a `scenario_versions` table whose `pending` row is §7's "pending archive".
 
 ## Rejected Approaches
 - **Isolate the admin instead of the player (`admin.<host>`):** leaves the next login on the main origin (LTI, PLAN §2.10) beside untrusted code.
@@ -64,72 +64,28 @@ because deployment then needs a second host or port.
 ---
 ## Implementation Phases
 
-### Phase 1: Player isolation
+### Phase 1: Player isolation — DONE, superseded by the player-isolation plan
 **Model:** sonnet
-**Skills:** ca-architecture-boundaries, cc-defensive-programming, aposd-designing-deep-modules
+**Skills:** none -- completed by the player-isolation plan
 **Gate:** Standard
-
-**Goal:** Run every scenario in a separate document whose origin is not the platform's, driven by the viewer
-through a validated message protocol — the precondition for issuing any author key.
-
-**Scope:**
-- IN: a time-boxed spike first — engine in a sandboxed opaque-origin document: import map + nonce, CORS for
-  module scripts, blob-module imports, WebGL2, KTX2 transcoder, MemoryProfiler, audio (`allow="autoplay"`),
-  pointer lock (`allow-pointer-lock`), CSP `'self'` semantics, and the player's build mechanism (second Angular
-  application or a script); the `/player/` document; `PlayerMessage`; `PlayerHost`; `PLAYER_ORIGIN` delivery;
-  nginx/CSP/CORS; the viewer re-hosted with release 1's `<vl-viewer-loading>`/`<vl-viewer-hud>`; release 1's
-  FPS sampler, pause controller and time-scale reset moved into the player; frame-aware e2e helpers.
-- OUT: test-run UI (Phase 7); per-scenario engine pinning; the editor's own preview (Notes).
-
-**Constraints:** the parent transfers the archive bytes and the **player retains them** for restart; fullscreen
-is the parent fullscreening the frame's container; `PLAYER_ORIGIN` reaches nginx through the official image's
-template `envsubst` (only defined variables are substituted) — every config file that needs a variable,
-including the CSP includes, moves under `templates/` and is rendered to `/etc/nginx/conf.d/`, with the
-`include` paths updated — and reaches the SPA as a `<meta>` tag stamped by `sub_filter`, like the nonce. A second variable, `PUBLIC_ORIGIN` (the platform's own origin), feeds the player location's `frame-ancestors` and the player's accepted parent origin; that location drops `X-Frame-Options`. In
-sandbox mode the player document also carries CSP `sandbox allow-scripts`, so even a direct top-level
-navigation to `/player/` runs in an opaque origin; that direct page is also where e2e takes bare-engine
-measurements from now on. `?stream=1`, `?diag=1`, restart, pause, FPS, context loss, telemetry (in the
-parent) and teardown keep release 1 behaviour.
-**Edge cases:** the parent accepts messages only when `event.source === frame.contentWindow` (and, in
-`PLAYER_ORIGIN` mode, `event.origin === PLAYER_ORIGIN`); the player only from `window.parent` (and, in that mode,
-from the platform origin); unknown `type`, missing fields, a non-ArrayBuffer `buffer`, an off-origin `url` →
-dropped and logged; every inbound value from the player is untrusted (numbers clamped, strings capped at 500,
-rendered as text); parent → player targets exactly `PLAYER_ORIGIN`, or `'*'` only in opaque mode, and the
-payload never contains a secret; Space with
-the frame focused pauses via the player and echoes `paused`; leaving removes the frame.
 **Depends on:** none | **Unlocks:** Phases 2, 7
-**File scope:** `frontend/src/player/**`, `frontend/src/app/player/**`, `frontend/src/app/pages/viewer/**`,
-`frontend/src/index.html`, `frontend/angular.json`, `frontend/scripts/**`, `frontend/package*.json`, `nginx/**`,
-`Dockerfile.frontend`, `docker-compose*.yml`, `.env.example`, `.github/workflows/**`, `e2e/**`, `docs/**`, `CLAUDE.md`
-**Produces:** `PlayerMessage` (`frontend/src/app/player/protocol.ts`, envelope `{v: 1, type, …}`): in —
-`load{source: {kind: 'buffer', buffer: ArrayBuffer} | {kind: 'manifest', url: string}, diag: boolean}`, `pause`,
-`resume`, `restart`, `measure{seconds: number}`; out — `ready`, `progress{progress: number, operation: string,
-loadedBytes?: number, totalBytes?: number}`, `running`, `error{message: string}`, `fps{value: number}`,
-`paused{value: boolean}`, `context-lost`, `metrics{timeToFirstFrameMs, avgFps, gpuMemoryBytes, consoleErrors:
-number, engineBuild: string}`. `PlayerHost` (component-scoped service): `attach(container: HTMLElement): void`,
-`load(source, diag): Promise<void>`, `pause()`, `resume()`, `restart()`, `measure(seconds): Promise<Metrics>`,
-`dispose()`; signals `state`, `progress`, `fps`, `paused`, `error`.
-**Security-sensitive:** yes
+**File scope:** none -- nothing left to build here
 
-**File hints:** `nginx/csp.conf` (directive rationale), `nginx/nginx.conf` (`sub_filter` nonce pattern, every
-location's `X-Frame-Options SAMEORIGIN` — the player location sets `frame-ancestors` instead),
-`frontend/scripts/check-csp-assumptions.mjs` (asserts one import map in `index.html`), `e2e/helpers/engine.ts`,
-`e2e/tests/csp.spec.ts:55` (asserts `blob:` on `/`) and `:61` (nonce/import-map test); main-world `import('WebEngineTS')` call sites to move into
-the player: `e2e/helpers/engine.ts:34,48,71`, `e2e/tests/streaming.spec.ts:52` (runs a bare engine "because `/` carries the import map"),
-`e2e/tests/viewer.spec.ts:138,167`.
+**Completed by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo)** (2026-10-24 to 2026-10-27). Do not build this phase: the Execution
+Log records it as satisfied, and a build resumes at Phase 2. Commits: virtual-lab `9b0ae09` and `2bf3a12`
+(branch `feature/player-isolation`), WebEngineTS `02fdc1f` (the engine's Phases 1-3 are earlier commits on the same branch).
 
-**Done when:**
-- [ ] DW-1.1: The spike's findings are in `docs/` — what runs in an opaque origin, each CSP/CORS line and sandbox/allow token it needed, the build mechanism chosen.
-- [ ] DW-1.2: A hostile archive generated at test time and published as an `e2e-` row (torn down after) fails to read
-  `parent`/`top` storage, to navigate `top`, and to call `/api/admin/scenarios` with credentials — in sandbox mode and in `PLAYER_ORIGIN` mode.
-- [ ] DW-1.3: ZIP and `?stream=1` scenarios run through the player with release 1's HUD: pause (Space inside and outside the frame), FPS, restart from the retained buffer, cancel, exit, context loss.
-- [ ] DW-1.4: Forged messages (wrong source, bad shape, out-of-range values) change nothing (unit tests on both sides).
-- [ ] DW-1.5: The frame is always sandboxed: `allow-scripts`, plus `allow-same-origin` only when `PLAYER_ORIGIN` differs from the platform origin (unit-asserted), plus only the tokens DW-1.1 justified; a direct navigation to `/player/` in sandbox mode is opaque too; `.env.example` documents `PLAYER_ORIGIN`/`PLAYER_PORT`/`PUBLIC_ORIGIN`.
-- [ ] DW-1.6: The platform origin no longer runs scenario code: `index.html` has no import map, the SPA's `script-src` has no `blob:`; the player document's CSP and `frame-ancestors` are asserted; `csp.spec.ts` and `check-csp-assumptions.mjs` updated.
-- [ ] DW-1.7: Ten navigations in and out of the viewer leave no live frame or WebGL context; all e2e green with frame-aware helpers.
+**What replaced it:** every scenario runs in an engine-shipped, sandboxed player (`<iframe sandbox>` on an opaque
+origin, same host, no second-origin mode) driven by `PlayerHost` from `WebEngineTS/player-host`. The platform page
+runs no scenario code: `/` has no import map, and its `script-src` is `'self'`. Specifics are in the isolation plan and
+in `virtual-lab/CLAUDE.md` (Engine integration, CSP).
 
-**Difficulty:** HIGH
-**Uncertainty:** Engine behaviour in an opaque origin — decided by the spike (Fallback in Chosen Approach).
+**Dependencies on this phase are satisfied:** Phases 2 and 7 depend on Phase 1; the isolation plan meets that dependency.
+The plan's ordering policy (no author key in production before isolation is deployed) now reads "once the isolation plan is deployed".
+
+**References in Phases 3 and 7 to `frontend/src/app/player/**` and `protocol.ts` (`measure`/`metrics`)** are the old design.
+They now mean the engine's `WebEngineTS/player-host` (`PlayerHost.measure()` returning `PlayerMetrics`); the
+phase text itself is unchanged.
 
 ### Phase 2: Keys, roles and authorization
 **Model:** sonnet
@@ -302,7 +258,7 @@ scenarioTitle: string|null, actorLabel, action, details, createdAt}`; `GET /api/
 **Security-sensitive:** yes
 
 **File hints:** `backend/storage.js` (`OBJECT_NAME` accepts only `<sha>.zip` — generalise per store),
-the `^~ /scenarios/` location in the nginx server config (moved under `templates/` by Phase 1), `backend/archive-validation.js`, `backend/scripts/catalog-metadata.mjs:49`,
+the `^~ /scenarios/` location in `nginx/nginx.conf` (nginx has no `templates/` directory: the player-isolation plan added `/player/` there, not a template split), `backend/archive-validation.js`, `backend/scripts/catalog-metadata.mjs:49`,
 `backend/scripts/publish-release.mjs:175`.
 
 **Done when:**
@@ -447,15 +403,7 @@ changed routine, and every DW has at least one named test below.
 Backend = `node:test` integration against the test Postgres; frontend = vitest specs; e2e = Playwright on the stack.
 New scenarios get numbers in `docs/test-plan.md` and are cited in each spec header.
 
-**Phase 1**
-- [ ] Spike notes committed with each finding's CSP/CORS/sandbox line (DW-1.1)
-- [ ] e2e hostile archive (built in the test, `e2e-` row, teardown): storage read, `top` navigation, credentialed admin fetch all fail — sandbox mode and `PLAYER_ORIGIN` mode (second port in the test stack) (DW-1.2)
-- [ ] e2e through the player: ZIP run, `?stream=1` run, restart from retained buffer, pause by Space with frame focused and with parent focused, FPS, cancel, exit, forced context loss (DW-1.3)
-- [ ] Dirty unit (host and player): other window, unknown `type`, missing fields, `buffer` not an ArrayBuffer, off-origin `url`, `fps` = 1e9 / NaN / -1, 10 000-char `message` → ignored or clamped; in `PLAYER_ORIGIN` mode a message from the right window but a wrong `event.origin` is ignored and the host posts with the exact target origin (DW-1.4)
-- [ ] e2e: a direct top-level visit to `/player/` reports `origin === 'null'` in sandbox mode; `streaming.spec.ts` and `viewer.spec.ts` engine reads run inside the player (DW-1.5, DW-1.7)
-- [ ] Unit: sandbox tokens for same-host, other-origin, and misconfigured `PLAYER_ORIGIN` equal to the platform origin (never both tokens) (DW-1.5)
-- [ ] `csp.spec.ts`: no import map and no `blob:` on `/`; player document CSP and `frame-ancestors`; `check-csp-assumptions.mjs` passes in the image build (DW-1.6)
-- [ ] e2e: 10 viewer round trips → no frame left, no context-loss warnings (DW-1.7)
+**Phase 1** — done by the player-isolation plan (its Test Plan and e2e carry the checks).
 
 **Phase 2**
 - [ ] Route split: full suite green on the commit before and after (DW-2.1)
@@ -510,15 +458,12 @@ New scenarios get numbers in `docs/test-plan.md` and are cited in each spec head
 - [ ] Test run: metrics saved and shown; a crashing fixture stores an error; an engine build string of 500 chars is truncated to 100 before posting (DW-7.5)
 - [ ] e2e full author → moderator path including pending archive (DW-7.6)
 
-**Manual** (`docs/manual-browser-checks.md`, supports DW-1.2, DW-5.5, DW-7.x): every admin screen beside the prototype
-at 1440 px and 390 px; the hostile-archive check repeated by hand in Firefox and Safari (sandbox behaviour differs).
+**Manual** (`docs/manual-browser-checks.md`, supports DW-5.5, DW-7.x): every admin screen beside the prototype
+at 1440 px and 390 px. (The hostile-archive check in Firefox and Safari belongs to the player-isolation plan.)
 
 ## Assumptions
 | Assumption | Confidence | Verify Before Phase | Fallback If Wrong |
 |---|---|---|---|
-| The engine (import map, blob-module imports, WebGL2) runs in a sandboxed opaque-origin document | MED | Phase 1 spike | `PLAYER_ORIGIN` mandatory; deployment needs a second host or port |
-| No catalog scenario relies on `localStorage` | HIGH | Phase 1 (grep ScenarioCreator sources) | Run that scenario only in `PLAYER_ORIGIN` mode |
-| The official nginx image substitutes only defined variables in templates (leaves `$uri`, `$request_id`), and the CSP includes can live in its output directory | HIGH | Phase 1 | Render the files in the entrypoint with an explicit variable list and output path |
 | `MAX_ENTRY_BYTES` 10 MiB / `MAX_ARCHIVE_ENTRIES` 20 000 exceed every real scenario's largest manifest/scene entry and entry count | MED | Phase 2 (measure the archives store and the current ScenarioCreator release) | Raise the defaults to 2× the measured maximum |
 | The editor's Publish can send `Authorization: Bearer <key>` | HIGH (§7) | Phase 2 | Adjust the editor's dialog; no platform change |
 | `publish-release.mjs` is the only script writing `isPublished`; `import-release-assets.mjs` only PUTs `manifestUrl` | HIGH (checked) | Phase 3 | Move any other writer onto the transition endpoints |
@@ -528,9 +473,6 @@ at 1440 px and 390 px; the hostile-archive check repeated by hand in Firefox and
 ## Decision Log
 | Decision | Alternatives Considered | Rationale | Phase |
 |---|---|---|---|
-| Player page with origin by config, always sandboxed | Separate origin only; isolate the admin instead | Works without DNS today, upgrades without code changes; sandbox in both modes blocks `top` navigation | 1 |
-| Parent transfers archive bytes; player retains them | Player fetches the ZIP | Progress/abort/telemetry stay in the parent; restart needs no re-fetch | 1 |
-| `PLAYER_ORIGIN` via nginx template + `<meta>` stamp | `/api/config` field | No backend change in Phase 1; same pattern as the nonce | 1 |
 | Split `server.js` by actor first, as its own commit | Add routes in place | Refactor separate from feature; four actors in one file | 2 |
 | Field-level write rules for authors | Route-level only | `PUT {scenarioUrl}` would bypass moderation; `imageUrl` would be a tracking beacon | 2 |
 | `audit_events` (not per-scenario only) | `scenario_events` | Key issue/revoke has no scenario | 2 |
@@ -550,14 +492,12 @@ at 1440 px and 390 px; the hostile-archive check repeated by hand in Firefox and
 
 ---
 ## Notes
-- Do not issue author keys in production until Phase 1 is deployed; bootstrap `ADMIN_TOKEN` keeps working throughout.
+- Do not issue author keys in production until the player-isolation plan (its Phase 5) is deployed; bootstrap `ADMIN_TOKEN` keeps working throughout.
 - **Do not release between Phase 5 and Phase 6:** `/admin/legacy` is moderators-only, so authors would have no upload UI in that window.
-- If the spike makes `PLAYER_ORIGIN` mandatory, the build continues, but production needs a second host or port
-  (DNS/TLS or a firewall rule) from the owner before release.
 - **Residual risk:** `/editor/` shares the platform origin (`nginx/editor.conf`); an editor preview of an imported
   archive still runs there. Moving the editor's preview onto the player is the editor's task — add it to `PLAN.md` §3.
 - The editor plan's "migration 006" for `publish_keys` lands here as `007`; update `WebEngineTSEditor/docs/unity-editor-plan.md` §7 when this ships.
-- `PLAN.md` §2.6 (publish keys) and §2.9 (isolation) are closed by this plan — move them to `CHANGELOG.md` after release.
+- `PLAN.md` §2.6 (publish keys) is closed by this plan — move it to `CHANGELOG.md` after release. §2.9 (isolation) was closed by the player-isolation plan.
 - The `isPublished` compatibility field can be removed once nothing reads it (after Phase 6); not scheduled here.
 - Safari's sandboxed-iframe behaviour is the least predictable; the manual check covers it.
 ---
@@ -567,3 +507,6 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_
+
+### Phase 1: Player isolation (Gate: Standard)
+- [x] SKIPPED — completed by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) (virtual-lab 9b0ae09, 2bf3a12; WebEngineTS 02fdc1f)

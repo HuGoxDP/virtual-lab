@@ -8,7 +8,9 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "icons": "node scripts/build-icons.mjs",
-    "icons:check": "node scripts/build-icons.mjs --check"
+    "icons:check": "node scripts/build-icons.mjs --check",
+    "check:csp": "node scripts/check-csp-assumptions.mjs dist/university-mock/browser ../nginx/csp.conf",
+    "test:scripts": "node --test scripts/check-csp-assumptions.test.mjs"
   },
   "prettier": {
     "printWidth": 100,

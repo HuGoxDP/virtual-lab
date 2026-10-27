@@ -1,16 +1,15 @@
 // path: src/app/pages/viewer/viewer.component.spec.ts
 //
-// Release 1, phase 5 - DW-5.3 (unit part): the viewer shuts the profiler gate before anything can
-// load, even with `?diag=1`, and `?diag=1` shows only the build stamp. jsdom has no WebGL2, so the
-// component stops at its "unsupported" screen - which is exactly the earliest point a load could
-// have started from; the e2e suite covers the running scenario.
+// Player isolation, phase 5: the viewer created for real (no seams) in jsdom, which has no WebGL2, so it
+// stops at the "unsupported" screen - the earliest point a frame could have started from. It proves the
+// page creates no player frame there and shows no build stamp. The running paths are covered with a fake
+// host in viewer-lifecycle.spec.ts and against a real browser in e2e.
 
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { BehaviorSubject } from 'rxjs';
-import { MemoryProfiler } from 'WebEngineTS';
 
 import { ViewerComponent } from './viewer.component';
 
@@ -32,48 +31,30 @@ async function render(query: Record<string, string>) {
   const fixture = TestBed.createComponent(ViewerComponent);
   fixture.detectChanges();
   await fixture.whenStable();
-  fixture.detectChanges(); // the flag is read in ngAfterViewInit, after the first check
+  fixture.detectChanges();
   return fixture;
 }
 
-describe('ViewerComponent profiler policy', () => {
-  beforeEach(() => {
-    MemoryProfiler.diagnosticsAllowed = true; // the engine default: open
-  });
-  afterEach(() => {
-    TestBed.resetTestingModule();
-    MemoryProfiler.diagnosticsAllowed = true;
+describe('ViewerComponent without WebGL2 (jsdom)', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  it('shows the unsupported screen and creates no player frame', async () => {
+    const fixture = await render({});
+    const root = fixture.nativeElement as HTMLElement;
+    expect(fixture.componentInstance.state()).toBe('unsupported');
+    expect(root.querySelector('iframe')).toBeNull();
+    expect(root.querySelector('.build-badge')).toBeNull();
   });
 
-  it('DW-5.3 sets diagnosticsAllowed = false on init without ?diag=1', async () => {
-    const fixture = await render({});
-    expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
+  it('?diag=1 shows no stamp there: the page holds no engine to ask', async () => {
+    const fixture = await render({ diag: '1' });
+    expect(fixture.componentInstance.buildStampVisible()).toBe(true);
+    expect(fixture.componentInstance.engineBuild()).toBe('');
     expect((fixture.nativeElement as HTMLElement).querySelector('.build-badge')).toBeNull();
   });
 
-  it('DW-5.3 sets diagnosticsAllowed = false on init even with ?diag=1', async () => {
-    await render({ diag: '1' });
-    expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
-  });
-
-  it('DW-5.3 ?diag=1 shows the build stamp and nothing else', async () => {
-    const fixture = await render({ diag: '1' });
-    const root = fixture.nativeElement as HTMLElement;
-    expect(root.querySelector('.build-badge')!.textContent).toMatch(/engine/);
-    expect(MemoryProfiler.isOverlayVisible).toBe(false);
-  });
-
-  it('DW-5.3 the viewer exposes no diagnostics toggle', async () => {
-    const viewer = (await render({ diag: '1' })).componentInstance as unknown as Record<string, unknown>;
-    expect(viewer['toggleDiagnostics']).toBeUndefined();
-    expect(viewer['diagnosticsVisible']).toBeUndefined();
-    expect(viewer['enforceDiagnosticsPolicy']).toBeUndefined();
-  });
-
-  it('DW-5.3 destroying the viewer leaves the gate shut and the overlay closed', async () => {
-    const fixture = await render({ diag: '1' });
-    fixture.destroy();
-    expect(MemoryProfiler.diagnosticsAllowed).toBe(false);
-    expect(MemoryProfiler.isOverlayVisible).toBe(false);
+  it('destroying it does not throw', async () => {
+    const fixture = await render({});
+    expect(() => fixture.destroy()).not.toThrow();
   });
 });
