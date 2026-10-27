@@ -74,6 +74,7 @@ async function commitArchive(tmpFile) {
   }
 
   const [sha256, stat] = await Promise.all([hashFile(tmpFile), fsp.stat(tmpFile)]);
+  console.log(`[STORAGE] sha256(${stat.size} bytes) = ${sha256}`);
   const target = objectPath(sha256);
 
   let deduplicated = false;
@@ -81,8 +82,10 @@ async function commitArchive(tmpFile) {
     await fsp.access(target);
     deduplicated = true;
     await fsp.unlink(tmpFile);
+    console.log(`[STORAGE] об'єкт ${sha256}.zip вже існує — тимчасовий файл видалено, об'єкт перевикористано`);
   } catch {
     await fsp.rename(tmpFile, target);
+    console.log(`[STORAGE] об'єкт ${sha256}.zip відсутній — тимчасовий файл перейменовано у сховище`);
   }
 
   return { sha256, bytes: stat.size, url: publicUrl(sha256), deduplicated };

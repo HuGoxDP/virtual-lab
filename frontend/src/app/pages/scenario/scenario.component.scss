@@ -1,7 +1,7 @@
 // path: src/app/pages/scenario/scenario.component.scss
 // Prototype screen 2b. Tokens only; layout lives here.
 
-:host { display: block; min-height: 100vh; background: var(--color-bg); }
+:host { display: flex; flex-direction: column; min-height: 100vh; background: var(--color-bg); }
 
 $gutter: clamp(14px, 4vw, 40px);
 // Below this the sidebar drops under the content and the sticky launch bar takes over (prototype: 860).

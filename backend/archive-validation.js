@@ -61,6 +61,7 @@ async function validateScenarioArchive(filePath, catalogId) {
     } catch {
       throw new ArchiveInvalid(`${MANIFEST_NAME} не є валідним JSON`);
     }
+    console.log(`[VALIDATE] ${MANIFEST_NAME} розібрано: id="${manifest.id}", entryPoint="${manifest.entryPoint}"`);
 
     const missing = REQUIRED_FIELDS.filter(field => !manifest[field]);
     if (missing.length > 0) {
@@ -103,6 +104,9 @@ async function validateScenarioArchive(filePath, catalogId) {
       warnings.push(
         `id у маніфесті ("${manifest.id}") відрізняється від id у каталозі ("${catalogId}")`
       );
+      console.log(`[VALIDATE] id не збігається: маніфест="${manifest.id}", каталог="${catalogId}" — публікацію це не блокує`);
+    } else if (catalogId) {
+      console.log(`[VALIDATE] id збігається: "${catalogId}"`);
     }
 
     return { manifest, entries, warnings };

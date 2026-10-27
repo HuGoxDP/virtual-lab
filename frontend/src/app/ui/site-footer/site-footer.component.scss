@@ -1,5 +1,9 @@
 // path: src/app/ui/site-footer/site-footer.component.scss
 
+// The pages are column flex boxes at least one viewport tall; the auto margin keeps the
+// footer at the bottom of the window when a page's content is shorter than the screen.
+:host { display: block; margin-top: auto; }
+
 .site-footer {
   border-top: 1px solid var(--color-divider);
   background: color-mix(in srgb, var(--color-surface) 45%, var(--color-bg));

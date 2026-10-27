@@ -566,6 +566,7 @@ app.post('/api/scenarios/:id/archive', requireAdmin, receiveArchive, async (req,
     if (!tmpFile) {
       return res.status(400).json({ error: 'Очікується файл у полі "archive"' });
     }
+    console.log(`[ARCHIVE] ${id}: прийнято файл ${req.file.originalname} (${req.file.size} bytes)`);
 
     if (!(await scenarioExists(id))) {
       return res.status(404).json({ error: 'Сценарій не знайдено' });
@@ -573,12 +574,16 @@ app.post('/api/scenarios/:id/archive', requireAdmin, receiveArchive, async (req,
 
     // Validate before committing — a broken archive must never enter the store.
     const { manifest, warnings } = await validateScenarioArchive(tmpFile, id);
+    console.log(`[ARCHIVE] ${id}: маніфест прочитано (id="${manifest.id}", version=${manifest.version})`);
+    for (const warning of warnings) console.log(`[ARCHIVE] ${id}: попередження — ${warning}`);
 
     const result = await storage.commitArchive(tmpFile);
     consumed = true;
-    await attachArchive(id, result, manifest);
+    console.log(`[ARCHIVE] ${id}: sha256=${result.sha256} ${result.deduplicated ? '(вже є в сховищі, дедуп)' : '(новий об\'єкт збережено)'}`);
 
-    console.log(`[ARCHIVE] ${id} → ${result.url} (${result.bytes} bytes${result.deduplicated ? ', dedup' : ''})`);
+    await attachArchive(id, result, manifest);
+    console.log(`[ARCHIVE] ${id}: запис каталогу оновлено → ${result.url} (${result.bytes} bytes)`);
+
     res.status(201).json({ id, ...result, manifestId: manifest.id, warnings });
   } catch (err) {
     const status = err.status || 500;

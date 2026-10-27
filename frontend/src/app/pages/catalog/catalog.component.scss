@@ -1,7 +1,7 @@
 // path: src/app/pages/catalog/catalog.component.scss
 // Prototype screen 2a. Colours, spacing and radii are Nocturne tokens; only layout lives here.
 
-:host { display: block; min-height: 100vh; background: var(--color-bg); }
+:host { display: flex; flex-direction: column; min-height: 100vh; background: var(--color-bg); }
 
 $gutter: clamp(14px, 4vw, 40px);
 
