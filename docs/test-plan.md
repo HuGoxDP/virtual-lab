@@ -422,7 +422,7 @@ Specs: `viewer-profiler.spec.ts`, `viewer.component.spec.ts`, `viewer-hud.compon
 
 #### Viewer — load pipeline and restart, unit (release 1, phase 4 fix-forward)
 
-`viewer-lifecycle.spec.ts`, with the engine (`createApplication` seam, `supportsWebGL2` stub) and
+`viewer-lifecycle.spec.ts`, with the player host (the protected `createPlayerHost` seam returns a fake `PlayerHost`; `supportsWebGL2` stubbed) and
 `ScenarioService` / `TelemetryService` replaced by doubles.
 
 149. [U] `exit()`: `/scenario/:id` with a route id (also after a failed lookup), `/catalog` without one; the
