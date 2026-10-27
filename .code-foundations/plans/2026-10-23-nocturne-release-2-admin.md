@@ -1,7 +1,7 @@
 # Plan: Release 2 — admin, roles and scenario isolation on Nocturne
 **Created:** 2026-10-23
 **Status:** ready
-**Superseded in part (Phase 1):** by `.code-foundations/plans/2026-10-24-player-isolation.md` — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
+**Superseded in part (Phase 1):** by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
 **Complexity:** complex
 **Review cadence:** 2
 **Check-ins:** checkpoints
@@ -51,7 +51,7 @@ access code nor call the API as the user; all suites green.
 - Out of scope: frame capture, headless checks, launch statistics, e-mail, SSO, "recommended" placement.
 
 ## Chosen Approach
-**Isolation is delivered by `.code-foundations/plans/2026-10-24-player-isolation.md`, not here:** the engine ships a sandboxed player page, its header snippet and a
+**Isolation is delivered by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo), not here:** the engine ships a sandboxed player page, its header snippet and a
 host client (`WebEngineTS/player-host`); the viewer drives it. Opaque origin on the same host only, no `PLAYER_ORIGIN`.
 This plan builds on that for Phase 7's test run. Its own approach: backend routes are split into modules by actor
 before new routes are added; archive history is a `scenario_versions` table whose `pending` row is §7's "pending archive".
@@ -71,7 +71,7 @@ before new routes are added; archive history is a `scenario_versions` table whos
 **Depends on:** none | **Unlocks:** Phases 2, 7
 **File scope:** none -- nothing left to build here
 
-**Completed by `.code-foundations/plans/2026-10-24-player-isolation.md`** (2026-10-24 to 2026-10-27). Do not build this phase: the Execution
+**Completed by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo)** (2026-10-24 to 2026-10-27). Do not build this phase: the Execution
 Log records it as satisfied, and a build resumes at Phase 2. Commits: virtual-lab `9b0ae09` and `2bf3a12`
 (branch `feature/player-isolation`), WebEngineTS `02fdc1f` (the engine's Phases 1-3 are earlier commits on the same branch).
 
@@ -509,4 +509,4 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 _To be filled during /code-foundations:build_
 
 ### Phase 1: Player isolation (Gate: Standard)
-- [x] SKIPPED — completed by `.code-foundations/plans/2026-10-24-player-isolation.md` (virtual-lab 9b0ae09, 2bf3a12; WebEngineTS 02fdc1f)
+- [x] SKIPPED — completed by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) (virtual-lab 9b0ae09, 2bf3a12; WebEngineTS 02fdc1f)

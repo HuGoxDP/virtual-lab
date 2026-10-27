@@ -176,7 +176,7 @@ an offline `docker compose up` still plays the whole catalog.
 - Scenarios play in a sandboxed frame on an opaque origin, so the store must answer `Origin: null` with
   `Access-Control-Allow-Origin: *` on the assets, exactly as nginx does for `/a/` today. A presigned URL
   to a **draft** is fetched by the frame, not the host, so a private asset still needs the host to relay
-  it (the player-isolation research, `.code-foundations/research/2026-10-24-scenario-delivery-and-script-isolation.md`, §6).
+  it (the player-isolation research, §6: [`../../../.code-foundations/research/2026-10-24-scenario-delivery-and-script-isolation.md`](../../../.code-foundations/research/2026-10-24-scenario-delivery-and-script-isolation.md), at the workspace root, not in this repo).
 
 *Done when:* asset traffic no longer flows through `backend`; unpublished scenarios are not
 publicly readable.

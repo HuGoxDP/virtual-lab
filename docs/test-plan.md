@@ -390,7 +390,8 @@ Specs: `catalog-query.spec.ts`, `platform-config.service.spec.ts`, `scenario.ser
      Space, "Вийти" → `/scenario/:id`; at 390 px the hints are hidden and exit / title / buttons stay
      inside the viewport without overlapping (DW-4.2).
 143. [E] `viewer.spec.ts`: restart on a ZIP run is enabled and re-runs from the buffer (second telemetry
-     launch, one archive request); `streaming.spec.ts`: disabled with `?stream=1` (DW-4.4).
+     launch, one archive request); `streaming.spec.ts`: ~~disabled with `?stream=1`~~ - **superseded by 168**:
+     a streamed run restarts in a fresh frame (DW-4.4).
 144. [E] `viewer.spec.ts`: unknown scenario → Nocturne error panel with its way back; no WebGL 2 → Nocturne
      panel (Inter, `--color-bg`); forced context loss → panel with "Перезавантажити" (existing test, F7)
      (DW-4.5).
@@ -426,8 +427,9 @@ Specs: `viewer-profiler.spec.ts`, `viewer.component.spec.ts`, `viewer-hud.compon
 149. [U] `exit()`: `/scenario/:id` with a route id (also after a failed lookup), `/catalog` without one; the
      loader's "Скасувати" exits and destroying the view aborts the archive download without showing an error
      (DW-4.1, DW-4.2).
-150. [U] `canRestart` and the HUD restart button: ZIP run enabled; streamed run (`?stream=1`) disabled, and
-     `restart()` there does nothing; `?stream=1` without a `manifestUrl` falls back to the ZIP; false after
+150. [U] ~~`canRestart` and the HUD restart button: ZIP run enabled; streamed run (`?stream=1`) disabled, and
+     `restart()` there does nothing~~ - **superseded 2026-10-27 by 168** (a streamed run restarts in a fresh frame);
+     still current: `?stream=1` without a `manifestUrl` falls back to the ZIP; false after
      context loss and while a restart is loading (DW-4.4).
 151. [U] `restart()`: same buffer re-run, one download, second telemetry launch; engine failure → error screen
      (Error and non-Error); no-op before an archive has loaded (DW-4.4).

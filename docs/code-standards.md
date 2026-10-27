@@ -41,8 +41,9 @@ let params = new HttpParams().set('limit', String(PAGE_SIZE)).set('offset', Stri
 if (category && category !== 'all') params = params.set('category', category);
 ```
 
-**No imports from `three` or engine internals** — only `from 'WebEngineTS'`; a second Three.js
-breaks the engine's `instanceof` checks. No engine workaround in this repo: write it up in
+**No imports from `three` or engine internals** — the app imports only `from 'WebEngineTS/player-host'`
+(never the bare `'WebEngineTS'`: `check-csp-assumptions` fails the build on it, since the page has no import
+map and the engine runs in the player frame); a second Three.js breaks the engine's `instanceof` checks. No engine workaround in this repo: write it up in
 `docs/upstream/webenginets.md` + `../../.claude-shared/ENGINE-GAPS.md` instead.
 
 **No schema change in `db/init.sql`** — it runs only on an empty volume. New DDL goes in
