@@ -24,6 +24,31 @@ const SCRIPTS_DIR = 'scripts/';
 /** Fields the engine's `IScenarioManifest` requires. */
 const REQUIRED_FIELDS = ['manifestVersion', 'id', 'name', 'version', 'entryPoint'];
 
+/**
+ * Longest value each manifest field may have: the width of the column it is copied into
+ * (`scenarios` and `scenario_versions` share them since migration 010), so an accepted
+ * archive can never make an INSERT or an accept fail with a 500.
+ */
+const MANIFEST_FIELD_LIMITS = { id: 255, version: 50, engineVersion: 100 };
+
+const REBUILD_HINT = 'Зберіть архів за допомогою ScenarioCreator.';
+
+/** A message when `id`, `name` or `version` is not text, or a field outruns its column; else null. */
+function manifestFieldProblem(manifest) {
+  for (const field of ['id', 'name', 'version']) {
+    if (typeof manifest[field] !== 'string') return `Поле "${field}" у ${MANIFEST_NAME} має бути рядком. ${REBUILD_HINT}`;
+  }
+  if (manifest.engineVersion != null && typeof manifest.engineVersion !== 'string') {
+    return `Поле "engineVersion" у ${MANIFEST_NAME} має бути рядком. ${REBUILD_HINT}`;
+  }
+  for (const [field, max] of Object.entries(MANIFEST_FIELD_LIMITS)) {
+    if (manifest[field] != null && manifest[field].length > max) {
+      return `Поле "${field}" у ${MANIFEST_NAME} задовге: максимум ${max} символів`;
+    }
+  }
+  return null;
+}
+
 class ArchiveInvalid extends Error {
   constructor(message) {
     super(message);
@@ -85,18 +110,11 @@ async function readEntryCapped(zip, entry, maxBytes) {
 }
 
 /**
- * Reads and checks `manifest.json` inside `filePath`, and every scene or prefab
- * file beside it.
- *
- * Returns `{ manifest, entries, warnings }`. Throws `ArchiveInvalid` (status 400)
- * with a specific message when the archive cannot be a scenario.
- *
- * @param {string} filePath  archive on disk
- * @param {string} catalogId id of the catalog row it is being attached to
- * @param {{maxEntryBytes?: number, maxEntries?: number}} [limits]  override the env caps (tests)
+ * Opens `filePath` as a ZIP after refusing a hostile entry count, and returns `{ zip, entryMap }`
+ * (the caller closes `zip`). Throws `ArchiveInvalid` for an unreadable file or too many entries.
+ * Shared by validation and the contents listing, so both honour the same caps.
  */
-async function validateScenarioArchive(filePath, catalogId, limits = {}) {
-  const { maxEntryBytes = MAX_ENTRY_BYTES, maxEntries = MAX_ARCHIVE_ENTRIES } = limits;
+async function openArchive(filePath, maxEntries) {
   const tooManyEntries = () => new ArchiveInvalid(`В архіві забагато файлів: максимум ${maxEntries}`);
 
   // Refuse a hostile entry count before the parser builds a record for each one.
@@ -113,7 +131,47 @@ async function validateScenarioArchive(filePath, catalogId, limits = {}) {
 
   try {
     if (await zip.entriesCount > maxEntries) throw tooManyEntries();
-    const entryMap = await zip.entries();
+    return { zip, entryMap: await zip.entries() };
+  } catch (err) {
+    await zip.close().catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Every file and directory of an archive on disk as `{ path, bytes, dir }`, sorted by path;
+ * `bytes` is the unpacked size (0 for a directory). Nothing is unpacked, only the central
+ * directory is read, and the entry-count cap applies as it does to validation.
+ *
+ * @param {{maxEntries?: number}} [limits]  override the env cap (tests)
+ */
+async function listArchiveEntries(filePath, limits = {}) {
+  const { zip, entryMap } = await openArchive(filePath, limits.maxEntries ?? MAX_ARCHIVE_ENTRIES);
+  try {
+    return Object.values(entryMap)
+      .map(entry => ({ path: entry.name, bytes: entry.isDirectory ? 0 : entry.size, dir: entry.isDirectory }))
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  } finally {
+    await zip.close().catch(() => {});
+  }
+}
+
+/**
+ * Reads and checks `manifest.json` inside `filePath`, and every scene or prefab
+ * file beside it.
+ *
+ * Returns `{ manifest, entries, warnings }`. Throws `ArchiveInvalid` (status 400)
+ * with a specific message when the archive cannot be a scenario.
+ *
+ * @param {string} filePath  archive on disk
+ * @param {string} catalogId id of the catalog row it is being attached to
+ * @param {{maxEntryBytes?: number, maxEntries?: number}} [limits]  override the env caps (tests)
+ */
+async function validateScenarioArchive(filePath, catalogId, limits = {}) {
+  const { maxEntryBytes = MAX_ENTRY_BYTES, maxEntries = MAX_ARCHIVE_ENTRIES } = limits;
+  const { zip, entryMap } = await openArchive(filePath, maxEntries);
+
+  try {
     const entries = Object.keys(entryMap);
 
     if (!entries.includes(MANIFEST_NAME)) {
@@ -133,6 +191,9 @@ async function validateScenarioArchive(filePath, catalogId, limits = {}) {
     if (missing.length > 0) {
       throw new ArchiveInvalid(`У ${MANIFEST_NAME} відсутні поля: ${missing.join(', ')}`);
     }
+
+    const fieldProblem = manifestFieldProblem(manifest);
+    if (fieldProblem) throw new ArchiveInvalid(fieldProblem);
 
     const versionProblem = manifestVersionProblem(manifest.manifestVersion);
     if (versionProblem) throw new ArchiveInvalid(versionProblem);
@@ -181,4 +242,4 @@ async function validateScenarioArchive(filePath, catalogId, limits = {}) {
   }
 }
 
-module.exports = { validateScenarioArchive, ArchiveInvalid, MANIFEST_NAME, declaredEntryCount };
+module.exports = { validateScenarioArchive, listArchiveEntries, ArchiveInvalid, MANIFEST_NAME, declaredEntryCount };

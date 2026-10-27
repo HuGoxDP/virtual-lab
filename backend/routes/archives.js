@@ -14,6 +14,7 @@ const audit = require('../audit');
 const { MAX_ARCHIVE_BYTES } = require('../config');
 const storage = require('../storage');
 const { validateScenarioArchive } = require('../archive-validation');
+const { checksFromValidation } = require('../archive-checks');
 const { fetchAdminRow } = require('../scenario-rows');
 const versions = require('../versions');
 const { httpError } = require('../http-error');
@@ -106,7 +107,8 @@ router.post('/api/scenarios/:id/archive', authorize('author'), limitAuthorUpload
     }
 
     // Validate before committing — a broken archive must never enter the store.
-    const { manifest, warnings } = await validateScenarioArchive(file, id);
+    const validated = await validateScenarioArchive(file, id);
+    const { manifest, warnings } = validated;
     console.log(`[ARCHIVE] ${id}: маніфест прочитано (id="${manifest.id}", version=${manifest.version})`);
     for (const warning of warnings) console.log(`[ARCHIVE] ${id}: попередження — ${warning}`);
 
@@ -122,7 +124,8 @@ router.post('/api/scenarios/:id/archive', authorize('author'), limitAuthorUpload
       if (!row) throw httpError(404, 'Сценарій не знайдено');
       if (!canEditScenario(principal, row)) throw httpError(403, 'Це не ваш сценарій');
 
-      const outcome = await versions.installUpload(db, row, principal, result, manifest);
+      const outcome = await versions.installUpload(db, row, principal, result, manifest,
+        checksFromValidation(validated, result.bytes));
       await audit.record(db, principal, 'scenario.archive', id, {
         sha256: result.sha256, bytes: result.bytes, deduplicated: result.deduplicated,
         state: outcome.state, versionId: outcome.version.id,
@@ -154,7 +157,8 @@ router.post('/api/scenarios/from-archive', authorize('author'), limitAuthorUploa
     const { principal } = req;
     if (!file) return NO_FILE;
 
-    const { manifest, entries, warnings } = await validateScenarioArchive(file, null);
+    const validated = await validateScenarioArchive(file, null);
+    const { manifest, entries, warnings } = validated;
 
     // The id comes from untrusted manifest data and becomes a catalog id and a URL segment.
     if (typeof manifest.id !== 'string' || !SCENARIO_ID_PATTERN.test(manifest.id)) {
@@ -197,7 +201,8 @@ router.post('/api/scenarios/from-archive', authorize('author'), limitAuthorUploa
         ]);
         await audit.record(db, principal, 'scenario.create', id, { category: categories[0].slug, source: 'archive' });
 
-        const outcome = await versions.installUpload(db, { id, status: 'draft' }, principal, result, manifest);
+        const outcome = await versions.installUpload(db, { id, status: 'draft' }, principal, result, manifest,
+          checksFromValidation(validated, result.bytes));
         await audit.record(db, principal, 'scenario.archive', id, {
           sha256: result.sha256, bytes: result.bytes, deduplicated: result.deduplicated,
           state: outcome.state, versionId: outcome.version.id,

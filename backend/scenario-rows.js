@@ -5,7 +5,12 @@
 
 /**
  * Every column the admin sees, aliased to camelCase. `isPublished` is the compatibility
- * field (`status = 'published'`) for readers that predate the workflow statuses.
+ * field (`status = 'published'`) for readers that predate the workflow statuses. The three
+ * correlated subqueries feed the moderation queue: who owns the row (`ownerLabel`, null for the
+ * bootstrap), the author's waiting archive (`pendingVersionId`), and the version students get with
+ * its check counts (`currentVersion`, null before the first archive; `checked` is false for a
+ * version that predates stored checks, so its zero counts are not read as "clean").
+ * Callers select `FROM scenarios` unaliased, which the subqueries rely on.
  */
 const ADMIN_COLUMNS = `
   id, title, description,
@@ -28,6 +33,19 @@ const ADMIN_COLUMNS = `
   manifest_version   AS "manifestVersion",
   manifest_engine_version AS "manifestEngineVersion",
   owner_key_id       AS "ownerKeyId",
+  (SELECT k.label FROM publish_keys k WHERE k.id = scenarios.owner_key_id) AS "ownerLabel",
+  (SELECT v.id FROM scenario_versions v
+    WHERE v.scenario_id = scenarios.id AND v.state = 'pending')            AS "pendingVersionId",
+  (SELECT jsonb_build_object(
+            'id', v.id, 'sha256', v.sha256, 'bytes', v.bytes::float8,
+            'checked', v.checks IS NOT NULL,
+            'checks', jsonb_build_object(
+              'errors',   (SELECT COUNT(*) FROM jsonb_array_elements(COALESCE(v.checks->'items', '[]'::jsonb)) i
+                            WHERE i->>'level' = 'error'),
+              'warnings', (SELECT COUNT(*) FROM jsonb_array_elements(COALESCE(v.checks->'items', '[]'::jsonb)) i
+                            WHERE i->>'level' = 'warning')))
+     FROM scenario_versions v
+    WHERE v.scenario_id = scenarios.id AND v.state = 'current')            AS "currentVersion",
   updated_at         AS "updatedAt",
   CASE WHEN jsonb_typeof(features) = 'array' THEN features ELSE '[]'::jsonb END AS features
 `;

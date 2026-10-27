@@ -20,4 +20,28 @@ async function record(client, principal, action, scenarioId = null, details = {}
   );
 }
 
-module.exports = { record };
+/**
+ * Journal rows as the API shows them, newest first:
+ * `{ id, scenarioId, scenarioTitle, actorLabel, action, details, createdAt }`.
+ * `scenarioTitle` is null for an event with no scenario or one whose scenario is deleted.
+ *
+ * @param {object} filter
+ * @param {string|null} [filter.scenarioId]   only this scenario's events
+ * @param {number|null} [filter.ownerKeyId]   only events of scenarios this key owns (an author's view)
+ * @param {number} filter.limit
+ */
+async function listActivity(db, { scenarioId = null, ownerKeyId = null, limit }) {
+  const { rows } = await db.query(`
+    SELECT a.id::float8 AS id, a.scenario_id AS "scenarioId", s.title AS "scenarioTitle",
+           a.actor_label AS "actorLabel", a.action, a.details, a.created_at AS "createdAt"
+      FROM audit_events a
+      LEFT JOIN scenarios s ON s.id = a.scenario_id
+     WHERE ($1::text IS NULL OR a.scenario_id = $1)
+       AND ($2::int IS NULL OR s.owner_key_id = $2)
+     ORDER BY a.created_at DESC, a.id DESC
+     LIMIT $3
+  `, [scenarioId, ownerKeyId, limit]);
+  return rows;
+}
+
+module.exports = { record, listActivity };

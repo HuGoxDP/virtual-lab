@@ -1,6 +1,6 @@
 // backend/routes/storage-admin.js
 //
-// Reporting on the archive store and garbage-collecting it.
+// Reporting on the object stores (archives and cover previews) and garbage-collecting them.
 
 const express = require('express');
 
@@ -35,39 +35,61 @@ async function referencedArchives() {
   return new Set(rows.map(row => row.sha256));
 }
 
+/**
+ * Every preview hash a catalog row's `imageUrl` still points at. A preview has exactly one kind
+ * of reference (the row's cover); an orphan is one nobody uploaded to a row, or one replaced.
+ */
+async function referencedPreviews() {
+  const { rows } = await pool.query("SELECT image_url FROM scenarios WHERE image_url LIKE '/previews/%'");
+  return new Set(rows.map(row => storage.previewHashOf(row.image_url)).filter(Boolean));
+}
+
+/** Both stores classified at once: `{ archives, previews }`, each `{ referenced, orphans, tooNew }`. */
+async function classifyBoth() {
+  const [archives, previews] = await Promise.all([referencedArchives(), referencedPreviews()]);
+  return {
+    archives: await storage.archives.classifyObjects(archives, GC_MIN_AGE_MS),
+    previews: await storage.previews.classifyObjects(previews, GC_MIN_AGE_MS),
+  };
+}
+
 const sumBytes = objects => objects.reduce((total, o) => total + o.bytes, 0);
 
 const summarise = objects => ({ count: objects.length, bytes: sumBytes(objects) });
 
+/** The report for one store. */
+function describe({ referenced, orphans, tooNew }) {
+  return {
+    total: summarise([...referenced, ...orphans, ...tooNew]),
+    referenced: summarise(referenced),
+    orphans: {
+      ...summarise(orphans),
+      // Enough to recognise them without turning this into a directory dump.
+      sample: [...orphans]
+        .sort((a, b) => b.bytes - a.bytes)
+        .slice(0, 20)
+        .map(o => ({ sha256: o.sha256, bytes: o.bytes })),
+    },
+    // Unreferenced but too recent to touch — an upload mid-flight looks
+    // exactly like an orphan, so say so rather than hiding the difference.
+    protectedByAge: summarise(tooNew),
+  };
+}
+
 /**
  * GET /api/admin/storage   (moderator)
  *
- * What is in the archive store and how much of it nothing refers to. Read-only
- * on purpose: the roadmap's rule is to report reclaimable bytes before deleting
- * anything, so seeing the number never costs you the files.
+ * What is in the archive store - and, under `previews`, the cover-image store - and how much of
+ * it nothing refers to. Read-only on purpose: the
+ * roadmap's rule is to report reclaimable bytes before deleting anything, so seeing the number
+ * never costs you the files.
  */
 router.get('/api/admin/storage', authorize('moderator'), async (req, res) => {
   try {
-    const { referenced, orphans, tooNew } = await storage.classifyObjects(
-      await referencedArchives(), GC_MIN_AGE_MS
-    );
+    const { archives, previews } = await classifyBoth();
 
-    res.json({
-      total: summarise([...referenced, ...orphans, ...tooNew]),
-      referenced: summarise(referenced),
-      orphans: {
-        ...summarise(orphans),
-        // Enough to recognise them without turning this into a directory dump.
-        sample: orphans
-          .sort((a, b) => b.bytes - a.bytes)
-          .slice(0, 20)
-          .map(o => ({ sha256: o.sha256, bytes: o.bytes })),
-      },
-      // Unreferenced but too recent to touch — an upload mid-flight looks
-      // exactly like an orphan, so say so rather than hiding the difference.
-      protectedByAge: summarise(tooNew),
-      minAgeMs: GC_MIN_AGE_MS,
-    });
+    // The archive store keeps its original top-level shape; the preview store is `previews`.
+    res.json({ ...describe(archives), minAgeMs: GC_MIN_AGE_MS, previews: describe(previews) });
   } catch (err) {
     console.error('[STORAGE] report error:', err.message);
     res.status(500).json({ error: 'Помилка сервера' });
@@ -89,20 +111,32 @@ router.post('/api/admin/storage/gc', authorize('moderator'), async (req, res) =>
   const dryRun = req.body?.dryRun !== false;
 
   try {
-    const { orphans, tooNew } = await storage.classifyObjects(
-      await referencedArchives(), GC_MIN_AGE_MS
-    );
+    const { archives, previews } = await classifyBoth();
 
     if (dryRun) {
-      return res.json({ dryRun: true, wouldDelete: summarise(orphans), protectedByAge: summarise(tooNew) });
+      return res.json({
+        dryRun: true,
+        wouldDelete: summarise(archives.orphans), protectedByAge: summarise(archives.tooNew),
+        previews: { wouldDelete: summarise(previews.orphans), protectedByAge: summarise(previews.tooNew) },
+      });
     }
 
-    const deleted = await storage.deleteObjects(orphans);
-    console.log(`[STORAGE] gc removed ${deleted.length} object(s), ${sumBytes(deleted)} bytes`);
+    const [deletedArchives, deletedPreviews] = [
+      await storage.archives.deleteObjects(archives.orphans),
+      await storage.previews.deleteObjects(previews.orphans),
+    ];
+    console.log(`[STORAGE] gc removed ${deletedArchives.length} archive(s), ${sumBytes(deletedArchives)} bytes, `
+      + `${deletedPreviews.length} preview(s), ${sumBytes(deletedPreviews)} bytes`);
     // A dry run changes nothing and is not journalled; a sweep is.
-    await inTransaction(db => audit.record(db, req.principal, 'storage.gc', null, summarise(deleted)));
+    await inTransaction(db => audit.record(db, req.principal, 'storage.gc', null, {
+      ...summarise(deletedArchives), previews: summarise(deletedPreviews),
+    }));
 
-    res.json({ dryRun: false, deleted: summarise(deleted), protectedByAge: summarise(tooNew) });
+    res.json({
+      dryRun: false,
+      deleted: summarise(deletedArchives), protectedByAge: summarise(archives.tooNew),
+      previews: { deleted: summarise(deletedPreviews), protectedByAge: summarise(previews.tooNew) },
+    });
   } catch (err) {
     console.error('[STORAGE] gc error:', err.message);
     res.status(500).json({ error: 'Помилка сервера' });

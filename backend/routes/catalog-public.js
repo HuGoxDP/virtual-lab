@@ -8,7 +8,9 @@ const express = require('express');
 const { pool } = require('../db');
 const { optionalAuthenticate, canEditScenario } = require('../auth');
 const storage = require('../storage');
-const { MAX_ARCHIVE_BYTES } = require('../config');
+const {
+  MAX_ARCHIVE_BYTES, PREVIEW_MAX_BYTES, PREVIEW_MIN_WIDTH, PREVIEW_ASPECT,
+} = require('../config');
 
 const router = express.Router();
 
@@ -69,6 +71,13 @@ const RELATED_LIMIT = 2;
 
 const ITEM_FROM = 'FROM scenarios s LEFT JOIN categories c ON c.slug = s.category';
 
+/**
+ * What every public endpoint may show: published, and not in a hidden category. A slug with no
+ * category row (the table has no foreign key on purpose) stays visible. One fragment, so the
+ * list, summary, related, by-id and version-preview routes cannot disagree about "unpublished".
+ */
+const PUBLIC_ROW = "s.status = 'published' AND COALESCE(c.is_visible, true)";
+
 /** Whitelisted ORDER BY fragments: user input only selects a key, it never reaches the SQL text. */
 const CATALOG_SORTS = {
   new:   's.created_at DESC, s.id DESC',
@@ -92,7 +101,7 @@ router.get('/api/catalog', async (req, res) => {
   // Filtering runs here rather than in the browser: with pagination, a
   // client-side filter would only ever search the page it happens to hold.
   const where = `
-    WHERE s.status = 'published'
+    WHERE ${PUBLIC_ROW}
       AND ($1::text IS NULL OR s.category = $1)
       AND (
         $2::text IS NULL
@@ -125,7 +134,7 @@ router.get('/api/catalog', async (req, res) => {
         GROUP BY c.slug, c.label, c.icon, c.sort_order
         ORDER BY c.sort_order, c.slug
       `),
-      pool.query("SELECT COUNT(*)::int AS count FROM scenarios WHERE status = 'published'"),
+      pool.query(`SELECT COUNT(*)::int AS count ${ITEM_FROM} WHERE ${PUBLIC_ROW}`),
     ]);
 
     res.json({
@@ -146,7 +155,10 @@ router.get('/api/catalog', async (req, res) => {
 // ── GET /api/config ──────────────────────────────────
 // Public limits the UI needs to explain itself (the upload form shows the cap).
 router.get('/api/config', (req, res) => {
-  res.json({ maxArchiveBytes: MAX_ARCHIVE_BYTES });
+  res.json({
+    maxArchiveBytes: MAX_ARCHIVE_BYTES,
+    preview: { maxBytes: PREVIEW_MAX_BYTES, minWidth: PREVIEW_MIN_WIDTH, aspect: PREVIEW_ASPECT },
+  });
 });
 
 // ── GET /api/catalog/:id ─────────────────────────────
@@ -154,7 +166,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /**
  * `?version=<sha256>`: the same projection with the archive of one of the scenario's versions,
- * for a draft preview. Never cached, whatever the answer. A published scenario's versions are
+ * for a draft preview. Never cached, whatever the answer. A public scenario's versions are
  * public; any other status needs the scenario's owner or a moderator (the viewer sends the
  * session's bearer), and everyone else gets the same 404 as for an unknown id or hash, so the
  * route confirms nothing about a scenario or version they may not see.
@@ -162,9 +174,11 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 async function versionPreview(req, res, sha256) {
   res.set('Cache-Control', 'no-store');
 
-  const { rows: [scenario] } = await pool.query('SELECT status, owner_key_id FROM scenarios WHERE id = $1', [req.params.id]);
+  const { rows: [scenario] } = await pool.query(
+    `SELECT s.owner_key_id, (${PUBLIC_ROW}) AS "isPublic" ${ITEM_FROM} WHERE s.id = $1`, [req.params.id]
+  );
   const visible = scenario
-    && (scenario.status === 'published' || (req.principal && canEditScenario(req.principal, scenario)));
+    && (scenario.isPublic || (req.principal && canEditScenario(req.principal, scenario)));
   const { rows: [version] } = visible
     ? await pool.query('SELECT sha256, bytes::float8 AS bytes FROM scenario_versions WHERE scenario_id = $1 AND sha256 = $2 LIMIT 1',
       [req.params.id, sha256])
@@ -196,7 +210,7 @@ router.get('/api/catalog/:id', optionalAuthenticate, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT ${ITEM_COLUMNS}
       ${ITEM_FROM}
-      WHERE s.id = $1 AND s.status = 'published'
+      WHERE s.id = $1 AND ${PUBLIC_ROW}
     `, [req.params.id]);
 
     if (rows.length === 0) {
@@ -210,7 +224,7 @@ router.get('/api/catalog/:id', optionalAuthenticate, async (req, res) => {
         COALESCE(c.label, s.category_label) AS "categoryLabel",
         s.image_url                         AS "imageUrl"
       ${ITEM_FROM}
-      WHERE s.status = 'published' AND s.id <> $1
+      WHERE ${PUBLIC_ROW} AND s.id <> $1
       ORDER BY (s.category = $2) DESC, s.created_at DESC, s.id DESC
       LIMIT ${RELATED_LIMIT}
     `, [rows[0].id, rows[0].category]);

@@ -7,16 +7,23 @@
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
 /**
- * Answers a caught error: a `httpError` (or any error with a 4xx `status`, such as
- * the archive validator's) as itself, anything else as a logged 500 with no detail.
+ * What a caught error looks like to a client: `{ status, message }`. A `httpError` (or any error
+ * with a 4xx `status`, such as the archive validator's) is itself; anything else is a logged 500
+ * with no detail.
  */
-function sendError(res, err, tag) {
+function describeError(err, tag) {
   const status = err.status >= 400 && err.status < 500 ? err.status : 500;
   if (status === 500) {
     console.error(`[API] ${tag} error:`, err.message);
-    return res.status(500).json({ error: 'Помилка сервера' });
+    return { status, message: 'Помилка сервера' };
   }
-  res.status(status).json({ error: err.message });
+  return { status, message: err.message };
 }
 
-module.exports = { httpError, sendError };
+/** Answers a caught error as `describeError` says. */
+function sendError(res, err, tag) {
+  const { status, message } = describeError(err, tag);
+  res.status(status).json({ error: message });
+}
+
+module.exports = { httpError, describeError, sendError };

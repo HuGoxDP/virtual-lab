@@ -607,6 +607,33 @@ independently of `auth.js`. Scenarios 17-23 above still hold for the bootstrap m
      owner/moderator, Вийти goes to the validated `returnTo`, a hostile one is ignored; `admin-golden-path.spec.ts` now
      creates, uploads, then publishes through the toggle (a new row is a draft).
 
+198. [I] Categories (DW-4.1) `categories.test.js`: create/edit/delete/reorder for moderators (bootstrap too), slug 1/2/50/51
+     characters and uppercase/space/underscore, bad label/icon/isVisible -> 400; used category -> 409; reorder with a partial,
+     unknown or duplicate list changes nothing; authors 403; hiding a category removes its scenarios from list, summary,
+     chips, related, `/:id` and `?version=` for the public (owner and moderators still reach them); a slug with no row stays public.
+199. [I][U] Preview accepting (DW-4.2) `previews.test.js`, `preview-image.test.js`: PNG and JPEG at 800 px, 16:10, 5 MiB exactly
+     stored as `/previews/<sha>.<ext>`; 16:9 stored with a warning; the 5 % tolerance; remove is idempotent; role cases.
+200. [I][U] Preview dirty and storage (DW-4.2) `previews.test.js`, `preview-store.test.js`: SVG, GIF, text, ZIP, a file shorter
+     than its header, 5 MiB + 1, 799 px -> 400 with nothing stored; type by bytes (PNG named .jpg, JPEG as image/png);
+     GC and `/api/admin/storage` cover both stores; the second store lists only its own names.
+201. [I][U] `imageUrl` rule and CSP (DW-4.2, DW-4.6) `previews.test.js`, `category-input.test.js`, `csp-conf.test.js`,
+     frontend `test:scripts`: author PUT/POST with any imageUrl -> 400; moderator with an external URL -> 400, with
+     ''/current/`/previews/...` -> 200; migration 010 clears external URLs (listed in the log), keeps same-origin, twice;
+     `img-src` is exactly `'self' data: blob:`; `/previews/` carries the CSP include.
+202. [I][U] Checks and contents (DW-4.3) `version-tools.test.js`, `archive-checks.test.js`: every new version (upload,
+     from-archive, pending) stores its checks; re-run refreshes them (a vanished object is an error item); contents of a nested
+     archive with sizes; the entry cap; manifest field limits (id 255, version 50, engineVersion 100) and non-string name/version -> 400.
+203. [I][U] Test-run (DW-4.4) `version-tools.test.js`, `test-run-input.test.js`: numeric result stored with who/when; an error
+     result `{error, engineBuild?, userAgent?}` stored without numbers; negative, NaN, 10^12 ms, 101-char build, missing
+     field, numbers beside an error -> 400 and the stored run untouched.
+204. [I] Bulk (DW-4.5) `version-tools.test.js`: mixed ids -> per-id results, each in its own transaction, repeated ids once;
+     malformed requests -> 400; unknown category reported per id; authors 403; audit rows flagged `bulk`.
+205. [I] Dashboard, history and admin rows (DW-4.5) `version-tools.test.js`: counts by status with zeros, queue size, activity,
+     scoped to an author's scenarios; history newest first, owner or moderator, survives deletion; `ownerLabel`,
+     `pendingVersionId`, `currentVersion` with check counts.
+206. [I] Route table rows for every Phase 4 route (179), `/api/config` preview limits (DW-4.6), `from-archive` manifest input.
+207. [U] Pure routines: `inspectPreview`, `validateTestRun`, `validateCategory`, `imageUrlProblem`, `describeError`, the store factory.
+
 
 ### 4.11 Golden paths (E2E)
 

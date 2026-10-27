@@ -56,6 +56,10 @@ test.describe('content security policy', () => {
     expect(scriptSrc, 'script-src is exactly the page origin').toBe(`script-src 'self'`);
     expect(csp, 'frame-src names the player frame only').toContain(`frame-src 'self'`);
 
+    // Phase 4: covers are uploaded to /previews/, so images are same-origin, data: and blob: only.
+    const imgSrc = csp.split(';').map((d: string) => d.trim()).find((d: string) => d.startsWith('img-src '));
+    expect(imgSrc, 'img-src has no https:').toBe(`img-src 'self' data: blob:`);
+
     // Absent on purpose — see nginx/csp.conf. Present would mean someone
     // enabled KTX2 transcoding without revisiting the decision.
     expect(csp, `'unsafe-eval' is deliberately absent`).not.toContain(`'unsafe-eval'`);
@@ -79,7 +83,7 @@ test.describe('content security policy', () => {
   test('applies to archives and manifests too', async ({ request }) => {
     // add_header does not inherit into a location that sets its own, so every
     // such location has to repeat it. Easy to add a location and forget.
-    for (const path of ['/scenarios/', '/a/molecules.json']) {
+    for (const path of ['/scenarios/', '/a/molecules.json', '/previews/']) {
       const res = await request.get(path);
       expect(res.headers()['content-security-policy'], `no CSP on ${path}`).toBeTruthy();
     }
@@ -93,7 +97,7 @@ test.describe('content security policy', () => {
     expect(platform, 'the viewer frames /player/player.html, same host only').toContain(`frame-src 'self'`);
     expect(platform).not.toContain('sandbox');
 
-    for (const path of ['/index.html', '/scenarios/', '/a/molecules.json', '/a/objects/00/missing.js', '/api/health']) {
+    for (const path of ['/index.html', '/scenarios/', '/a/molecules.json', '/a/objects/00/missing.js', '/previews/missing.png', '/api/health']) {
       const res = await request.get(path);
       expect(normalise(res.headers()['content-security-policy'] ?? ''), `CSP on ${path}`).toBe(platform);
     }
@@ -110,9 +114,8 @@ test.describe('content security policy', () => {
     await page.goto('/');
     await expect(page.locator('.scenario-card').first()).toBeVisible();
 
-    // Cover images are admin-supplied and may be off-origin, which is why
-    // img-src allows https: — a violation here would mean the catalog is
-    // showing placeholders instead of artwork.
+    // Cover images are served from /previews/ (same origin), so img-src no longer allows https: -
+    // a violation here would mean the catalog is showing placeholders instead of artwork.
     expect(violations, `catalog CSP violations:\n${violations.join('\n')}`).toEqual([]);
   });
 

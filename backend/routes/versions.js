@@ -22,9 +22,6 @@ const versions = require('../versions');
 
 const router = express.Router();
 
-/** SERIAL ids are 32-bit; anything else cannot exist and must not reach the query as an overflow. */
-const VERSION_ID = /^[1-9][0-9]{0,8}$/;
-
 /** Locks the scenario row and returns it, or throws 404. */
 async function lockScenario(db, id) {
   const { rows } = await db.query('SELECT id, owner_key_id, status FROM scenarios WHERE id = $1 FOR UPDATE', [id]);
@@ -33,10 +30,7 @@ async function lockScenario(db, id) {
 }
 
 /** Version `vid` of scenario `id`; 404 for a malformed id, a missing one, or one of another scenario. */
-async function loadVersion(db, id, vid) {
-  if (!VERSION_ID.test(vid)) throw httpError(404, 'Версію не знайдено');
-  return versions.getVersion(db, id, Number(vid));
-}
+const loadVersion = versions.getVersionByParam;
 
 const requireState = (version, state, message) => {
   if (version.state !== state) throw httpError(409, message);

@@ -50,6 +50,15 @@ async function getVersion(db, scenarioId, vid) {
   return withUrl(rows[0]);
 }
 
+/** SERIAL ids are 32-bit; anything else cannot exist and must not reach the query as an overflow. */
+const VERSION_ID = /^[1-9][0-9]{0,8}$/;
+
+/** `getVersion` for an id that came off a URL: a malformed one is a 404, never a query error. */
+async function getVersionByParam(db, scenarioId, rawVid) {
+  if (!VERSION_ID.test(rawVid)) throw httpError(404, 'Версію не знайдено');
+  return getVersion(db, scenarioId, Number(rawVid));
+}
+
 /** Repoints the catalog row at `version` and records its integrity metadata. */
 async function pointScenarioAt(db, scenarioId, version) {
   await db.query(`
@@ -84,8 +93,9 @@ async function pointScenarioAt(db, scenarioId, version) {
  * @param scenario  the locked row: `{ id, status }`
  * @param stored    `storage.commitArchive`'s result: `{ sha256, bytes }`
  * @param manifest  the validated manifest
+ * @param checks    `archive-checks` result for the new row (null: none recorded)
  */
-async function installUpload(db, scenario, principal, stored, manifest) {
+async function installUpload(db, scenario, principal, stored, manifest, checks = null) {
   if (scenario.status === 'review') throw httpError(409, 'Сценарій на перевірці: відкличте з перевірки, щоб завантажити новий архів');
 
   const asPending = scenario.status === 'published' && principal.role === 'author';
@@ -111,8 +121,8 @@ async function installUpload(db, scenario, principal, stored, manifest) {
   const state = asPending ? 'pending' : 'current';
   const { rows: [inserted] } = await db.query(`
     INSERT INTO scenario_versions
-      (scenario_id, sha256, bytes, manifest_id, manifest_version, engine_version, uploaded_by_key_id, state)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      (scenario_id, sha256, bytes, manifest_id, manifest_version, engine_version, uploaded_by_key_id, state, checks)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
     RETURNING id
   `, [
     scenario.id, stored.sha256, stored.bytes,
@@ -120,7 +130,7 @@ async function installUpload(db, scenario, principal, stored, manifest) {
     // Which engine build the scenario was compiled against - null for archives
     // predating ScenarioCreator stamping it.
     manifest?.engineVersion ?? null,
-    principal.keyId, state,
+    principal.keyId, state, checks && JSON.stringify(checks),
   ]);
 
   const version = await getVersion(db, scenario.id, inserted.id);
@@ -140,4 +150,4 @@ async function removeVersion(db, versionId) {
   await db.query('DELETE FROM scenario_versions WHERE id = $1', [versionId]);
 }
 
-module.exports = { MAX_VERSIONS, listVersions, getVersion, installUpload, promote, removeVersion };
+module.exports = { MAX_VERSIONS, listVersions, getVersion, getVersionByParam, installUpload, promote, removeVersion };

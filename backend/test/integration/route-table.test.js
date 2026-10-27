@@ -1,6 +1,6 @@
 // backend/test/integration/route-table.test.js
 //
-// Test-plan scenarios 179 (the route table, DW-2.3) and 180 (dirty
+// Test-plan scenarios 179 (the route table, DW-2.3), 206 (its Phase 4 rows, DW-4.1-4.5) and 180 (dirty
 // Authorization headers, DW-2.3).
 //
 // Every admin route x every kind of caller, with the expected status stated
@@ -26,6 +26,7 @@ const storage = require('../../storage');
 const { failedAuth, authorUploads } = require('../../rate-limits');
 const { isAvailable, prepareSchema, truncateAll, seedScenarios, addCurrentVersion } = require('../helpers/db');
 const { validArchive } = require('../helpers/fixtures');
+const { png } = require('../helpers/images');
 const { createKey, revokeKey } = require('../helpers/keys');
 
 const BOOTSTRAP_TOKEN = process.env.ADMIN_TOKEN;
@@ -85,6 +86,9 @@ let counter = 0;
 
 /** Version ids of the fixtures below, refreshed by `resetFixtures`. */
 let fx = {};
+/** All category slugs, reversed (a valid reorder body), and rt-own's current version id. */
+let fxCategories = [];
+let fxOwnVersion = 0;
 
 /**
  * Rows every cell starts from: `rt-own` is Alice's draft with a current archive; `rt-rev` her
@@ -102,6 +106,12 @@ async function resetFixtures() {
   `, [keys.authorA.id]);
   for (const id of ['rt-own', 'rt-rev']) await addCurrentVersion(pool, id, id === 'rt-own' ? 'a'.repeat(64) : 'b'.repeat(64));
   await addCurrentVersion(pool, 'rt-pub', 'c'.repeat(64));
+  // rt-own's current version has a real archive in the store, so contents and checks can read it.
+  await fsp.writeFile(storage.objectPath('a'.repeat(64)), validArchive({ id: 'rt-own' }));
+  await pool.query("DELETE FROM categories WHERE slug LIKE 'rt-%'");
+  await pool.query("INSERT INTO categories (slug, label, sort_order) VALUES ('rt-cat', 'RT', 9990)");
+  fxCategories = (await pool.query('SELECT slug FROM categories ORDER BY sort_order, slug')).rows.map(r => r.slug).reverse();
+  fxOwnVersion = (await pool.query("SELECT id FROM scenario_versions WHERE scenario_id = 'rt-own' AND state = 'current'")).rows[0].id;
   const { rows } = await pool.query(`
     INSERT INTO scenario_versions (scenario_id, sha256, bytes, state)
     VALUES ('rt-pub', $1, 1, 'pending'), ('rt-pub', $2, 1, 'archived') RETURNING id, state`, ['d'.repeat(64), 'e'.repeat(64)]);
@@ -210,9 +220,72 @@ const ROUTES = [
       .attach('archive', validArchive({ id: 'rt-from-archive' }), 'scenario.zip'),
     state: () => count('SELECT COUNT(*)::int AS n FROM scenarios'),
   },
+  // ── Phase 4: categories, previews, version tools, bulk, dashboard (test-plan 206) ──
+  {
+    name: 'GET /api/categories', ok: 200, allowed: ANY_PRINCIPAL,
+    send: (r, h) => r.get('/api/categories').set(h),
+  },
+  {
+    name: 'POST /api/categories', ok: 201, allowed: MODERATORS,
+    send: (r, h) => r.post('/api/categories').set(h).send({ slug: `rt-new-${++counter}`, label: 'New' }),
+    state: () => count('SELECT COUNT(*)::int AS n FROM categories'),
+  },
+  {
+    name: 'PUT /api/categories/rt-cat', ok: 200, allowed: MODERATORS,
+    send: (r, h) => r.put('/api/categories/rt-cat').set(h).send({ label: 'Renamed' }),
+    state: async () => (await pool.query("SELECT label FROM categories WHERE slug = 'rt-cat'")).rows[0].label,
+  },
+  {
+    name: 'DELETE /api/categories/rt-cat', ok: 200, allowed: MODERATORS,
+    send: (r, h) => r.delete('/api/categories/rt-cat').set(h),
+    state: () => count("SELECT COUNT(*)::int AS n FROM categories WHERE slug = 'rt-cat'"),
+  },
+  {
+    name: 'POST /api/categories/reorder', ok: 200, allowed: MODERATORS,
+    send: (r, h) => r.post('/api/categories/reorder').set(h).send({ slugs: fxCategories }),
+    state: async () => (await pool.query('SELECT slug FROM categories ORDER BY sort_order, slug')).rows.map(r => r.slug),
+  },
+  {
+    name: 'POST /api/scenarios/rt-own/preview', ok: 200, allowed: ['authorA', ...MODERATORS],
+    send: (r, h) => r.post('/api/scenarios/rt-own/preview').set(h).attach('preview', png(800, 500), 'cover.png'),
+    state: async () => (await pool.query("SELECT image_url FROM scenarios WHERE id = 'rt-own'")).rows[0].image_url,
+  },
+  {
+    name: 'DELETE /api/scenarios/rt-own/preview', ok: 200, allowed: ['authorA', ...MODERATORS],
+    send: (r, h) => r.delete('/api/scenarios/rt-own/preview').set(h),
+    state: async () => (await pool.query("SELECT image_url FROM scenarios WHERE id = 'rt-own'")).rows[0].image_url,
+  },
+  {
+    name: 'GET /api/scenarios/rt-own/versions/:vid/contents', ok: 200, allowed: ['authorA', ...MODERATORS],
+    send: (r, h) => r.get(`/api/scenarios/rt-own/versions/${fxOwnVersion}/contents`).set(h),
+  },
+  {
+    name: 'POST /api/scenarios/rt-own/versions/:vid/checks', ok: 200, allowed: ['authorA', ...MODERATORS],
+    send: (r, h) => r.post(`/api/scenarios/rt-own/versions/${fxOwnVersion}/checks`).set(h),
+    state: async () => (await pool.query('SELECT checks FROM scenario_versions WHERE id = $1', [fxOwnVersion])).rows[0].checks,
+  },
+  {
+    name: 'POST /api/scenarios/rt-own/versions/:vid/test-run', ok: 200, allowed: MODERATORS,
+    send: (r, h) => r.post(`/api/scenarios/rt-own/versions/${fxOwnVersion}/test-run`).set(h)
+      .send({ timeToFirstFrameMs: 900, avgFps: 60, gpuMemoryBytes: 1000, consoleErrors: 0, engineBuild: 'b', userAgent: 'u' }),
+    state: async () => (await pool.query('SELECT test_run FROM scenario_versions WHERE id = $1', [fxOwnVersion])).rows[0].test_run,
+  },
+  {
+    name: 'POST /api/scenarios/bulk', ok: 200, allowed: MODERATORS,
+    send: (r, h) => r.post('/api/scenarios/bulk').set(h).send({ ids: ['rt-own'], action: 'set-category', category: 'rt-cat' }),
+    state: async () => (await pool.query("SELECT category FROM scenarios WHERE id = 'rt-own'")).rows[0].category,
+  },
+  {
+    name: 'GET /api/admin/dashboard', ok: 200, allowed: ANY_PRINCIPAL,
+    send: (r, h) => r.get('/api/admin/dashboard').set(h),
+  },
+  {
+    name: 'GET /api/scenarios/rt-own/history', ok: 200, allowed: ['authorA', ...MODERATORS],
+    send: (r, h) => r.get('/api/scenarios/rt-own/history').set(h),
+  },
 ];
 
-test('179. route table: every admin route x every caller (DW-2.3)', async t => {
+test('179. route table: every admin route x every caller (DW-2.3, DW-4.1-4.5)', async t => {
   if (skipUnlessDb(t)) return;
 
   for (const route of ROUTES) {

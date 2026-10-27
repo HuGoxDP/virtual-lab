@@ -142,7 +142,7 @@ test('181. forbidden fields are 400 for an author, on POST and on PUT (DW-2.4)',
 
   await t.test('a moderator may send every one of them', async () => {
     await request(app).put('/api/catalog/ar-guarded').set(mia.auth)
-      .send({ author: 'Named By Mia', isPublished: false, imageUrl: '/i.png', scenarioUrl: '/scenarios/x.zip' })
+      .send({ author: 'Named By Mia', isPublished: false, imageUrl: '', scenarioUrl: '/scenarios/x.zip' })
       .expect(200);
     const changed = await row('ar-guarded');
     assert.equal(changed.author, 'Named By Mia');

@@ -203,9 +203,22 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   with an unknown slug creates the category (`ensureCategory`), a known slug keeps its label. Admin
   `features` are validated by `catalog-input.js` (<=6 items, icon `^[a-z0-9-]{1,40}$`, title 1-60,
   subtitle <=90).
-- `GET /api/config` — public, `{maxArchiveBytes}`. The cap is `MAX_ARCHIVE_BYTES` (default 200 MiB,
+- `GET /api/config` — public, `{maxArchiveBytes, preview: {maxBytes, minWidth, aspect}}`
+  (the cover-image limits). The cap is `MAX_ARCHIVE_BYTES` (default 200 MiB,
   read once at load); an oversize upload is a 413. multer's limit is set to cap + 1 because busboy fires
   on *reaching* `fileSize`, not exceeding it. nginx's `client_max_body_size` (512m) must stay above it.
+- **Catalog management (`routes/categories|previews|version-tools|bulk|dashboard.js`).** Categories: `GET` any principal
+  (moderators also get `scenarioCount`), mutations moderator-only, slug `^[a-z0-9-]{2,50}$`, delete of a used category 409.
+  **A scenario in a hidden category is unpublished to every public endpoint** - one SQL fragment, `PUBLIC_ROW` in
+  `catalog-public.js`; add new public reads to it. **Covers are a second content-addressed store**: `POST/DELETE
+  /api/scenarios/:id/preview` (`preview-image.js` reads PNG/JPEG headers, type by magic bytes, <=5 MiB, >=800 px wide, 16:10
+  +-5 % else a warning) -> `/previews/<sha>.png|jpg` on the `virtual_lab_previews` volume (`storage.previews`, same
+  `createStore` as the archives; GC and `/api/admin/storage` report both). `imageUrl` changes only through those routes; a PUT/POST
+  by a moderator may send `''`, its current value or a `/previews/<sha>.<ext>` path (`imageUrlProblem`), an author nothing.
+  Migration `010` clears off-origin `image_url`s (logged) because CSP `img-src` no longer allows `https:`. Per version:
+  `GET .../versions/:vid/contents`, `POST .../checks` (re-run; the same rule set runs at upload, `archive-checks.js`),
+  `POST .../test-run` (moderator; numeric result or `{error}`, `test-run-input.js`). `POST /api/scenarios/bulk` answers per id,
+  one transaction each. `GET /api/admin/dashboard` and `/api/scenarios/:id/history` read the journal, scoped to the principal.
 - **Authorization (`auth.js`).** Every write is `Authorization: Bearer <token>`, which resolves to
   `req.principal = {role: 'author'|'moderator', keyId, label}`. The token is either a **personal publish
   key** (`publish_keys`, found by the SHA-256 of the token; revoked or unknown → 403) or the bootstrap

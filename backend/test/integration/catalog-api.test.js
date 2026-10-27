@@ -201,12 +201,12 @@ test('101. [DW-1.2] summary and category counts ignore category/q; hidden and em
     const slugs = plain.body.categories.map(c => c.category);
     assert.ok(!slugs.includes('secret'));
     assert.ok(!slugs.includes('drafts'));
-    // 4 published scenarios (the hidden category's one still counts), 2 visible categories.
-    assert.deepEqual(plain.body.summary, { scenarios: 4, categories: 2 });
+    // 3 public scenarios (a hidden category's one is treated as unpublished: Phase 4), 2 visible categories.
+    assert.deepEqual(plain.body.summary, { scenarios: 3, categories: 2 });
   });
 
-  await t.test('a scenario in a hidden category is still listed', () => {
-    assert.ok(ids(plain).includes('x1'));
+  await t.test('a scenario in a hidden category is not listed', () => {
+    assert.ok(!ids(plain).includes('x1'));
   });
 });
 

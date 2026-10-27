@@ -125,6 +125,24 @@ function requireRole(role) {
 /** `authenticate` then `requireRole(role)`, as one argument to a route. */
 const authorize = role => [authenticate, requireRole(role)];
 
+/**
+ * Middleware for `/api/scenarios/:id/...` routes, after `authenticate`: 404 for an unknown
+ * scenario, 403 unless the principal may edit it (`canEditScenario`). Runs before a body is
+ * read, so a stranger's upload is refused without being received. A route that then changes
+ * the row repeats the check under its row lock; this is the cheap early answer.
+ */
+async function requireScenarioEditor(req, res, next) {
+  try {
+    const { rows } = await pool.query('SELECT owner_key_id FROM scenarios WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Сценарій не знайдено' });
+    if (!canEditScenario(req.principal, rows[0])) return res.status(403).json({ error: 'Це не ваш сценарій' });
+  } catch (err) {
+    console.error('[AUTH] scenario lookup error:', err.message);
+    return res.status(500).json({ error: 'Помилка сервера' });
+  }
+  next();
+}
+
 /** Moderators edit any scenario; an author edits only the ones their key owns. */
 function canEditScenario(principal, row) {
   return principal.role === 'moderator'
@@ -140,4 +158,5 @@ module.exports = {
   requireRole,
   authorize,
   canEditScenario,
+  requireScenarioEditor,
 };

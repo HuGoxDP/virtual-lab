@@ -524,6 +524,17 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 | 14 | 3 | The viewer shows an error screen for a malformed `?draft=` rather than a normal run | default | assumed |
 | 15 | 3 | `status` in a PUT/POST body is ignored, not 400 | default | assumed |
 | 16 | 3 | Row-locking routines (`applyTransition`, `installUpload`, …) are covered by real-Postgres integration tests, not mocked-DB unit tests (project convention) | default | assumed |
+| 17 | 4 | Test-run error shape `{error (≤1000 chars), engineBuild?, userAgent?}`, numbers absent (numbers beside `error` → 400); Phase 7 stores failed runs through it | default | assumed |
+| 18 | 4 | A stored test run adds `ranAt` and `ranBy` (key label); a second run replaces the first | default | assumed |
+| 19 | 4 | Preview max side 8192 px (decoded-bitmap guard); oversize (>5 MiB) → 400, not 413 | default | assumed |
+| 20 | 4 | Previews use their own `tmp/` on the previews volume (rename across volumes fails) | default | assumed |
+| 21 | 4 | Bulk capped at 100 ids per request, duplicates processed once; an unknown category in `set-category` is a per-id failure | default | assumed |
+| 22 | 4 | Migration 010 also widens `scenarios.manifest_id` to 255; the validator caps manifest `id` 255 / `version` 50 / `engineVersion` 100 and requires string `id`/`name`/`version` on every upload path | default | assumed |
+| 23 | 4 | Queue size counts scenarios in `review` or with a pending version, once each | default | assumed |
+| 24 | 4 | `currentVersion` carries an extra `checked` boolean so an unchecked version is not shown as clean | default | assumed |
+| 25 | 4 | `GET /api/categories` adds a moderator-only `scenarioCount` | default | assumed |
+| 26 | 4 | A slug with no `categories` row stays public (no FK by design) | default | assumed |
+| 27 | 4 | A preview whose filename or declared MIME disagrees with its bytes (PNG named `.jpg`, JPEG sent as `image/png`) is stored as what its bytes are, not refused — the Test Plan line lists it under 400, but the edge case says "type by magic bytes"; flip is a one-line change | Phase 4 review | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_

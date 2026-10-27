@@ -38,7 +38,27 @@ const AUTHOR_UPLOADS_PER_HOUR = parsePositiveInt(process.env.AUTHOR_UPLOADS_PER_
 /** Failed credential checks one address may make per 15 minutes before it is answered 429. */
 const AUTH_FAILURES_PER_WINDOW = parsePositiveInt(process.env.AUTH_FAILURES_PER_WINDOW, 30);
 
+/**
+ * Cover-image limits, shown to the author by `/api/config` and enforced on upload
+ * (`preview-image.js`). A 16:10 image at 800 px is 500 px tall; `PREVIEW_MAX_DIMENSION`
+ * only guards against a small file that decodes to a gigapixel bitmap in a student's browser.
+ */
+const PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+const PREVIEW_MIN_WIDTH = 800;
+const PREVIEW_ASPECT = 16 / 10;
+const PREVIEW_ASPECT_TOLERANCE = 0.05;
+const PREVIEW_MAX_DIMENSION = 8192;
+
+/** Most scenarios one bulk request may name. */
+const MAX_BULK_IDS = 100;
+
 module.exports = {
+  PREVIEW_MAX_BYTES,
+  PREVIEW_MIN_WIDTH,
+  PREVIEW_ASPECT,
+  PREVIEW_ASPECT_TOLERANCE,
+  PREVIEW_MAX_DIMENSION,
+  MAX_BULK_IDS,
   MAX_ARCHIVE_BYTES,
   MAX_ENTRY_BYTES,
   MAX_ARCHIVE_ENTRIES,

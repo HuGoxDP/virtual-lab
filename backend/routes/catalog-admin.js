@@ -9,7 +9,7 @@ const express = require('express');
 const { pool, inTransaction } = require('../db');
 const { authorize, canEditScenario } = require('../auth');
 const audit = require('../audit');
-const { validateFeatures, forbiddenAuthorFields } = require('../catalog-input');
+const { validateFeatures, forbiddenAuthorFields, imageUrlProblem } = require('../catalog-input');
 const { ADMIN_COLUMNS } = require('../scenario-rows');
 const { applyTransition } = require('../workflow');
 const { httpError, sendError } = require('../http-error');
@@ -90,6 +90,9 @@ router.post('/api/catalog', authorize('author'), async (req, res) => {
 
   const checked = features === undefined ? { value: [] } : validateFeatures(features);
   if (checked.error) return res.status(400).json({ error: checked.error });
+  // (An author's imageUrl was refused above.) A new row has no cover yet.
+  const imageProblem = imageUrl === undefined ? null : imageUrlProblem(imageUrl, '');
+  if (imageProblem) return res.status(400).json({ error: imageProblem });
 
   try {
     if (byAuthor && (typeof category !== 'string' || !(await categoryExists(pool, category)))) {
@@ -210,9 +213,13 @@ router.put('/api/catalog/:id', authorize('author'), async (req, res) => {
     values.push(id); // последний параметр — WHERE id = $N
     await inTransaction(async db => {
       // Locked, so the ownership read below cannot go stale before the write.
-      const { rows } = await db.query('SELECT owner_key_id, status FROM scenarios WHERE id = $1 FOR UPDATE', [id]);
+      const { rows } = await db.query('SELECT owner_key_id, status, image_url FROM scenarios WHERE id = $1 FOR UPDATE', [id]);
       if (!rows[0]) throw httpError(404, 'Сценарій не знайдено');
       if (!canEditScenario(principal, rows[0])) throw httpError(403, 'Це не ваш сценарій');
+      if (imageUrl !== undefined) {
+        const problem = imageUrlProblem(imageUrl, rows[0].image_url);
+        if (problem) throw httpError(400, problem);
+      }
 
       // Compatibility for the old admin: `isPublished` is approve / unpublish. Asking for the
       // state the row is already in is a no-op; approving a row with no archive is a 409.
