@@ -74,8 +74,8 @@ production scenarios have none of this.
 
 ### Why it matters
 
-It is user-visible, on the scenario a first-time visitor is most likely to open. The platform's
-`?diag=1` gate governs its own button; it cannot govern what content does once running.
+It is user-visible, on the scenario a first-time visitor is most likely to open. A host's own
+switch (the platform once had a `?diag=1` button) cannot govern what content does once running.
 
 Worked around here - the player always runs with `diag: false` (the host never turns the profiler on, whatever
 `?diag=1` says) and the engine's `diagnosticsAllowed` latches at `false`, so the call is inert; the old page-side

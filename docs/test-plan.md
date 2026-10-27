@@ -386,8 +386,9 @@ Specs: `catalog-query.spec.ts`, `platform-config.service.spec.ts`, `scenario.ser
 141. [E] `viewer.spec.ts`: loading screen (ring percent, title, "Завантаження архіву — X з Y МБ", stage,
      "Скасувати") then the HUD; "Скасувати" aborts the archive `fetch` and lands on `/scenario/:id`
      (DW-4.1).
-142. [E] `viewer.spec.ts`: HUD at 1440 px — aria-labels, no pause button and no FPS slot, hints without
-     Space, "Вийти" → `/scenario/:id`; at 390 px the hints are hidden and exit / title / buttons stay
+142. [E] `viewer.spec.ts`: HUD at 1440 px — aria-labels, ~~no pause button and no FPS slot, hints without
+     Space~~ (**superseded by 164-171**: the pause button and the FPS slot are now driven by the player),
+     "Вийти" → `/scenario/:id`; at 390 px the hints are hidden and exit / title / buttons stay
      inside the viewport without overlapping (DW-4.2).
 143. [E] `viewer.spec.ts`: restart on a ZIP run is enabled and re-runs from the buffer (second telemetry
      launch, one archive request); `streaming.spec.ts`: ~~disabled with `?stream=1`~~ - **superseded by 168**:
@@ -483,7 +484,7 @@ Specs: `viewer-lifecycle.spec.ts` (rewritten around a fake host), `viewer.compon
 e2e `hostile-archive.spec.ts`, `viewer-player.spec.ts`, `viewer.spec.ts`, `streaming.spec.ts`,
 `csp.spec.ts`, `ktx2.spec.ts`, `editor-csp.spec.ts`. The page no longer holds an engine, so e2e reads the
 engine from inside the player frame (`e2e/helpers/engine.ts`). `viewer-profiler.ts` and its spec are gone
-(scenarios 145-148 and 154-157 are retired: the page has no profiler to lock, the host always sends
+(scenarios 145, 148 and 154-157 are retired: the page has no profiler to lock, the host always sends
 `diag: false` and the engine latches the gate inside the frame; 163 goes with them).
 
 164. [U] The host is built with `/player/player.html`, `/assets/WebEngineTS.standalone.js`,
