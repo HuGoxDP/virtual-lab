@@ -1,0 +1,184 @@
+# LTI demo stand: a local Moodle 5.x plus the virtual-lab platform, both behind one HTTPS proxy.
+#
+#   cd virtual-lab/lti-demo
+#   docker compose up -d --build        # first run: ~5-10 min (image pulls + Angular build)
+#   docker compose down                 # stop, keep data
+#   docker compose down -v              # stop and wipe Moodle + platform data (re-seeds on next up)
+#
+# Moodle   https://moodle.lti.test
+# Platform https://lab.lti.test
+# See docs/lti-demo.md (hosts-file entry and CA trust are one-time manual steps on the host).
+#
+# Self-contained and separate from the production docker-compose.yml: own project name, own
+# volumes, own database; only 80/443 are published on the host. Every secret below is a demo
+# default, overridable from lti-demo/.env (git-ignored).
+name: lti-demo
+
+x-platform-db-password: &platform_db_password ${LTI_PLATFORM_DB_PASSWORD:-lti-demo-platform-db}
+
+services:
+
+  # -- Local CA + leaf certificate (one-shot; output in ./certs, git-ignored) --
+  certs:
+    image: alpine/openssl
+    entrypoint: ["/bin/sh", "/gen-certs.sh"]
+    volumes:
+      - ./proxy/gen-certs.sh:/gen-certs.sh:ro
+      - ./certs:/certs
+    networks: [lti]
+
+  # -- TLS terminator. The aliases make both names resolve to it from inside the network --
+  proxy:
+    image: nginx:alpine
+    container_name: LtiDemoProxy
+    restart: unless-stopped
+    ports:
+      - "${LTI_HTTPS_PORT:-443}:443"
+      - "${LTI_HTTP_PORT:-80}:80"
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/certs:ro
+    depends_on:
+      certs: { condition: service_completed_successfully }
+      moodle: { condition: service_started }
+      platform-web: { condition: service_started }
+    networks:
+      lti:
+        aliases: [moodle.lti.test, lab.lti.test]
+
+  # -- Moodle 5.0 (Bitnami legacy image: the maintained bitnami/moodle tags are paid) --
+  moodle-db:
+    image: bitnamilegacy/mariadb:11.4
+    container_name: LtiDemoMoodleDb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${LTI_MOODLE_DB_PASSWORD:-lti-demo-moodle-db}
+      MARIADB_USER: bn_moodle
+      MARIADB_PASSWORD: ${LTI_MOODLE_DB_PASSWORD:-lti-demo-moodle-db}
+      MARIADB_DATABASE: bitnami_moodle
+      MARIADB_CHARACTER_SET: utf8mb4
+      MARIADB_COLLATE: utf8mb4_unicode_ci
+    volumes:
+      - lti_moodle_db:/bitnami/mariadb
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -uroot -p$$MARIADB_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [lti]
+
+  moodle:
+    image: bitnamilegacy/moodle:5.0.2
+    container_name: LtiDemoMoodle
+    restart: unless-stopped
+    environment:
+      MOODLE_DATABASE_TYPE: mariadb
+      MOODLE_DATABASE_HOST: moodle-db
+      MOODLE_DATABASE_PORT_NUMBER: 3306
+      MOODLE_DATABASE_USER: bn_moodle
+      MOODLE_DATABASE_NAME: bitnami_moodle
+      MOODLE_DATABASE_PASSWORD: ${LTI_MOODLE_DB_PASSWORD:-lti-demo-moodle-db}
+      MOODLE_HOST: moodle.lti.test
+      MOODLE_REVERSEPROXY: "no"   # same host name outside and inside: only sslproxy is needed
+      MOODLE_SSLPROXY: "yes"
+      MOODLE_SITE_NAME: Virtual Lab LTI demo
+      MOODLE_USERNAME: admin
+      MOODLE_PASSWORD: ${LTI_MOODLE_ADMIN_PASSWORD:-Admin#2026lti}
+      MOODLE_EMAIL: admin@lti.test
+      MOODLE_LANG: en
+      DEMO_TEACHER_PASSWORD: ${LTI_TEACHER_PASSWORD:-Teacher#2026lti}
+      DEMO_STUDENT_PASSWORD: ${LTI_STUDENT_PASSWORD:-Student#2026lti}
+    volumes:
+      - lti_moodle_data:/bitnami/moodle
+      - lti_moodle_moodledata:/bitnami/moodledata
+      # NOT /certs: the Bitnami image treats that path as its own TLS mount and rewires Apache to it.
+      - ./certs:/demo-ca:ro
+      - ./moodle/php-ca.ini:/opt/bitnami/php/etc/conf.d/zz-demo-ca.ini:ro
+      - ./moodle/seed.php:/docker-entrypoint-init.d/10-seed.php:ro
+    depends_on:
+      certs: { condition: service_completed_successfully }
+      moodle-db: { condition: service_healthy }
+    healthcheck:
+      # The image has no curl and Moodle answers 500 to any Host other than its wwwroot, so ask with it.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080; printf 'GET /login/index.php HTTP/1.0\\r\\nHost: moodle.lti.test\\r\\n\\r\\n' >&3; head -n1 <&3 | grep -Eq 'HTTP/1.. (200|30.)'"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+    networks: [lti]
+
+  # -- virtual-lab platform: the same Dockerfiles as the production compose, built from ../ --
+  platform-db:
+    image: postgres:16-alpine
+    container_name: LtiDemoPlatformDb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: virtual_lab
+      POSTGRES_USER: lab_user
+      POSTGRES_PASSWORD: *platform_db_password
+    volumes:
+      - lti_platform_pgdata:/var/lib/postgresql/data
+      - ../db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab_user -d virtual_lab"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [lti]
+
+  platform-api:
+    build: ../backend
+    container_name: LtiDemoPlatformApi
+    restart: unless-stopped
+    environment:
+      DB_HOST: platform-db
+      DB_PORT: 5432
+      DB_NAME: virtual_lab
+      DB_USER: lab_user
+      DB_PASSWORD: *platform_db_password
+      PORT: 3000
+      ADMIN_TOKEN: ${LTI_PLATFORM_ADMIN_TOKEN:-lti-demo-admin-token}
+      # The backend calls https://moodle.lti.test (token endpoint, AGS) and must trust the demo CA.
+      NODE_EXTRA_CA_CERTS: /certs/ca.crt
+    volumes:
+      - lti_platform_archives:/srv/archives
+      - lti_platform_assets:/srv/assets
+      - ./certs:/certs:ro
+    depends_on:
+      certs: { condition: service_completed_successfully }
+      platform-db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      lti:
+        # nginx/nginx.conf proxies /api/ to the host name `backend`.
+        aliases: [backend]
+
+  platform-web:
+    build:
+      context: ..
+      dockerfile: Dockerfile.frontend
+    container_name: LtiDemoPlatformWeb
+    restart: unless-stopped
+    volumes:
+      - lti_platform_archives:/srv/archives:ro
+      - lti_platform_assets:/srv/assets:ro
+    depends_on:
+      platform-api: { condition: service_healthy }
+    networks: [lti]
+
+networks:
+  lti:
+    name: lti-demo
+
+volumes:
+  lti_moodle_db:
+  lti_moodle_data:
+  lti_moodle_moodledata:
+  lti_platform_pgdata:
+  lti_platform_archives:
+  lti_platform_assets:
