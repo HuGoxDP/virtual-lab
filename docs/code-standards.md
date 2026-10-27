@@ -1,5 +1,5 @@
-<!-- base-commit: 709494ce6a1c2c42f08b5da9c319065a1fc52392 -->
-<!-- generated: 2026-10-23 -->
+<!-- base-commit: bf6d51a26845e5081bb6235e500b1da9d26886ba -->
+<!-- generated: 2026-10-27 -->
 
 # Code Standards — virtual-lab
 
