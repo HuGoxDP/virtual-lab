@@ -2,7 +2,7 @@
 **Created:** 2026-10-23
 **Status:** in-progress
 **Started:** 2026-10-27 12:37
-**Current Phase:** 3
+**Current Phase:** 4
 **Superseded in part (Phase 1):** by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
 **Complexity:** complex
 **Review cadence:** 2
@@ -238,7 +238,7 @@ category makes its scenarios unpublished to every public endpoint (list, summary
 category in use cannot be deleted (409). Roles — `GET /api/categories`: any principal (authors pick from it,
 hidden ones flagged); category mutations, bulk, test-run: moderator; preview upload/remove, contents, check
 re-run: owner or moderator; dashboard and admin rows: any principal, scoped.
-**Edge cases:** preview type by magic bytes (PNG/JPEG only; SVG, GIF, disguised files → 400), ≤5 MB, width
+**Edge cases:** `scenario_versions.manifest_id` and `scenarios.manifest_id` share one length limit, so accepting a pending version can never fail with a 500 on a long manifest id (Phase 3 review: VARCHAR(255) vs 200); a non-string manifest `name`/`version` in `from-archive` → 400, not "[object Object]"; preview type by magic bytes (PNG/JPEG only; SVG, GIF, disguised files → 400), ≤5 MB, width
 ≥800 px, 16:10 ±5% else a warning; a file shorter than its header → 400; slug `^[a-z0-9-]{2,50}$`; test-run
 numbers range-checked (TTFF 0–600 000 ms, FPS 0–1000, GPU 0–64 GiB, errors 0–100 000) and strings capped
 (`engineBuild` 100, `userAgent` 300); bulk returns per-id results, each id in its own transaction; checks and
@@ -537,3 +537,10 @@ _To be filled during /code-foundations:build_
 - [x] Committed
 Commit: 6bc48e7 (route split), 6ee54c4 (transactions), e8b526e (keys, roles, journal)
 Summary: Backend routes now live in actor modules under `backend/routes/`, each mutation in one transaction; personal SHA-256 keys with `author`/`moderator` roles (ADMIN_TOKEN = bootstrap moderator) gate every admin route via `authenticate`/`requireRole`/`canEditScenario`, authors are limited to content fields of their own unpublished rows, every mutation writes an `audit_events` row via `audit.record(client, …)`, failed auth and author uploads are rate-limited (`limitAuthorUploads` is reusable), and archive validation caps entry bytes/count; backend suite 610/610.
+
+### Phase 3: Publishing workflow and versions (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (interrupted once by an API session limit; the same agent resumed)
+- [x] REVIEW: Verification passed
+- [x] Committed
+Commit: ca83ba7
+Summary: Scenarios carry `status` (draft/review/published/rejected) driven by `applyTransition` (`backend/workflow.js`, five POST routes) and every archive is a `scenario_versions` row managed by `backend/versions.js` (`installUpload` under a row lock, pending for author uploads to published rows, accept/reject/restore/delete routes, 50-version cap); `is_published` is gone (migration 009) but `isPublished` remains a compat field; `from-archive` creates a draft from a ZIP; `/api/catalog/:id?version=` + the viewer's `?draft=`/`returnTo` preview unpublished versions for owner/moderator; GC counts all versions; backend 1072/1072, frontend 309/309; e2e specs `draft-preview`, `admin-golden-path`, `hostile-archive`, `ktx2-render` changed but not yet run (need a stack on this branch).
