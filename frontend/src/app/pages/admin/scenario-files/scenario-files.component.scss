@@ -39,7 +39,7 @@
 .path { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
 .all-files { margin-top: var(--space-4); summary { cursor: pointer; font-size: 13px; margin-bottom: var(--space-3); } }
 
-.history { .table-wrap { overflow-x: auto; } .hash { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; } }
+.history { .table-wrap { position: relative; overflow-x: auto; } .hash { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; } }
 .row-actions { white-space: nowrap; text-align: right; }
 .state {
   font-size: 12px; padding: 2px 9px; border-radius: 999px; white-space: nowrap;

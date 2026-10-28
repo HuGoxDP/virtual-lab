@@ -150,8 +150,9 @@ test.describe('files and checks tabs', () => {
     await page.getByRole('button', { name: 'Перевірити ще раз' }).click();
     await expect(page.locator('.toast')).toContainText('Перевірку виконано');
 
-    // The run button is Phase 7's: drawn, and inert for now.
-    await expect(page.getByRole('button', { name: 'Запустити тест' })).toBeDisabled();
+    // Phase 7 enabled the test run (decision #51): a moderator gets a live «Запустити тест». The run itself is
+    // exercised in admin-moderation.spec.ts.
+    await expect(page.getByRole('button', { name: 'Запустити тест' })).toBeEnabled();
   });
 
   test('DW-6.2 an author reads the results but has no button to run a test', async ({ page }) => {

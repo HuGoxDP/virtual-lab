@@ -108,6 +108,12 @@ describe('UploadWizardComponent', () => {
       expect(root.querySelector('[data-role="manifest"]')).toBeNull();
     });
 
+    it('DW-6.3 a step button is named by its label alone: the ordinal is decorative (aria-hidden)', async () => {
+      await open();
+      expect([1, 2, 3, 4].map(n => stepButton(n).querySelector('.num')!.getAttribute('aria-hidden'))).toEqual(['true', 'true', 'true', 'true']);
+      expect(stepButton(2).textContent!.replace(stepButton(2).querySelector('.num')!.textContent!, '').trim()).toBe('Метадані');
+    });
+
     it('DW-6.3 a ZIP is posted to from-archive and becomes a draft with what the manifest said', async () => {
       await open();
       pick(new File([new Uint8Array(1000)], 'cell-model-v0.9.0.zip'));

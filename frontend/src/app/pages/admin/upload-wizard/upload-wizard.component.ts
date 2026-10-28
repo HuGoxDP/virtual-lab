@@ -53,7 +53,7 @@ const UNSAVED_FIRST = 'Спершу збережіть зміни на кроц�
           <button type="button" class="step" [class.on]="step() === item.n" [class.done]="draft() && item.n < step()"
                   [attr.aria-current]="step() === item.n ? 'step' : null" [attr.data-step]="item.n"
                   [disabled]="item.n > 1 && !draft()" (click)="go(item.n)">
-            <span class="num">{{ item.n }}</span>{{ item.label }}
+            <span class="num" aria-hidden="true">{{ item.n }}</span>{{ item.label }}
           </button>
         </li>
       }
