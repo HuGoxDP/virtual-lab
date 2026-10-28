@@ -1,6 +1,6 @@
 // path: src/app/models/admin.model.ts
 
-import { ScenarioFeature, ScenarioStatus } from './scenario.model';
+import { AdminScenario, ScenarioFeature, ScenarioStatus } from './scenario.model';
 
 /** Who a code belongs to (`GET /api/auth/me`). `keyId` is null for the bootstrap `ADMIN_TOKEN`. */
 export type AdminRole = 'author' | 'moderator';
@@ -157,4 +157,22 @@ export interface ArchiveEntry {
   /** Unpacked size; 0 for a directory. */
   bytes: number;
   dir: boolean;
+}
+
+/** What the manifest of an archive says, as `POST /api/scenarios/from-archive` reports it. */
+export interface ArchiveManifestSummary {
+  id: string;
+  name: string;
+  version: string;
+  entryPoint: string;
+  resourceCount: number;
+  engineVersion: string | null;
+}
+
+/** `POST /api/scenarios/from-archive`: the new draft row, its first version and what the manifest said. */
+export interface FromArchiveResult {
+  scenario: AdminScenario;
+  version: ScenarioVersion;
+  manifest: ArchiveManifestSummary;
+  warnings: string[];
 }

@@ -33,19 +33,12 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./pages/viewer/viewer.component').then(m => m.ViewerComponent),
   },
-  // The admin. Sign-in and the old admin sit outside the shell (own layouts); everything else is a child of it.
+  // The admin. Sign-in sits outside the shell (own layout); everything else is a child of it.
   {
     path: 'admin/login',
     canActivate: [loginGuard],
     loadComponent: () =>
       import('./pages/admin/admin-login.component').then(m => m.AdminLoginComponent),
-  },
-  {
-    // The old admin: the only archive-upload screen until the wizard exists. Moderators only.
-    path: 'admin/legacy',
-    canActivate: [moderatorGuard],
-    loadComponent: () =>
-      import('./pages/admin/legacy/admin.component').then(m => m.AdminComponent),
   },
   {
     path: 'admin',
@@ -67,7 +60,12 @@ export const routes: Routes = [
           import('./pages/admin/scenario-edit/scenario-edit.component').then(m => m.ScenarioEditComponent),
       },
       { path: 'scenarios/:id', redirectTo: 'scenarios/:id/meta' },
-      { path: 'upload', ...slot('Завантаження сценарію') },
+      {
+        path: 'upload',
+        canDeactivate: [unsavedChangesGuard],
+        loadComponent: () =>
+          import('./pages/admin/upload-wizard/upload-wizard.component').then(m => m.UploadWizardComponent),
+      },
       { path: 'queue', canActivate: [moderatorGuard], ...slot('Черга модерації') },
       { path: 'categories', canActivate: [moderatorGuard], ...slot('Напрями') },
       { path: 'access', canActivate: [moderatorGuard], ...slot('Доступ') },

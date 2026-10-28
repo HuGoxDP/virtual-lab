@@ -3,7 +3,7 @@
 // test-plan.md scenario 197 (nocturne release 2, phase 3, DW-3.5): `/play/:id?draft=<sha256>` plays one
 // archive version of a scenario that is NOT published (a draft has no public page), for its owner or a
 // moderator - the viewer sends the session's bearer - and its exit goes to a validated relative
-// `/admin...` `returnTo` (the Файл tab itself arrives in a later phase; only the validated path is checked here).
+// `/admin...` `returnTo` (the Файл tab, `/admin/scenarios/:id/files`, is the real target since release 2, phase 6; admin-files-tab.spec.ts follows the link).
 // Anonymous access to that version is a 404, and a hostile `returnTo` is ignored.
 //
 // Needs the full stack and the bootstrap ADMIN_TOKEN, like the rest of this suite.

@@ -5,9 +5,9 @@
 // server stays the authority (`backend/workflow.js` TRANSITIONS); these tables only decide which
 // buttons to draw, and a button the server refuses shows the server's own message.
 
-import { AuditRow, AdminRole, TransitionAction } from '../../models/admin.model';
+import { AuditRow, AdminRole, TestRun, TransitionAction } from '../../models/admin.model';
 import { CurrentVersionSummary, ScenarioStatus } from '../../models/scenario.model';
-import { pluralUk } from '../../ui/format';
+import { formatBytes, pluralUk } from '../../ui/format';
 
 export { STATUS_META, STATUS_ORDER, statusMeta } from '../../ui/status-pill/status-meta';
 
@@ -105,6 +105,55 @@ function previewItem({ imageUrl }: ReadinessInput): ReadinessItem {
   return imageUrl
     ? { key: 'preview', level: 'ok', label: 'Превʼю додано' }
     : { key: 'preview', level: 'bad', label: 'Немає превʼю' };
+}
+
+// ==================== TEST RUN ====================
+
+const GIB = 1024 ** 3;
+
+/** The norms a stored test run is read against (prototype 2i): first frame, FPS, GPU memory, console errors. */
+export const TEST_NORMS = {
+  maxFirstFrameMs: 5000,
+  minFps: 30,
+  maxGpuBytes: GIB,
+  maxConsoleErrors: 0,
+} as const;
+
+export interface TestRunRow {
+  key: 'firstFrame' | 'fps' | 'gpu' | 'errors';
+  label: string;
+  /** What was measured, as text; `—` when the report lacks the figure. */
+  value: string;
+  norm: string;
+  /** Within the norm; null when the report lacks the figure. */
+  ok: boolean | null;
+}
+
+/** `3,8 с` for 3800 ms: one decimal, a comma, whole values without it. */
+const seconds = (ms: number): string => `${String(Math.round(ms / 100) / 10).replace('.', ',')} с`;
+
+const row = (key: TestRunRow['key'], label: string, norm: string, value: number | undefined,
+             show: (v: number) => string, within: (v: number) => boolean): TestRunRow =>
+  value === undefined || !Number.isFinite(value)
+    ? { key, label, value: '—', norm, ok: null }
+    : { key, label, value: show(value), norm, ok: within(value) };
+
+/**
+ * A stored test run as the four rows of «Тестовий запуск», each against its norm (limits inclusive).
+ * A run that failed (`error`) has no figures and no rows: the screen shows the error instead.
+ */
+export function evaluateTestRun(run: TestRun): TestRunRow[] {
+  if (run.error !== undefined) return [];
+  return [
+    row('firstFrame', 'Час до першого кадру', `до ${seconds(TEST_NORMS.maxFirstFrameMs)}`, run.timeToFirstFrameMs,
+      seconds, v => v <= TEST_NORMS.maxFirstFrameMs),
+    row('fps', 'Середній FPS', `від ${TEST_NORMS.minFps}`, run.avgFps,
+      v => String(Math.round(v * 10) / 10).replace('.', ','), v => v >= TEST_NORMS.minFps),
+    row('gpu', 'Памʼять GPU', `до ${formatBytes(TEST_NORMS.maxGpuBytes)}`, run.gpuMemoryBytes,
+      formatBytes, v => v <= TEST_NORMS.maxGpuBytes),
+    row('errors', 'Помилки в консолі', String(TEST_NORMS.maxConsoleErrors), run.consoleErrors,
+      String, v => v <= TEST_NORMS.maxConsoleErrors),
+  ];
 }
 
 // ==================== JOURNAL ====================

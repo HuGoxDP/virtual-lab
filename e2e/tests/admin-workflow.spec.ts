@@ -4,7 +4,7 @@
 // UI with personal keys - sign in, edit, submit - plus what the unit suite cannot see: the real viewport at 390 px,
 // a 300-character title in the real layout, a key revoked under a running session, and the browser's own dialogs.
 //
-//   214  sign-in by code, name and role, sign-out, `/admin/legacy` for moderators only
+//   214  sign-in by code, name and role, sign-out (the old `/admin/legacy` is gone: admin-files-tab.spec.ts, #224)
 //   215  author: sign in -> edit Метадані -> submit for review (archive seeded through the key-parameterised helper)
 //   216  unsaved edits survive a tab switch and ask before leaving; a revoked key returns to sign-in with the reason;
 //        390 px drawer; a 300-character unbroken title keeps the layout
@@ -64,7 +64,7 @@ test.describe('admin workflow', () => {
       await expect(page).toHaveURL(/\/admin\/login$/);
     });
 
-    test('DW-5.1 an author sees the author menu; /admin/legacy sends them back to their list', async ({ page }) => {
+    test('DW-5.1 an author sees the author menu and no moderator items', async ({ page }) => {
       const key = await createKey('author');
       try {
         await signInThroughForm(page, key.token);
@@ -72,18 +72,11 @@ test.describe('admin workflow', () => {
         await expect(page.locator('.user-role')).toHaveText('Автор');
         await expect(page.locator('.sidebar').getByRole('link', { name: 'Черга модерації' })).toHaveCount(0);
 
-        await page.goto('/admin/legacy');
-        await expect(page).toHaveURL(/\/admin\/scenarios$/);
-        await expect(page.getByRole('button', { name: 'Оновити' })).toHaveCount(0);
+        await page.goto('/admin/queue');
+        await expect(page).toHaveURL(/\/admin\/scenarios$/); // a moderator-only section sends an author home
       } finally {
         await revokeKey(key.id);
       }
-    });
-
-    test('DW-5.1 a moderator reaches the old admin at /admin/legacy', async ({ page }) => {
-      await signedInWith(page, ADMIN_TOKEN);
-      await page.goto('/admin/legacy');
-      await expect(page.getByRole('button', { name: 'Оновити' })).toBeVisible();
     });
 
     test('DW-5.1 a revoked code is refused with a message and nothing is stored', async ({ page }) => {

@@ -2,12 +2,10 @@
 
 /*
  * Nocturne design system (plain CSS by design — retune it in src/styles/, not in components).
- * Order matters: fonts and tokens first, the base and components use them, `legacy` last so its
- * neutralising rules come after the rules they neutralise.
+ * Order matters: fonts and tokens first, then the base and components that use them.
  */
 @use 'styles/fonts';
 @use 'styles/tokens';
 @use 'styles/base';
 @use 'styles/components';
 @use 'styles/animations';
-@use 'styles/legacy';

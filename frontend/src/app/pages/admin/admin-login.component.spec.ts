@@ -1,7 +1,7 @@
 // path: src/app/pages/admin/admin-login.component.spec.ts
 //
 // Test-plan scenario 209 (DW-5.1, DW-5.5): the sign-in screen takes a code, says what went wrong in a plaque
-// under the field, shows why a session ended, and never keeps a code the server refused.
+// under the field, shows why a session ended, and never keeps a code the server refused. Scenario 225 (DW-6.3): an outage on restore is reported with the code kept.
 
 import { Component } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
@@ -9,6 +9,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { Router, provideRouter } from '@angular/router';
 
+import { AdminSession } from '../../services/admin-session.service';
 import { AdminService } from '../../services/admin.service';
 import { AdminLoginComponent } from './admin-login.component';
 import { settle } from './admin-testing';
@@ -104,6 +105,18 @@ describe('AdminLoginComponent', () => {
     admin.endSession('Код доступу недійсний або відкликаний: увійдіть знову.');
     open();
     expect(plaque()?.textContent).toContain('недійсний або відкликаний');
+  });
+
+  it('DW-6.3 a stored code the server could not be asked about is kept and the plaque says so', async () => {
+    admin.setToken('stored');
+    const restored = TestBed.inject(AdminSession).restore();
+    http.expectOne('/api/auth/me').flush('boom', { status: 502, statusText: 'Bad Gateway' });
+    expect(await restored).toBe(false);
+
+    open();
+    expect(plaque()?.textContent).toContain('Не вдалося перевірити збережений код');
+    expect(plaque()?.textContent).toContain('Помилка 502');
+    expect(sessionStorage.getItem('adminToken')).toBe('stored');
   });
 
   it('a second submit while one is running is ignored', async () => {

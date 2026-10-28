@@ -544,6 +544,16 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 | 34 | 5 | `/admin` redirects to `/admin/scenarios` and the nav has no «Огляд» until Phase 7's dashboard | default | assumed |
 | 35 | 5 | A tab switch within the same scenario is not a departure — only real departures prompt about unsaved edits | Phase 5 review | assumed |
 | 36 | 5 | A moderator also gets the owner moves (submit, withdraw) as secondary buttons, mirroring the backend `TRANSITIONS` table | Phase 5 review | assumed |
+| 37 | 6 | `/admin/legacy` falls through to the admin catch-all and lands on `/admin/scenarios` ("not found" = no legacy screen, not a 404 page) | default | assumed |
+| 38 | 6 | `frontend/src/styles/_legacy.scss` and its `@use` deleted with the old admin; `CLAUDE.md` legacy lines updated (both outside the phase's stated file scope — dead code only) | default | assumed |
+| 39 | 6 | One shared `<vl-archive-upload>` serves the Файл tab and the wizard; cancel and component destroy abort the request | default | assumed |
+| 40 | 6 | Перевірка's `(runTest)` output is paired with a `testEnabled` input (default false) that Phase 7 flips | default | assumed |
+| 41 | 6 | Wizard step 1 posts `from-archive`; a later replace in the wizard uses `POST /api/scenarios/:id/archive`; the manifest extras show only for the first upload | default | assumed |
+| 42 | 6 | Перевірка shows the current version with a current/pending switch; pending actions live in the Файл tab | default | assumed |
+| 43 | 6 | Перевірка shows no "last checked at" (stored checks carry no timestamp); the test run shows `ranAt`/`ranBy` | default | assumed |
+| 44 | 6 | Wizard submit and save-draft are blocked while Метадані has unsaved edits (no auto-save) | default | assumed |
+| 45 | 6 | A moderator in the wizard also gets «Опублікувати» (approve) | default | assumed |
+| 46 | 6 | "Latest request wins" in admin tabs is a per-component request counter plus the scenario-id check | Phase 6 review | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_

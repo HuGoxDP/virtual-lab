@@ -1,5 +1,7 @@
 // path: src/app/models/scenario.model.ts
 
+import type { ScenarioVersion } from './admin.model';
+
 /**
  * A single scenario entry as described by the remote catalog manifest.
  *
@@ -255,4 +257,6 @@ export interface ArchiveUploadResult {
   deduplicated: boolean;
   manifestId: string;
   warnings: string[];
+  /** The version row the upload created (or, for identical bytes, matched); absent in answers older than release 2. */
+  version?: ScenarioVersion;
 }

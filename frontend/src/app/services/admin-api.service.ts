@@ -1,12 +1,12 @@
 // path: src/app/services/admin-api.service.ts
 
 import { Injectable, inject } from '@angular/core';
-import { HttpClient, HttpErrorResponse, HttpHeaders } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpEventType, HttpHeaders } from '@angular/common/http';
 import { Observable, firstValueFrom } from 'rxjs';
 
 import {
   AdminCategory, AdminUser, ArchiveChecks, ArchiveEntry, AuditRow, BulkAction, BulkResult, CategoryInput,
-  CreatedKey, Dashboard, KeyRow, PlatformConfig, PreviewResult, ScenarioPatch, ScenarioVersion, TestRun,
+  CreatedKey, Dashboard, FromArchiveResult, KeyRow, PlatformConfig, PreviewResult, ScenarioPatch, ScenarioVersion, TestRun,
   TransitionAction, TransitionResult, VersionAction,
 } from '../models/admin.model';
 import { AdminScenario, ArchiveUploadResult } from '../models/scenario.model';
@@ -27,6 +27,14 @@ export function isCredentialRejection(err: unknown): boolean {
 }
 
 const seg = encodeURIComponent;
+
+/** An upload stopped by its caller (`AbortSignal`): not a failure, so screens show no error for it. */
+export class UploadCancelled extends Error {
+  constructor() {
+    super('Завантаження скасовано.');
+    this.name = 'UploadCancelled';
+  }
+}
 
 /**
  * One typed method per admin route (Phases 2-4 of release 2). Every call carries the session's bearer;
@@ -138,17 +146,44 @@ export class AdminApi {
 
   // ==================== ARCHIVES AND VERSIONS ====================
 
-  /** Upload with progress is `AdminService.uploadArchive`; this is the same route for the new screens. */
-  uploadArchive(id: string, file: File, onProgress: (percent: number) => void): Promise<ArchiveUploadResult> {
-    return this.admin.uploadArchive(id, file, onProgress);
+  /**
+   * Posts `form` reporting upload progress (0-100), abortable through `signal`. Aborting unsubscribes,
+   * which cancels the request in the browser, and rejects with `UploadCancelled`. A rejected code ends the
+   * session like any other call.
+   */
+  private upload<T>(path: string, form: FormData, onProgress: (percent: number) => void, signal?: AbortSignal): Promise<T> {
+    return this.call(headers => new Observable<T>(subscriber => {
+      const sub = this.http.post<T>(path, form, { headers, reportProgress: true, observe: 'events' }).subscribe({
+        next: event => {
+          if (event.type === HttpEventType.UploadProgress && event.total) {
+            onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+          } else if (event.type === HttpEventType.Response && event.body !== null) {
+            subscriber.next(event.body);
+          }
+        },
+        error: err => subscriber.error(err),
+        complete: () => subscriber.complete(),
+      });
+      const abort = () => { sub.unsubscribe(); subscriber.error(new UploadCancelled()); };
+      if (signal?.aborted) abort();
+      else signal?.addEventListener('abort', abort, { once: true });
+      return () => { signal?.removeEventListener('abort', abort); sub.unsubscribe(); };
+    }));
+  }
+
+  /** A new archive for scenario `id` (multipart field `archive`); the answer carries the stored `version`. */
+  uploadArchive(id: string, file: File, onProgress: (percent: number) => void, signal?: AbortSignal): Promise<ArchiveUploadResult> {
+    const form = new FormData();
+    form.append('archive', file);
+    return this.upload(`/api/scenarios/${seg(id)}/archive`, form, onProgress, signal);
   }
 
   /** Creates a draft from the archive's own manifest; `category` defaults server-side. */
-  fromArchive(file: File, category?: string): Promise<ArchiveUploadResult & { id: string }> {
+  fromArchive(file: File, onProgress: (percent: number) => void, signal?: AbortSignal, category?: string): Promise<FromArchiveResult> {
     const form = new FormData();
     if (category) form.append('category', category);
     form.append('archive', file);
-    return this.post('/api/scenarios/from-archive', form);
+    return this.upload('/api/scenarios/from-archive', form, onProgress, signal);
   }
 
   async versions(id: string): Promise<ScenarioVersion[]> {

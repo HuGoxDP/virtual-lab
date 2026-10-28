@@ -67,3 +67,38 @@ export function buildZip(files: Record<string, string | Buffer>): Buffer {
   end.writeUInt32LE(offset, 16);
   return Buffer.concat([...locals, centralBytes, end]);
 }
+
+/** The script every generated scenario archive carries: a camera and nothing else (enough for the validator). */
+const MINIMAL_SCENARIO = `
+import { ScenarioBehaviour, GameObject, Camera, Color } from "WebEngineTS";
+export default class Minimal extends ScenarioBehaviour {
+  async awake() {
+    const cam = new GameObject("Main Camera");
+    cam.tag = "MainCamera";
+    cam.addComponent(Camera).backgroundColor = new Color(0.1, 0.1, 0.1);
+  }
+}
+`;
+
+/**
+ * A valid, throwaway scenario archive whose manifest says `id` (a slug, as `from-archive` requires), `name` and
+ * `version`. Two archives that differ only in `version` have different bytes, so they are different versions.
+ */
+export function buildScenarioZip(options: { id: string; name?: string; version?: string }): Buffer {
+  const { id, name = 'E2E сценарій', version = '1.0.0' } = options;
+  const manifest = {
+    manifestVersion: '1.0',
+    id,
+    name,
+    version,
+    description: 'e2e: архів, зібраний тестом',
+    category: 'test',
+    entryPoint: 'Scenario.js',
+    assets: [],
+    metadata: { scripts: ['scripts/Scenario.js'] },
+  };
+  return buildZip({
+    'manifest.json': JSON.stringify(manifest),
+    'scripts/Scenario.js': MINIMAL_SCENARIO,
+  });
+}

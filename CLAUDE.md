@@ -190,20 +190,23 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   switch keeps them; leaving with edits asks (`unsavedChangesGuard`, `beforeunload`). Its live card **is**
   `<vl-scenario-card>`. `author` is a moderator's field (read-only for authors, never sent by them).
   `<vl-scenario-publish>` draws what `transitionsFor(role, status, hasArchive)` offers (`scenario-rules.ts`, which also
-  holds the readiness list and journal wording) and shows the server's refusal as sent. **The old admin is at
-  `/admin/legacy`, moderators only (`moderatorGuard`)**: until the wizard exists it is the only archive-upload UI, so
-  do not release between Phase 5 and Phase 6. Author-supplied text is rendered with `{{ }}`, never `innerHTML`.
+  holds the readiness list, the test-run norms and the journal wording) and shows the server's refusal as sent. **The old
+  admin and `/admin/legacy` are gone** (release 2, phase 6); an unknown admin path redirects to the list. The **Файл** tab
+  (`<vl-scenario-files>`), the **Перевірка** tab (`<vl-scenario-checks>`; its `(runTest)` stays inert until `testEnabled`) and
+  the **wizard** (`/admin/upload`) all upload through `<vl-archive-upload>`: client guards (ZIP, non-empty,
+  `maxArchiveBytes`), progress, and cancel or leaving the page abort the request, so no half-created scenario. Author-supplied
+  text (manifest fields, archive paths, check notes) is rendered with `{{ }}`, never `innerHTML`.
 - `src/app/services/scenario.service.ts` — catalog state as **signals**, paged fetching (a response for an
   older request is dropped, so the newest filter always wins), `fetchScenarioById` (with `related`), and
   the streamed ZIP download with progress and abort. `fetchScenarioById(id, version?)` with a `version` adds
   `?version=` and the session's bearer (from `AdminService`) — a draft preview; the plain lookup carries no credential. (`GET /api/config` stays on the backend; the
   frontend no longer reads it — the footer's archive-limit line went with the footer's main block.)
-- `src/app/services/admin.service.ts` — the access code (`sessionStorage` key `adminToken`; dies with the tab) and the
-  old CRUD/upload used by `/admin/legacy`; `endSession(reason)` clears it and keeps the reason for the sign-in screen.
+- `src/app/services/admin.service.ts` — the access code (`sessionStorage` key `adminToken`; dies with the tab);
+  `endSession(reason)` clears it and keeps the reason for the sign-in screen.
   `admin-api.service.ts` (`AdminApi`): one typed method per admin route with the bearer attached; it ends the session on
   a rejected code (401, or 403 `Невірний токен`) before the error reaches the caller; any other 403 is a refused action.
   `admin-session.service.ts` (`AdminSession`): who is signed in (`signIn` stores nothing unless the server accepts the
-  code, `restore`, `signOut`, `user`/`role`/`isModerator` derived from the token).
+  code, `restore` (a 5xx or network failure keeps the code and sets `restoreProblem`), `signOut`, `user`/`role`/`isModerator` derived from the token).
 - `src/app/services/telemetry.service.ts` — anonymous session log; failures are swallowed, since
   telemetry must never break playback.
 - `src/app/models/scenario.model.ts` — `ScenarioCatalogItem` / `ScenarioCatalogManifest`. This is

@@ -105,8 +105,6 @@ export class AdminShellComponent {
           { label: 'Черга модерації', link: '/admin/queue', icon: 'seal-check', badge: this.queueSize() },
           { label: 'Напрями', link: '/admin/categories', icon: 'folders' },
           { label: 'Доступ', link: '/admin/access', icon: 'shield-check' },
-          // Until the wizard replaces it, this is the only place an archive can be uploaded.
-          { label: 'Старий інтерфейс', link: '/admin/legacy', icon: 'arrow-square-out' },
         ]
         : []),
     ];

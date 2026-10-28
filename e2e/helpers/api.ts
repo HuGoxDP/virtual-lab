@@ -109,6 +109,30 @@ export async function uploadArchive(id: string, file = SMALL_ARCHIVE, code = ADM
   if (!res.ok) throw new Error(`upload ${id} → ${res.status} ${await res.text()}`);
 }
 
+/** Uploads in-memory archive bytes (a generated ZIP) under `id`, as `code`. */
+export async function uploadArchiveBytes(id: string, bytes: Buffer, code = ADMIN_TOKEN): Promise<void> {
+  const form = new FormData();
+  form.append('archive', new Blob([new Uint8Array(bytes)], { type: 'application/zip' }), 'e2e.zip');
+  const res = await call('POST', `/api/scenarios/${encodeURIComponent(id)}/archive`, { body: form }, code);
+  if (!res.ok) throw new Error(`upload ${id} → ${res.status} ${await res.text()}`);
+}
+
+/** Every version of a scenario, newest first. */
+export async function versionsOf(id: string, code = ADMIN_TOKEN): Promise<Array<Record<string, any>>> {
+  const res = await call('GET', `/api/scenarios/${encodeURIComponent(id)}/versions`, {}, code);
+  if (!res.ok) throw new Error(`versions ${id} → ${res.status} ${await res.text()}`);
+  return (await res.json()).versions;
+}
+
+/** Stores a test-run report against a version (moderator-only route, so the bootstrap by default). */
+export async function saveTestRun(id: string, versionId: number, run: Record<string, unknown>, code = ADMIN_TOKEN): Promise<void> {
+  const res = await call('POST', `/api/scenarios/${encodeURIComponent(id)}/versions/${versionId}/test-run`, {
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(run),
+  }, code);
+  if (!res.ok) throw new Error(`test-run ${id} → ${res.status} ${await res.text()}`);
+}
+
 /** Idempotent: a 404 means the test already removed it. Deleting is a moderator's, so this is the bootstrap's. */
 export async function deleteScenario(id: string): Promise<void> {
   const res = await call('DELETE', `/api/catalog/${encodeURIComponent(id)}`);

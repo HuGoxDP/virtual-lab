@@ -21,6 +21,14 @@ export class AdminSession {
 
   private readonly _user = signal<AdminUser | null>(null);
 
+  private readonly _restoreProblem = signal<string | null>(null);
+
+  /**
+   * Why the stored code could not be confirmed (server down, network): the code was kept, so a reload
+   * tries again. Null when there is nothing to report. A rejected code is `AdminService.endedReason`.
+   */
+  readonly restoreProblem = this._restoreProblem.asReadonly();
+
   readonly user = computed(() => (this.admin.isAuthenticated() ? this._user() : null));
   readonly role = computed(() => this.user()?.role ?? null);
   readonly isModerator = computed(() => this.role() === 'moderator');
@@ -41,23 +49,25 @@ export class AdminSession {
     }
     this.admin.setToken(trimmed);
     this._user.set(user);
+    this._restoreProblem.set(null);
     return user;
   }
 
   /**
-   * After a reload the code is in `sessionStorage` but the identity is not: fetch it.
-   * True when signed in afterwards. A rejected code has already been dropped (with its reason) by
-   * `AdminApi`; any other failure (server down) drops the code too and says so, because an identity
-   * that cannot be confirmed must not be assumed.
+   * After a reload the code is in `sessionStorage` but the identity is not: fetch it. True when signed
+   * in afterwards. A code the server rejects has already been dropped (with its reason) by `AdminApi`.
+   * Any other failure (a 5xx, the network) says nothing about the code, so it is kept and reported in
+   * `restoreProblem`; the answer is still false because an identity that cannot be confirmed is not assumed.
    */
   async restore(): Promise<boolean> {
     if (!this.admin.isAuthenticated()) return false;
     if (this._user()) return true;
     try {
       this._user.set(await this.api.me());
+      this._restoreProblem.set(null);
       return true;
     } catch (err) {
-      if (this.admin.isAuthenticated()) this.admin.endSession(AdminService.describeError(err));
+      this._restoreProblem.set(isCredentialRejection(err) ? null : AdminService.describeError(err));
       return false;
     }
   }
@@ -65,5 +75,6 @@ export class AdminSession {
   signOut(): void {
     this.admin.clearToken();
     this._user.set(null);
+    this._restoreProblem.set(null);
   }
 }

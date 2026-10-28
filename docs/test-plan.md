@@ -640,13 +640,12 @@ Specs: `frontend/src/app/services/{admin-api,admin-session,admin}.service.spec.t
 `pages/admin/{admin-guards,admin-login.component,scenario-rules}.spec.ts`,
 `pages/admin/{admin-shell,scenario-list,scenario-meta-form,scenario-publish,scenario-edit}/*.spec.ts`,
 `ui/{icon-picker,status-pill}/*.spec.ts`; e2e `e2e/tests/admin-workflow.spec.ts` (keys are issued and revoked through
-`helpers/api.ts`, whose helpers take the code to act as). The old admin's specs moved to `pages/admin/legacy/`; its e2e
-(`admin-golden-path`, `nocturne-foundation`) now open `/admin/legacy` through the sign-in screen.
+`helpers/api.ts`, whose helpers take the code to act as). (The old admin lived at `/admin/legacy` until phase 6 deleted it.)
 
 208. [U] Session and API (DW-5.1, DW-5.5) `admin-api`, `admin-session`, `admin-guards`: author / moderator / revoked / empty
      sign-in, nothing stored on a refusal; the code only in `sessionStorage`, cleared on sign-out; `AdminApi` routes and bodies;
      401 and 403 `Невірний токен` end the session with a reason, any other 403, a 409 and a 500 do not; guards (anonymous ->
-     sign-in, author -> list for moderator pages and `/admin/legacy`); the unsaved-changes guard.
+     sign-in, author -> list for moderator pages); the unsaved-changes guard.
 209. [U] Sign-in screen and shell (DW-5.1, DW-5.5): plaque for a refused or empty code, the reason of an ended session, no demo
      codes or "12 годин"; name and role in the user card, role-aware items, queue badge, sign-out, a session that ends under
      the screen goes to sign-in; burger / Escape / scrim / navigation open and close the drawer.
@@ -661,20 +660,54 @@ Specs: `frontend/src/app/services/{admin-api,admin-session,admin}.service.spec.t
 213. [U] Edit page (DW-5.5): unsaved edits survive Метадані -> Публікація -> Метадані; leaving asks (stay / go) and a clean
      page does not; `beforeunload`; refetch after a save; not found, error and retry; a 300-character title.
 214. [E] Sign-in (DW-5.1): bootstrap shows name and role, the code never reaches `localStorage` or the URL, sign-out clears the
-     session; an author gets the author menu and `/admin/legacy` sends them to the list; a moderator reaches it; revoked and
+     session; an author gets the author menu and a moderator-only section sends them to the list; revoked and
      empty codes. *Written and type-checked; run by the orchestrator at VERIFY.*
 215. [E] Author flow (DW-5.5): sign in as a key -> own row only -> edit Метадані (live card, counter) -> save -> Публікація ->
      submit -> status and history; the archive is seeded through the key-parameterised helper. *Not run.*
 216. [E] Edge cases (DW-5.5): unsaved edits across a tab switch and the browser prompt; a key revoked mid-session and on reload
      returns to sign-in with the reason; at 390 px the sidebar is a drawer; a 300-character title keeps the layout. *Not run.*
 
+#### Nocturne release 2, phase 6: admin UI - files, checks and the upload wizard
+
+Specs: `frontend/src/app/pages/admin/{archive-upload,check-list,scenario-files,scenario-checks,upload-wizard}/*.spec.ts`,
+`pages/admin/scenario-rules.spec.ts` (`evaluateTestRun`), `app.routes.spec.ts`, `services/admin-{api,session}.service.spec.ts`
+(abortable upload, a transient restore failure keeps the code); e2e `e2e/tests/admin-upload-wizard.spec.ts`,
+`admin-files-tab.spec.ts`, and the rewritten `admin-golden-path.spec.ts` (all written and type-checked, **not run**: they need a
+stack built from the branch). The old admin, its `/admin/legacy` route, its styles and its characterisation tests (#119) are deleted.
+
+217. [U] Test-run norms (DW-6.2) `evaluateTestRun`: <= 5 s, >= 30 FPS, <= 1 GB, 0 errors, limits inclusive; a failed run has no
+     rows; a missing figure is a dash, not a pass.
+218. [U] Файл (DW-6.1, DW-6.3) `scenario-files`, `archive-upload`: current archive, contents tree (directory counts, hostile paths
+     as text), history with restore / delete for moderators only, the pending banner with the preview link
+     (`/play/:id?draft=<sha>&returnTo=/admin/scenarios/:id/files`) and accept / reject (moderator) or retract (author); replace
+     by drag-and-drop or chooser with progress and cancel (the request is aborted), the over-50 MB warning, a file over the
+     platform cap or not a ZIP refused before any request, a scenario in review disabled with the withdraw hint and a late
+     409 explained; a response for a scenario the user left is ignored.
+219. [U] Перевірка (DW-6.2) `scenario-checks`, `check-list`: the stored checks as a verdict and rows with the level in words
+     (archive text only as text), re-run, a version without stored checks, the stored test run against the norms, `(runTest)`
+     raised only for a moderator and only when enabled, the current / pending choice, a stale response ignored.
+220. [U] Wizard (DW-6.3) `upload-wizard`: ZIP -> draft with the manifest prefilled (a `<script>` name is text), edits kept across
+     steps and reported as unsaved, checks on step 3, submit / publish / save draft, unsaved metadata blocks them, a 409 / 400
+     shown, a cancel leaves no draft, leaving after step 1 deletes nothing, a replacement refreshes the row.
+221. [U] Routes (DW-6.4) `app.routes.spec`: no `admin/legacy` route (an unknown admin path redirects to the list); `/admin/upload`
+     is the wizard with the unsaved-changes guard; `nocturne-styles.spec`: no legacy stylesheet or component remains.
+222. [E] Wizard (DW-6.3, DW-6.4): author key -> ZIP in a real file chooser -> draft with the manifest prefilled -> edit and save
+     Метадані -> checks -> submit -> in review; leaving after step 1 keeps the draft in the list; a cancelled upload leaves no
+     row; a duplicate manifest id is refused; a hostile manifest name runs nothing; a non-ZIP is refused before a request. *Not run.*
+223. [E] Файл (DW-6.1, DW-6.4): an author's new archive for a published scenario is pending (retract works); a moderator accepts
+     the pending version from the Файл tab and it becomes current; restore for a moderator, none for an author. *Not run.*
+224. [E] Перевірка and the old admin (DW-6.2, DW-6.4): stored checks, re-run, a test run against the norms, the run button inert
+     and absent for authors; `/admin/legacy` lands on the list with no old screen. *Not run.*
+225. [U] Restore after a reload (DW-6.3, review note of phase 5) `admin-session`, `admin-login`: a 5xx or a network failure keeps
+     the code and reports the problem on the sign-in screen; a credential rejection still drops it; the next restore asks again.
+
 
 ### 4.11 Golden paths (E2E)
 
 97. **Student**: open `/` → filter by category → search → open the scenario page (`/scenario/:id`) →
     launch → progress ring advances from 0 to 100 → scene renders → back to catalog. Assert a telemetry row was created and closed.
-98. **Teacher/admin**: `/admin` → enter token → create scenario → upload archive → publish →
-    it appears in the public catalog and plays → delete.
+98. **Teacher/admin**: `/admin/login` → enter code → create scenario → upload archive on the Файл tab → publish →
+    it appears in the public catalog and plays (release 2, phase 6: the old admin's per-row delete is gone; teardown is the API).
 
 ---
 

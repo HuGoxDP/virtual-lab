@@ -83,7 +83,13 @@ export class AdminLoginComponent {
   private readonly error = signal<string | null>(null);
 
   /** What sits under the field: this attempt's failure, else why the last session ended. */
-  protected readonly notice = computed(() => this.error() ?? this.admin.endedReason());
+  protected readonly notice = computed(() => this.error() ?? this.admin.endedReason() ?? this.outage());
+
+  /** A stored code the server could not be asked about (it is down): the code is still kept. */
+  private readonly outage = computed(() => {
+    const problem = this.session.restoreProblem();
+    return problem && `Не вдалося перевірити збережений код: ${problem}. Код збережено — оновіть сторінку, щоб спробувати знову, або введіть його ще раз.`;
+  });
 
   protected onInput(event: Event): void {
     this.code.set((event.target as HTMLInputElement).value);

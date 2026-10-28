@@ -238,6 +238,45 @@ describe('ScenarioPublishComponent', () => {
       http.expectOne('/api/scenarios/beta/history').flush([]);
       await settle(fixture);
     });
+
+    it('DW-6.2 a late history for the scenario the user left does not overwrite the new one', async () => {
+      fixture = TestBed.createComponent(ScenarioPublishComponent);
+      fixture.componentRef.setInput('scenario', adminRow('alpha'));
+      fixture.componentRef.setInput('role', 'author');
+      root = fixture.nativeElement;
+      fixture.detectChanges();
+      const late = http.expectOne('/api/scenarios/alpha/history');
+
+      fixture.componentRef.setInput('scenario', adminRow('beta'));
+      fixture.detectChanges();
+      const beta = http.expectOne('/api/scenarios/beta/history');
+      beta.flush([auditRow('scenario.submit', { actorLabel: 'Бета-автор' })]);
+      await settle(fixture);
+      late.flush([auditRow('scenario.approve', { actorLabel: 'Альфа-модератор' })]);
+      await settle(fixture);
+
+      expect(root.querySelector('.history')!.textContent).toContain('Бета-автор');
+      expect(root.querySelector('.history')!.textContent).not.toContain('Альфа-модератор');
+    });
+
+    it('DW-6.2 a late history error for the scenario the user left is not shown on the new one', async () => {
+      fixture = TestBed.createComponent(ScenarioPublishComponent);
+      fixture.componentRef.setInput('scenario', adminRow('alpha'));
+      fixture.componentRef.setInput('role', 'author');
+      root = fixture.nativeElement;
+      fixture.detectChanges();
+      const late = http.expectOne('/api/scenarios/alpha/history');
+
+      fixture.componentRef.setInput('scenario', adminRow('beta'));
+      fixture.detectChanges();
+      http.expectOne('/api/scenarios/beta/history').flush([auditRow('scenario.submit')]);
+      await settle(fixture);
+      late.flush({ error: 'Помилка Альфи' }, { status: 500, statusText: 'err' });
+      await settle(fixture);
+
+      expect(root.querySelector('.banner-error')).toBeNull();
+      expect(root.querySelectorAll('.history li').length).toBe(1);
+    });
   });
 
   it('DW-5.4 the status line names the status in words', async () => {

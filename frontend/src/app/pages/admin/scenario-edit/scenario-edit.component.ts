@@ -12,6 +12,8 @@ import { formatDate } from '../../../ui/format';
 import { IconComponent } from '../../../ui/icon/icon.component';
 import { StatusPillComponent } from '../../../ui/status-pill/status-pill.component';
 import { HasUnsavedChanges } from '../admin-guards';
+import { ScenarioChecksComponent } from '../scenario-checks/scenario-checks.component';
+import { ScenarioFilesComponent } from '../scenario-files/scenario-files.component';
 import { ScenarioMetaFormComponent } from '../scenario-meta-form/scenario-meta-form.component';
 import { ScenarioPublishComponent } from '../scenario-publish/scenario-publish.component';
 
@@ -33,7 +35,7 @@ type LoadState = 'loading' | 'ready' | 'missing' | 'error';
 @Component({
   selector: 'vl-scenario-edit',
   standalone: true,
-  imports: [IconComponent, RouterLink, ScenarioMetaFormComponent, ScenarioPublishComponent, StatusPillComponent],
+  imports: [IconComponent, RouterLink, ScenarioChecksComponent, ScenarioFilesComponent, ScenarioMetaFormComponent, ScenarioPublishComponent, StatusPillComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrl: './scenario-edit.component.scss',
   template: `
@@ -82,8 +84,12 @@ type LoadState = 'loading' | 'ready' | 'missing' | 'error';
         @case ('publish') {
           <vl-scenario-publish [scenario]="current" [role]="role()" (changed)="refresh()" />
         }
-        @case ('files') { <p class="muted slot">Керування файлом і версіями зʼявиться в одному з наступних оновлень.</p> }
-        @case ('checks') { <p class="muted slot">Перевірка архіву зʼявиться в одному з наступних оновлень.</p> }
+        @case ('files') {
+          <vl-scenario-files [scenario]="current" [role]="role()" (changed)="refresh()" />
+        }
+        @case ('checks') {
+          <vl-scenario-checks [scenario]="current" [role]="role()" (changed)="refresh()" />
+        }
       }
     }
   `,

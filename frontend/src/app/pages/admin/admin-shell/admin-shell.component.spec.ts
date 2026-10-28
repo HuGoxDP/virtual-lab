@@ -72,7 +72,7 @@ describe('AdminShellComponent', () => {
 
   it('DW-5.1 a moderator sees every item, the queue badge and the old interface', async () => {
     await openAs({ role: 'moderator', label: 'Модер', keyId: 1 }, 3);
-    expect(navLabels()).toEqual(['Усі сценарії', 'Завантажити', 'Черга модерації', 'Напрями', 'Доступ', 'Старий інтерфейс']);
+    expect(navLabels()).toEqual(['Усі сценарії', 'Завантажити', 'Черга модерації', 'Напрями', 'Доступ']);
     expect(root.querySelector('.badge')?.textContent?.trim()).toBe('3');
     expect(root.querySelector('.user-role')?.textContent).toBe('Модератор');
   });

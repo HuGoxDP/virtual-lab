@@ -180,6 +180,8 @@ export class ScenarioPublishComponent {
       untracked(() => {
         this.note.set('');
         this.error.set(null);
+        this.history.set([]);
+        this.historyError.set(null);
         void this.loadHistory();
       });
     });
@@ -209,11 +211,20 @@ export class ScenarioPublishComponent {
     }
   }
 
+  /** Counts history requests: only the newest one may write state (a slower, older answer is dropped). */
+  private historyRequest = 0;
+
   private async loadHistory(): Promise<void> {
+    const request = ++this.historyRequest;
+    const id = this.scenario().id;
+    const current = () => request === this.historyRequest && id === this.scenario().id;
     try {
-      this.history.set(await this.api.history(this.scenario().id));
+      const rows = await this.api.history(id);
+      if (!current()) return; // the user moved on to another scenario, or a newer request is in flight
+      this.history.set(rows);
       this.historyError.set(null);
     } catch (err) {
+      if (!current()) return;
       this.historyError.set(AdminService.describeError(err));
     }
   }

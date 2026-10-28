@@ -1,7 +1,7 @@
 // path: src/app/services/admin-session.service.spec.ts
 //
 // Test-plan scenario 208 (DW-5.1): signing in by code shows who the server says it is, the code lives only in
-// sessionStorage and goes away on sign-out.
+// sessionStorage and goes away on sign-out. Scenario 225 (DW-6.3): a transient restore failure keeps the code.
 
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
@@ -120,13 +120,43 @@ describe('AdminSession', () => {
       expect(admin.endedReason()).toMatch(/відкликаний/);
     });
 
-    it('an unreachable server also drops the code and says why, rather than assuming an identity', async () => {
+    it('DW-6.3 a transient failure (5xx) keeps the code and reports the problem instead of signing out', async () => {
       admin.setToken('stored');
       const pending = session.restore();
       http.expectOne('/api/auth/me').flush('boom', { status: 500, statusText: 'Server Error' });
       expect(await pending).toBe(false);
+      expect(admin.isAuthenticated()).toBe(true);
+      expect(sessionStorage.getItem('adminToken')).toBe('stored');
+      expect(admin.endedReason()).toBeNull();
+      expect(session.restoreProblem()).toMatch(/Помилка 500/);
+      expect(session.user()).toBeNull();
+    });
+
+    it('DW-6.3 a network failure keeps the code too, and the next restore asks again and clears the problem', async () => {
+      admin.setToken('stored');
+      const first = session.restore();
+      http.expectOne('/api/auth/me').error(new ProgressEvent('error'), { status: 0, statusText: 'Unknown Error' });
+      expect(await first).toBe(false);
+      expect(admin.isAuthenticated()).toBe(true);
+      expect(session.restoreProblem()).not.toBeNull();
+
+      const second = session.restore();
+      http.expectOne('/api/auth/me').flush({ role: 'author', label: 'A', keyId: 1 });
+      expect(await second).toBe(true);
+      expect(session.restoreProblem()).toBeNull();
+    });
+
+    it('DW-6.3 a credential rejection after an earlier outage drops the code and leaves no stale problem', async () => {
+      admin.setToken('stored');
+      const first = session.restore();
+      http.expectOne('/api/auth/me').flush('boom', { status: 503, statusText: 'Unavailable' });
+      await first;
+
+      const second = session.restore();
+      http.expectOne('/api/auth/me').flush({ error: 'Невірний токен' }, { status: 403, statusText: 'Forbidden' });
+      expect(await second).toBe(false);
       expect(admin.isAuthenticated()).toBe(false);
-      expect(admin.endedReason()).toMatch(/Помилка 500/);
+      expect(session.restoreProblem()).toBeNull();
     });
   });
 });

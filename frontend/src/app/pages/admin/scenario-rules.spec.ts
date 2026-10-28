@@ -1,10 +1,10 @@
 // path: src/app/pages/admin/scenario-rules.spec.ts
 //
 // Test-plan scenario 212 (DW-5.3, DW-5.4): which transitions a role is offered, what the readiness list
-// reports, how a journal row reads.
+// reports, how a journal row reads. Scenario 217 (DW-6.2): a stored test run read against the norms.
 
 import { CurrentVersionSummary } from '../../models/scenario.model';
-import { describeEvent, isReady, readiness, statusMeta, STATUS_META, STATUS_ORDER, transitionsFor } from './scenario-rules';
+import { describeEvent, evaluateTestRun, isReady, readiness, statusMeta, STATUS_META, STATUS_ORDER, TEST_NORMS, transitionsFor } from './scenario-rules';
 
 const actions = (role: 'author' | 'moderator', status: Parameters<typeof transitionsFor>[1], archive = true) =>
   transitionsFor(role, status, archive).map(spec => spec.action);
@@ -123,5 +123,41 @@ describe('describeEvent', () => {
   it('an action it has no sentence for shows its name instead of nothing; a non-string note is ignored', () => {
     expect(describeEvent({ action: 'brand.new', details: { note: 42 } })).toEqual({ icon: 'info', text: 'brand.new' });
     expect(describeEvent({ action: 'constructor', details: null }).text).toBe('constructor');
+  });
+});
+
+describe('evaluateTestRun (DW-6.2)', () => {
+  const GIB = 1024 ** 3;
+  const run = { timeToFirstFrameMs: 3800, avgFps: 58, gpuMemoryBytes: 1.4 * GIB, consoleErrors: 0 };
+  const byKey = (rows: ReturnType<typeof evaluateTestRun>) => Object.fromEntries(rows.map(r => [r.key, r]));
+
+  it('DW-6.2 the norms are 5 s, 30 FPS, 1 GB and no errors', () => {
+    expect(TEST_NORMS).toEqual({ maxFirstFrameMs: 5000, minFps: 30, maxGpuBytes: GIB, maxConsoleErrors: 0 });
+  });
+
+  it('DW-6.2 shows each figure with its norm and whether it holds (GPU over the limit here)', () => {
+    const rows = byKey(evaluateTestRun(run));
+    expect(rows['firstFrame']).toMatchObject({ value: '3,8 с', norm: 'до 5 с', ok: true });
+    expect(rows['fps']).toMatchObject({ value: '58', norm: 'від 30', ok: true });
+    expect(rows['gpu']).toMatchObject({ value: '1,4 ГБ', norm: 'до 1 ГБ', ok: false });
+    expect(rows['errors']).toMatchObject({ value: '0', norm: '0', ok: true });
+  });
+
+  it('DW-6.2 the limits are inclusive: exactly 5 s, 30 FPS and 1 GB pass; one step beyond fails', () => {
+    const edge = byKey(evaluateTestRun({ timeToFirstFrameMs: 5000, avgFps: 30, gpuMemoryBytes: GIB, consoleErrors: 0 }));
+    expect(Object.values(edge).map(r => r.ok)).toEqual([true, true, true, true]);
+
+    const over = byKey(evaluateTestRun({ timeToFirstFrameMs: 5001, avgFps: 29.9, gpuMemoryBytes: GIB + 1, consoleErrors: 1 }));
+    expect(Object.values(over).map(r => r.ok)).toEqual([false, false, false, false]);
+  });
+
+  it('DW-6.2 a failed run has no rows (the error is shown instead)', () => {
+    expect(evaluateTestRun({ error: 'WebGL недоступний' })).toEqual([]);
+  });
+
+  it('a report missing a figure shows a dash and no verdict rather than a pass', () => {
+    const rows = byKey(evaluateTestRun({ avgFps: 60 }));
+    expect(rows['firstFrame']).toMatchObject({ value: '—', ok: null });
+    expect(rows['fps'].ok).toBe(true);
   });
 });

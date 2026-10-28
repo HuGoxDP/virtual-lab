@@ -9,7 +9,7 @@ import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 
 import { adminRow } from '../pages/admin/admin-testing';
-import { AdminApi, isCredentialRejection } from './admin-api.service';
+import { AdminApi, UploadCancelled, isCredentialRejection } from './admin-api.service';
 import { AdminService } from './admin.service';
 
 describe('AdminApi', () => {
@@ -143,32 +143,6 @@ describe('AdminApi', () => {
       await expectCall(api.deleteScenario('a b'), 'DELETE', '/api/catalog/a%20b', undefined);
     });
 
-    it('uploadArchive delegates to the progress-reporting upload', async () => {
-      const seen: number[] = [];
-      const pending = api.uploadArchive('a', new File(['x'], 'a.zip'), p => seen.push(p));
-      const req = http.expectOne('/api/scenarios/a/archive');
-      expect(req.request.method).toBe('POST');
-      expect((req.request.body as FormData).get('archive')).toBeInstanceOf(File);
-      req.flush({ id: 'a', sha256: 's', bytes: 1, url: '/x', deduplicated: false, manifestId: 'a', warnings: [] });
-      expect((await pending).sha256).toBe('s');
-    });
-
-    it('fromArchive sends the archive and, only when given, the category', async () => {
-      const withCategory = api.fromArchive(new File(['x'], 'a.zip'), 'biology');
-      const req = http.expectOne('/api/scenarios/from-archive');
-      const form = req.request.body as FormData;
-      expect(form.get('category')).toBe('biology');
-      expect(form.get('archive')).toBeInstanceOf(File);
-      req.flush({ id: 'a' });
-      await withCategory;
-
-      const without = api.fromArchive(new File(['x'], 'a.zip'));
-      const bare = http.expectOne('/api/scenarios/from-archive');
-      expect((bare.request.body as FormData).has('category')).toBe(false);
-      bare.flush({ id: 'a' });
-      await without;
-    });
-
     it('saveTestRun POSTs the run and unwraps the stored one', async () => {
       const run = { avgFps: 60, timeToFirstFrameMs: 900, gpuMemoryBytes: 1, consoleErrors: 0 };
       const stored = await expectCall(api.saveTestRun('a', 3, run), 'POST', '/api/scenarios/a/versions/3/test-run', run, { testRun: { ...run, ranBy: 'M' } });
@@ -251,6 +225,82 @@ describe('AdminApi', () => {
       expect(isCredentialRejection(response(403, null))).toBe(false);
       expect(isCredentialRejection(response(429, { error: 'Забагато' }))).toBe(false);
       expect(isCredentialRejection(new Error('network'))).toBe(false);
+    });
+  });
+
+  describe('archive uploads (DW-6.1, DW-6.3)', () => {
+    const answer = { id: 'a', sha256: 's', bytes: 1, url: '/x', deduplicated: false, manifestId: 'a', warnings: [] };
+
+    it('uploadArchive posts the archive under "archive" with the bearer and reports progress', async () => {
+      const seen: number[] = [];
+      const pending = api.uploadArchive('a b', new File(['x'], 'a.zip'), p => seen.push(p));
+      const req = http.expectOne('/api/scenarios/a%20b/archive');
+      expect(req.request.method).toBe('POST');
+      expect(req.request.reportProgress).toBe(true);
+      expect(req.request.headers.get('Authorization')).toBe('Bearer session-code');
+      expect((req.request.body as FormData).get('archive')).toBeInstanceOf(File);
+
+      req.event({ type: 1, loaded: 25, total: 100 } as never);
+      req.event({ type: 1, loaded: 100, total: 100 } as never);
+      req.flush(answer);
+      expect((await pending).sha256).toBe('s');
+      expect(seen).toEqual([25, 100]);
+    });
+
+    it('fromArchive sends the archive and, only when given, the category', async () => {
+      const withCategory = api.fromArchive(new File(['x'], 'a.zip'), () => undefined, undefined, 'biology');
+      const req = http.expectOne('/api/scenarios/from-archive');
+      const form = req.request.body as FormData;
+      expect(form.get('category')).toBe('biology');
+      expect(form.get('archive')).toBeInstanceOf(File);
+      req.flush({ scenario: adminRow('a'), version: {}, manifest: {}, warnings: [] });
+      expect((await withCategory).scenario.id).toBe('a');
+
+      const without = api.fromArchive(new File(['x'], 'a.zip'), () => undefined);
+      const bare = http.expectOne('/api/scenarios/from-archive');
+      expect((bare.request.body as FormData).has('category')).toBe(false);
+      bare.flush({});
+      await without;
+    });
+
+    it('aborting the signal cancels the request and rejects with UploadCancelled', async () => {
+      const controller = new AbortController();
+      const pending = api.uploadArchive('a', new File(['x'], 'a.zip'), () => undefined, controller.signal);
+      const req = http.expectOne('/api/scenarios/a/archive');
+
+      controller.abort();
+      await expect(pending).rejects.toBeInstanceOf(UploadCancelled);
+      expect(req.cancelled).toBe(true);
+    });
+
+    it('an already-aborted signal sends nothing that survives and rejects at once', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const pending = api.fromArchive(new File(['x'], 'a.zip'), () => undefined, controller.signal);
+      await expect(pending).rejects.toBeInstanceOf(UploadCancelled);
+      http.match('/api/scenarios/from-archive').forEach(req => expect(req.cancelled).toBe(true));
+    });
+
+    it('a server refusal reaches the caller untouched, and a rejected code still ends the session', async () => {
+      const refused = api.uploadArchive('a', new File(['x'], 'a.zip'), () => undefined).then(() => null, (err: HttpErrorResponse) => err);
+      http.expectOne('/api/scenarios/a/archive').flush({ error: 'Архів завеликий' }, { status: 413, statusText: 'Too Large' });
+      expect((await refused)?.status).toBe(413);
+      expect(admin.isAuthenticated()).toBe(true);
+
+      const revoked = api.uploadArchive('a', new File(['x'], 'a.zip'), () => undefined).catch(err => err);
+      http.expectOne('/api/scenarios/a/archive').flush({ error: 'Невірний токен' }, { status: 403, statusText: 'Forbidden' });
+      await revoked;
+      expect(admin.isAuthenticated()).toBe(false);
+    });
+
+    it('a progress report never exceeds 100', async () => {
+      const seen: number[] = [];
+      const pending = api.uploadArchive('a', new File(['x'], 'a.zip'), p => seen.push(p));
+      const req = http.expectOne('/api/scenarios/a/archive');
+      req.event({ type: 1, loaded: 150, total: 100 } as never);
+      req.flush(answer);
+      await pending;
+      expect(seen).toEqual([100]);
     });
   });
 });

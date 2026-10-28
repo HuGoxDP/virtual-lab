@@ -1,0 +1,21 @@
+// path: src/app/pages/admin/scenario-checks/scenario-checks.component.scss
+
+@use '../shared' as admin;
+
+@include admin.banner;
+@include admin.utilities;
+
+:host { display: block; min-width: 0; }
+
+.choice { display: flex; gap: var(--space-3); margin-bottom: var(--space-4); }
+.checks-grid {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-6); align-items: start;
+  @media (max-width: 1000px) { grid-template-columns: minmax(0, 1fr); }
+}
+.head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  h2 { margin: 0 !important; }
+}
+.norms { .value { font-variant-numeric: tabular-nums; } .value.ok { color: #8fdcb4; } .value.bad { color: #f0b4b4; } .norm { color: color-mix(in srgb, var(--color-text) 62%, transparent); } }
+.meta { margin: var(--space-3) 0 0; font-size: 12.5px; overflow-wrap: anywhere; }

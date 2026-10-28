@@ -5,7 +5,7 @@
 
 import { ComponentFixture } from '@angular/core/testing';
 
-import { AuditRow } from '../../models/admin.model';
+import { AuditRow, ScenarioVersion, VersionState } from '../../models/admin.model';
 import { AdminScenario } from '../../models/scenario.model';
 
 export function adminRow(id: string, overrides: Partial<AdminScenario> = {}): AdminScenario {
@@ -17,6 +17,16 @@ export function adminRow(id: string, overrides: Partial<AdminScenario> = {}): Ad
     ownerKeyId: 1, ownerLabel: 'Автор', pendingVersionId: null,
     currentVersion: { id: 1, sha256: 'a'.repeat(64), bytes: 2_100_000, checked: true, checks: { errors: 0, warnings: 0 } },
     ...overrides,
+  };
+}
+
+export function versionRow(id: number, state: VersionState, overrides: Partial<ScenarioVersion> = {}): ScenarioVersion {
+  const sha256 = (id.toString(16) + 'b'.repeat(64)).slice(0, 64);
+  return {
+    id, sha256, bytes: 2_100_000, manifestId: 'alpha', manifestVersion: `1.${id}.0`, engineVersion: 'WebEngineTS 0.4',
+    uploadedByKeyId: 1, uploadedByLabel: 'Олена', uploadedAt: '2026-03-12T10:00:00Z', state,
+    checks: { ok: true, items: [{ level: 'ok', label: 'Маніфест', note: 'id "alpha"' }] }, testRun: null,
+    url: `/scenarios/${sha256}.zip`, ...overrides,
   };
 }
 
