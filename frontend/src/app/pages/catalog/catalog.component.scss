@@ -19,7 +19,9 @@ $gutter: clamp(14px, 4vw, 40px);
 .account { flex: none; }
 
 // ── list ──
-.catalog-main { max-width: 1180px; margin: 0 auto; padding: clamp(20px, 3vw, 32px) $gutter 64px; }
+// :host is a column flex box and the auto side margins switch off its default stretch, so without
+// width: 100% the column shrink-wraps to its widest child (the chip row) and overflows a phone.
+.catalog-main { width: 100%; max-width: 1180px; margin: 0 auto; padding: clamp(20px, 3vw, 32px) $gutter 64px; }
 
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4); }
 .toolbar-title { margin: 0 auto 0 0; font-size: clamp(20px, 2.4vw, 27px); }
