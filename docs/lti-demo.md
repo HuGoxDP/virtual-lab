@@ -296,8 +296,15 @@ Platform side after the run (`lti_sessions`, 17 rows): `sub`, `role`, `context_i
   `nginx/15-lti-frame-ancestors.sh`, unset means `'self'`); every other page keeps `frame-ancestors 'self'` and
   `SAMEORIGIN`. (2) Cookies: inside the iframe `lti_state_*` and `lti_session` are third-party, so they are set
   `SameSite=None; Secure; HttpOnly; Partitioned` (CHIPS) and keep working with third-party cookies blocked. The
-  walkthrough above (2b-2d) ran with Chromium's `--test-third-party-cookie-phaseout` flag. Not exercised: Safari and
-  Firefox (their own cookie protections), only Chromium. The resource launch (student, instructor) still uses a
+  walkthrough above (2b-2d) ran with Chromium's `--test-third-party-cookie-phaseout` flag. Firefox 153 (Playwright, headless, with its default
+  Total Cookie Protection forced on via `network.cookie.cookieBehavior = 5`) ran the same flow end to end (2026-10-28): the
+  pick inside the modal, Save, `student2` launch in a new window, two Circuits tasks solved with the cheat-sheet values,
+  «Здати» (50 з 100, 50.00 in the grader report) and the relaunch («Роботу здано»). `lti_session` set by `/api/lti/launch`
+  inside the iframe works (`SameSite=None; Secure; Partitioned`), so the pick completes. Screenshots:
+  `docs/lti-demo/firefox-tcp-*.png`. Caveats: the check was automated headless Firefox, not a hand-driven desktop
+  profile; Playwright's `cookies()` did not report the partition key, so the proof is that the pick works, not a cookie dump.
+  **Safari was not exercised** (no Windows build; ITP blocks third-party cookies outright and does not honour
+  `Partitioned`, so the picker modal is the flow most at risk there). The resource launch (student, instructor) still uses a
   new window and is unaffected.
 - Stand note: the Molecules entry shows as "???????????" in the picker; its title is stored as question marks
   (a data problem of the stand's catalog, probably written through a non-UTF-8 client; not the picker's). Fixed

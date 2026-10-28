@@ -56,3 +56,6 @@
   `docker compose restart proxy` (якщо платформа не відповідає, а контейнери живі); потім `.\reset-demo.ps1`.
   Не робити `down -v`: це знищить Moodle і потребує нової реєстрації та 5-10 хв інсталяції.
 - **Інструмента немає в списку «Add an activity or resource».** `.\reset-demo.ps1` повертає «Show in activity chooser», Active і «New window».
+- **Firefox.** Проходить увесь хід демо (перевірено: вибір у вікні «Select content», запуск студента, здача, повторний запуск). Щоб браузер не
+  показував попередження про сертифікат: *Settings → Certificates → Authorities → Import* `certs\ca.crt` або `security.enterprise_roots.enabled = true`.
+  Safari не перевірявся: для демо використовувати Chrome, Edge або Firefox.
