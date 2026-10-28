@@ -11,9 +11,9 @@ import { formatBytes, formatDate, pluralUk } from '../../../ui/format';
 import { IconComponent } from '../../../ui/icon/icon.component';
 import { ToastService } from '../../../ui/toast/toast.service';
 import { ArchiveUploadComponent, ArchiveSender } from '../archive-upload/archive-upload.component';
+import { LARGE_ARCHIVE_BYTES } from '../scenario-rules';
 
-/** Above this a student's first load is slow enough to be worth saying so (prototype 2h «Великий архів»). */
-export const LARGE_ARCHIVE_BYTES = 50 * 1024 * 1024;
+export { LARGE_ARCHIVE_BYTES };
 const MAX_LISTED_FILES = 500;
 
 const STATE_TEXT: Readonly<Record<string, string>> = { current: 'Поточна', pending: 'Очікує розгляду', archived: 'Архівна' };

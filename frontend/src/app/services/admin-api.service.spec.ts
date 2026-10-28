@@ -150,8 +150,12 @@ describe('AdminApi', () => {
     });
 
     it('createCategory POSTs and updateCategory PUTs to the encoded slug', async () => {
-      await expectCall(api.createCategory({ slug: 'chem', label: 'Хімія' }), 'POST', '/api/categories', { slug: 'chem', label: 'Хімія' });
-      await expectCall(api.updateCategory('c/d', { isVisible: false }), 'PUT', '/api/categories/c%2Fd', { isVisible: false });
+      const created = await expectCall(api.createCategory({ slug: 'chem', label: 'Хімія' }), 'POST', '/api/categories',
+        { slug: 'chem', label: 'Хімія' }, { category: { slug: 'chem' } });
+      expect(created).toMatchObject({ slug: 'chem' });
+      const updated = await expectCall(api.updateCategory('c/d', { isVisible: false }), 'PUT', '/api/categories/c%2Fd',
+        { isVisible: false }, { category: { slug: 'c/d', isVisible: false } });
+      expect(updated).toMatchObject({ isVisible: false });
     });
 
     it('createKey POSTs label and role', async () => {

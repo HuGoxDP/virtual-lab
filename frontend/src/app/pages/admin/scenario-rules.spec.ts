@@ -4,7 +4,7 @@
 // reports, how a journal row reads. Scenario 217 (DW-6.2): a stored test run read against the norms.
 
 import { CurrentVersionSummary } from '../../models/scenario.model';
-import { describeEvent, evaluateTestRun, isReady, readiness, statusMeta, STATUS_META, STATUS_ORDER, TEST_NORMS, transitionsFor } from './scenario-rules';
+import { LARGE_ARCHIVE_BYTES, describeEvent, reviewChips, evaluateTestRun, isReady, readiness, statusMeta, STATUS_META, STATUS_ORDER, TEST_NORMS, transitionsFor } from './scenario-rules';
 
 const actions = (role: 'author' | 'moderator', status: Parameters<typeof transitionsFor>[1], archive = true) =>
   transitionsFor(role, status, archive).map(spec => spec.action);
@@ -120,6 +120,14 @@ describe('describeEvent', () => {
     expect(describeEvent({ action: 'scenario.update', details: null }).text).toBe('Оновлено сценарій');
   });
 
+  it('DW-7.2 reads the category and access-code journal rows the dashboard lists', () => {
+    expect(describeEvent({ action: 'category.create', details: { slug: 'x' } }).text).toBe('Додано категорію');
+    expect(describeEvent({ action: 'category.reorder', details: null }).text).toBe('Змінено порядок категорій');
+    expect(describeEvent({ action: 'category.delete', details: null }).text).toBe('Видалено категорію');
+    expect(describeEvent({ action: 'key.create', details: { label: 'Олена' } }).text).toBe('Видано код доступу');
+    expect(describeEvent({ action: 'key.revoke', details: null }).text).toBe('Відкликано код доступу');
+  });
+
   it('an action it has no sentence for shows its name instead of nothing; a non-string note is ignored', () => {
     expect(describeEvent({ action: 'brand.new', details: { note: 42 } })).toEqual({ icon: 'info', text: 'brand.new' });
     expect(describeEvent({ action: 'constructor', details: null }).text).toBe('constructor');
@@ -159,5 +167,37 @@ describe('evaluateTestRun (DW-6.2)', () => {
     const rows = byKey(evaluateTestRun({ avgFps: 60 }));
     expect(rows['firstFrame']).toMatchObject({ value: '—', ok: null });
     expect(rows['fps'].ok).toBe(true);
+  });
+});
+
+describe('reviewChips (DW-7.1)', () => {
+  const ready = { description: 'Опис', imageUrl: '/previews/a.png', archiveSha256: 'a'.repeat(64),
+    currentVersion: { id: 1, sha256: 'a'.repeat(64), bytes: 1000, checked: true, checks: { errors: 0, warnings: 0 } } };
+
+  it('lists every readiness item, passes included', () => {
+    expect(reviewChips(ready).map(chip => chip.level)).toEqual(['ok', 'ok', 'ok']);
+  });
+
+  it('flags a missing description and preview as problems, in the readiness order', () => {
+    const chips = reviewChips({ ...ready, description: '  ', imageUrl: '' });
+    expect(chips.map(chip => [chip.label, chip.level])).toEqual([
+      ['Архів перевірено', 'ok'], ['Немає короткого опису', 'bad'], ['Немає превʼю', 'bad'],
+    ]);
+  });
+
+  it('shows the check counts of the archive', () => {
+    const withErrors = { ...ready, currentVersion: { ...ready.currentVersion, checks: { errors: 2, warnings: 0 } } };
+    expect(reviewChips(withErrors)[0]).toEqual({ level: 'bad', label: 'Автоперевірка: 2 помилки' });
+  });
+
+  it('adds «Великий архів» only above the limit', () => {
+    const big = (bytes: number) => reviewChips({ ...ready, currentVersion: { ...ready.currentVersion, bytes } }).some(chip => chip.label === 'Великий архів');
+    expect(big(LARGE_ARCHIVE_BYTES)).toBe(false);
+    expect(big(LARGE_ARCHIVE_BYTES + 1)).toBe(true);
+  });
+
+  it('falls back to the archive size when no version summary exists', () => {
+    const chips = reviewChips({ description: 'x', imageUrl: '/p.png', archiveSha256: 'a'.repeat(64), archiveBytes: LARGE_ARCHIVE_BYTES + 5 });
+    expect(chips.at(-1)?.label).toBe('Великий архів');
   });
 });

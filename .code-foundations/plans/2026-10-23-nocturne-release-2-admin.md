@@ -554,6 +554,13 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 | 44 | 6 | Wizard submit and save-draft are blocked while Метадані has unsaved edits (no auto-save) | default | assumed |
 | 45 | 6 | A moderator in the wizard also gets «Опублікувати» (approve) | default | assumed |
 | 46 | 6 | "Latest request wins" in admin tabs is a per-component request counter plus the scenario-id check | Phase 6 review | assumed |
+| 47 | 7 | `/admin` is the dashboard; login and guard fallbacks land on `/admin` | default | assumed |
+| 48 | 7 | Test run: 10 s measurement of the version's `/scenarios/<sha>.zip` in `PlayerHost`, host disposed on every exit, any failure stored as `{error}`; figures clamped and strings truncated (100/300/1000) at `test-run-report.ts` | default | assumed |
+| 49 | 7 | Category reorder uses move up/down buttons sending the full list; a 409 re-reads | default | assumed |
+| 50 | 7 | The one-time token dialog is not dismissible by Escape or the scrim — only «Готово» closes it | default | assumed |
+| 51 | 7 | `testEnabled` defaults to true; `(runTest)` still emitted as a notification | default | assumed |
+| 52 | 7 | A pending proposal card in the queue links to the Файл tab (the admin row carries no pending sha) | default | assumed |
+| 53 | 7 | Publishing a queue card with a failing check or readiness chip asks `confirm()` first | default | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_

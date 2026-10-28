@@ -220,20 +220,21 @@ export class AdminApi {
     return (await this.get<{ categories?: AdminCategory[] }>('/api/categories')).categories ?? [];
   }
 
-  createCategory(input: CategoryInput): Promise<AdminCategory> {
-    return this.post('/api/categories', input);
+  async createCategory(input: CategoryInput): Promise<AdminCategory> {
+    return (await this.post<{ category: AdminCategory }>('/api/categories', input)).category;
   }
 
-  updateCategory(slug: string, input: CategoryInput): Promise<AdminCategory> {
-    return this.put(`/api/categories/${seg(slug)}`, input);
+  async updateCategory(slug: string, input: CategoryInput): Promise<AdminCategory> {
+    return (await this.put<{ category: AdminCategory }>(`/api/categories/${seg(slug)}`, input)).category;
   }
 
   deleteCategory(slug: string): Promise<unknown> {
     return this.delete(`/api/categories/${seg(slug)}`);
   }
 
-  reorderCategories(slugs: string[]): Promise<unknown> {
-    return this.post('/api/categories/reorder', { slugs });
+  /** Every slug exactly once, in the new order; a 409 means the list changed meanwhile (refetch). */
+  async reorderCategories(slugs: string[]): Promise<void> {
+    await this.post('/api/categories/reorder', { slugs });
   }
 
   async keys(): Promise<KeyRow[]> {

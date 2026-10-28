@@ -1,16 +1,8 @@
 // path: src/app/app.routes.ts
 
-import { Route, Routes } from '@angular/router';
+import { Routes } from '@angular/router';
 
 import { adminGuard, loginGuard, moderatorGuard, unsavedChangesGuard } from './pages/admin/admin-guards';
-
-/** A section whose screen comes in a later phase: reachable, titled, and nothing more. */
-function slot(title: string): Pick<Route, 'loadComponent' | 'data'> {
-  return {
-    data: { title },
-    loadComponent: () => import('./pages/admin/admin-slot.component').then(m => m.AdminSlotComponent),
-  };
-}
 
 export const routes: Routes = [
   {
@@ -46,8 +38,12 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./pages/admin/admin-shell/admin-shell.component').then(m => m.AdminShellComponent),
     children: [
-      // The dashboard replaces this redirect; until then the list is the landing page.
-      { path: '', pathMatch: 'full', redirectTo: 'scenarios' },
+      {
+        path: '',
+        pathMatch: 'full',
+        loadComponent: () =>
+          import('./pages/admin/dashboard/dashboard.component').then(m => m.DashboardComponent),
+      },
       {
         path: 'scenarios',
         loadComponent: () =>
@@ -66,9 +62,21 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./pages/admin/upload-wizard/upload-wizard.component').then(m => m.UploadWizardComponent),
       },
-      { path: 'queue', canActivate: [moderatorGuard], ...slot('Черга модерації') },
-      { path: 'categories', canActivate: [moderatorGuard], ...slot('Напрями') },
-      { path: 'access', canActivate: [moderatorGuard], ...slot('Доступ') },
+      {
+        path: 'queue',
+        canActivate: [moderatorGuard],
+        loadComponent: () => import('./pages/admin/queue/queue.component').then(m => m.QueueComponent),
+      },
+      {
+        path: 'categories',
+        canActivate: [moderatorGuard],
+        loadComponent: () => import('./pages/admin/categories/categories.component').then(m => m.CategoriesComponent),
+      },
+      {
+        path: 'access',
+        canActivate: [moderatorGuard],
+        loadComponent: () => import('./pages/admin/access/access.component').then(m => m.AccessComponent),
+      },
       { path: '**', redirectTo: 'scenarios' },
     ],
   },

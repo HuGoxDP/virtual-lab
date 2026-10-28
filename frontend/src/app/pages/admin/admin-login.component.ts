@@ -103,7 +103,7 @@ export class AdminLoginComponent {
     try {
       await this.session.signIn(this.code());
       this.code.set('');
-      await this.router.navigateByUrl('/admin/scenarios');
+      await this.router.navigateByUrl('/admin');
     } catch (err) {
       this.error.set(err instanceof Error ? err.message : 'Не вдалося увійти.');
     } finally {

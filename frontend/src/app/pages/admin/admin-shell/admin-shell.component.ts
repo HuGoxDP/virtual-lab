@@ -54,7 +54,8 @@ export function initials(label: string): string {
 
         <nav class="nav-list" aria-label="Розділи">
           @for (item of nav(); track item.link) {
-            <a class="nav-item" [routerLink]="item.link" routerLinkActive="active" ariaCurrentWhenActive="page">
+            <a class="nav-item" [routerLink]="item.link" routerLinkActive="active" ariaCurrentWhenActive="page"
+               [routerLinkActiveOptions]="{ exact: item.link === '/admin' }">
               <vl-icon [name]="item.icon" size="18" />
               <span class="nav-label">{{ item.label }}</span>
               @if (item.badge) {
@@ -98,6 +99,7 @@ export class AdminShellComponent {
   protected readonly nav = computed<NavItem[]>(() => {
     const moderator = this.session.isModerator();
     return [
+      { label: 'Огляд', link: '/admin', icon: 'gauge' },
       { label: moderator ? 'Усі сценарії' : 'Мої сценарії', link: '/admin/scenarios', icon: 'stack' },
       { label: 'Завантажити', link: '/admin/upload', icon: 'upload-simple' },
       ...(moderator

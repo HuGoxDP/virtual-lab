@@ -181,21 +181,30 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
 - `src/app/pages/admin/` — the new admin (release 2). `/admin/login` (one field, the access code, verified with
   `/api/auth/me` before it is kept) sits outside `<vl-admin-shell>` (sidebar with role-aware items, a queue badge for
   moderators, user card and sign-out; on a narrow screen a top bar and burger open the same sidebar as a drawer).
-  Its children: `/admin` (redirects to the list until the dashboard lands), `/admin/scenarios` (status chips with
+  Its children: `/admin` (the dashboard, `<vl-dashboard>`: role-scoped counts, activity, quick actions; login lands here), `/admin/scenarios` (status chips with
   counts, category filter, table; **client-side filters over the unpaged admin list**; moderators get row selection and
-  a bulk bar showing the server's answer per scenario), `/admin/scenarios/:id/:tab` (`meta` and `publish` built; `files`
-  and `checks` are placeholders until Phase 6) and the slots `upload`, `queue`, `categories`, `access` (last three
-  moderator-only). The **Метадані form** (`<vl-scenario-meta-form [scenario] [role] (saved)>`, reused by the wizard)
+  a bulk bar showing the server's answer per scenario), `/admin/scenarios/:id/:tab` (`meta`, `files`, `checks`, `publish`), `upload` (the wizard) and the moderator-only
+  `queue` (`<vl-queue>`: Очікують / Повернуті / Опрацьовані, check chips, inline publish or return, accept or reject an
+  author's pending archive, recent decisions), `categories` (Напрями: add, move up/down, hide, rename, icon, delete only
+  when empty; a reorder 409 re-reads) and `access` (Доступ: issue, **the token is held only in the one-time dialog's signal**
+  and every way of closing clears it, last use, revoke; revoking one's own key signs out). The **Метадані form** (`<vl-scenario-meta-form [scenario] [role] (saved)>`, reused by the wizard)
   keeps edits apart from the row, so a refetch never wipes typing, and is hidden (not removed) on other tabs so a tab
   switch keeps them; leaving with edits asks (`unsavedChangesGuard`, `beforeunload`). Its live card **is**
   `<vl-scenario-card>`. `author` is a moderator's field (read-only for authors, never sent by them).
   `<vl-scenario-publish>` draws what `transitionsFor(role, status, hasArchive)` offers (`scenario-rules.ts`, which also
   holds the readiness list, the test-run norms and the journal wording) and shows the server's refusal as sent. **The old
   admin and `/admin/legacy` are gone** (release 2, phase 6); an unknown admin path redirects to the list. The **Файл** tab
-  (`<vl-scenario-files>`), the **Перевірка** tab (`<vl-scenario-checks>`; its `(runTest)` stays inert until `testEnabled`) and
+  (`<vl-scenario-files>`), the **Перевірка** tab (`<vl-scenario-checks>`; a moderator's «Запустити тест» runs the version in a sandboxed `PlayerHost` in their browser via `<vl-test-run>`, measures 10 s with `PlayerHost.measure()`, and saves the report; `testEnabled` switches it off) and
   the **wizard** (`/admin/upload`) all upload through `<vl-archive-upload>`: client guards (ZIP, non-empty,
   `maxArchiveBytes`), progress, and cancel or leaving the page abort the request, so no half-created scenario. Author-supplied
   text (manifest fields, archive paths, check notes) is rendered with `{{ }}`, never `innerHTML`.
+  **Test-run numbers are advisory**: they come from the untrusted player realm, so `player/test-run-report.ts` clamps them
+  to the server's ranges and truncates `engineBuild` / `userAgent` to 100 / 300 before posting, and a run that crashes is stored
+  as `{error}` with no numbers. `player/player-config.ts` is the one place with the player URLs and the `PLAYER_HOST_FACTORY`
+  seam (the viewer and the test run share it); the host is always disposed. `ui/modal` is the shared dialog primitive.
+  The admin lists are filtered client-side (documented exception in `docs/code-standards.md`).
+  **Residual risk (follow-up, not fixed here):** `/editor/` still shares the platform origin, so code running there is
+  same-origin with the admin and can read `sessionStorage`.
 - `src/app/services/scenario.service.ts` — catalog state as **signals**, paged fetching (a response for an
   older request is dropped, so the newest filter always wins), `fetchScenarioById` (with `related`), and
   the streamed ZIP download with progress and abort. `fetchScenarioById(id, version?)` with a `version` adds

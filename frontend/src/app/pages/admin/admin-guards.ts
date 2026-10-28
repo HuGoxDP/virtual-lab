@@ -7,7 +7,7 @@ import { AdminSession } from '../../services/admin-session.service';
 import { AdminService } from '../../services/admin.service';
 
 export const LOGIN_URL = '/admin/login';
-const HOME_URL = '/admin/scenarios';
+const HOME_URL = '/admin';
 
 /** Signed in (the code is checked with the server once per page load); else the sign-in screen. */
 export const adminGuard: CanActivateFn = async () => {

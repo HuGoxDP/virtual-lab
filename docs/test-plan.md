@@ -701,6 +701,25 @@ stack built from the branch). The old admin, its `/admin/legacy` route, its styl
 225. [U] Restore after a reload (DW-6.3, review note of phase 5) `admin-session`, `admin-login`: a 5xx or a network failure keeps
      the code and reports the problem on the sign-in screen; a credential rejection still drops it; the next restore asks again.
 
+226. [U] Queue (DW-7.1) `queue.component.spec`, `reviewChips`: Очікують (reviews and proposals, oldest first) / Повернуті / Опрацьовані with
+     counts; a check summary on every card (passes, gaps, «Великий архів»); publish, return with a trimmed note, accept or reject a
+     proposal through the version routes, each followed by a re-read; a refusal shown on its card; one decision at a time; recent
+     decisions from the journal; author text only as text.
+227. [U] Dashboard (DW-7.2) `dashboard.component.spec`, routes: counts of every status as the server scoped them, the queue block for a
+     moderator only, activity as sentences (category and key rows included) linking to the scenario, quick actions by role;
+     `/admin` is the dashboard and login lands there.
+228. [U] Test run (DW-7.5) `scenario-checks` run block, `test-run-report.spec`, `player-config.spec`: archive -> player (fake host) ->
+     measure(10) -> report saved and shown; a failing load, measure or download stores the error, not numbers; a 500-character engine
+     build is posted as 100, user agent 300, figures clamped, a non-number turns the run into an error; cancel and leaving dispose the host.
+229. [U] Напрями (DW-7.3) `categories.component.spec`: add (validation, duplicate refused, form cleared), move up/down sends the whole
+     order, a 409 re-reads the list, hide/show, rename, icon, delete disabled while used, confirm, delete when empty.
+230. [U] Доступ (DW-7.4) `access.component.spec`: issue -> one-time dialog (not dismissible by Escape or scrim), copy and its fallback,
+     closed means gone from the DOM and the page, last use shown, revoke with confirm, revoking one's own key signs out.
+231. [E] Moderation path (DW-7.6, DW-7.1-7.4) `admin-moderation.spec`: moderator issues an author code (shown once) -> author uploads and
+     submits -> moderator publishes from the queue -> catalog has it -> author uploads a new archive -> students still get the old one
+     until the moderator accepts -> revoked code is rejected; dashboard; Напрями add/hide/delete. *Written against a stack built from
+     this branch; see the build report for what was run.*
+
 
 ### 4.11 Golden paths (E2E)
 

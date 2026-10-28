@@ -41,6 +41,11 @@ let params = new HttpParams().set('limit', String(PAGE_SIZE)).set('offset', Stri
 if (category && category !== 'all') params = params.set('category', category);
 ```
 
+**Exception: the admin lists are filtered on the client.** `/admin/scenarios`, the moderation queue and the
+dashboard read the *unpaged* `GET /api/admin/scenarios` (the whole set the principal may see), so a client filter sees
+everything; the rule above exists for the *paged* public catalog. If the admin list ever becomes paged, its filters move
+to the server in the same change.
+
 **No imports from `three` or engine internals** — the app imports only `from 'WebEngineTS/player-host'`
 (never the bare `'WebEngineTS'`: `check-csp-assumptions` fails the build on it, since the page has no import
 map and the engine runs in the player frame); a second Three.js breaks the engine's `instanceof` checks. No engine workaround in this repo: write it up in

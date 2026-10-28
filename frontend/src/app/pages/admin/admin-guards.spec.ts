@@ -61,7 +61,7 @@ describe('admin guards', () => {
     });
 
     it('DW-5.1 sends an author back to the list', async () => {
-      expect(path(await runAs(moderatorGuard, { role: 'author', label: 'A', keyId: 1 }))).toBe('/admin/scenarios');
+      expect(path(await runAs(moderatorGuard, { role: 'author', label: 'A', keyId: 1 }))).toBe('/admin');
     });
 
     it('DW-5.1 sends an anonymous visitor to sign-in', async () => {
@@ -75,7 +75,7 @@ describe('admin guards', () => {
     });
 
     it('skips it for someone already signed in', async () => {
-      expect(path(await runAs(loginGuard, { role: 'author', label: 'A', keyId: 1 }))).toBe('/admin/scenarios');
+      expect(path(await runAs(loginGuard, { role: 'author', label: 'A', keyId: 1 }))).toBe('/admin');
     });
   });
 

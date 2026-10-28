@@ -66,13 +66,13 @@ describe('AdminShellComponent', () => {
 
   it('DW-5.1 an author sees their own list and upload, and no moderator items', async () => {
     await openAs({ role: 'author', label: 'А', keyId: 4 });
-    expect(navLabels()).toEqual(['Мої сценарії', 'Завантажити']);
+    expect(navLabels()).toEqual(['Огляд', 'Мої сценарії', 'Завантажити']);
     expect(root.querySelector('.badge')).toBeNull();
   });
 
   it('DW-5.1 a moderator sees every item, the queue badge and the old interface', async () => {
     await openAs({ role: 'moderator', label: 'Модер', keyId: 1 }, 3);
-    expect(navLabels()).toEqual(['Усі сценарії', 'Завантажити', 'Черга модерації', 'Напрями', 'Доступ']);
+    expect(navLabels()).toEqual(['Огляд', 'Усі сценарії', 'Завантажити', 'Черга модерації', 'Напрями', 'Доступ']);
     expect(root.querySelector('.badge')?.textContent?.trim()).toBe('3');
     expect(root.querySelector('.user-role')?.textContent).toBe('Модератор');
   });

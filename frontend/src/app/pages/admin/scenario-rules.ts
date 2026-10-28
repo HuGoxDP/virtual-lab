@@ -84,6 +84,24 @@ export function readiness(input: ReadinessInput): ReadinessItem[] {
 /** Every item is fine. */
 export const isReady = (items: ReadinessItem[]): boolean => items.every(item => item.level === 'ok');
 
+/** Above this a student's first load is slow enough to be worth saying so (prototype 2h/2k «Великий архів»). */
+export const LARGE_ARCHIVE_BYTES = 50 * 1024 * 1024;
+
+export interface ReviewChip {
+  level: ReadinessLevel;
+  label: string;
+}
+
+/**
+ * The chips on a queue card (prototype 2k): the readiness items, plus a warning for a large archive.
+ * Everything is shown, passes included, so a reviewer sees what was looked at and not only what failed.
+ */
+export function reviewChips(input: ReadinessInput & { archiveBytes?: number | null }): ReviewChip[] {
+  const chips: ReviewChip[] = readiness(input).map(({ level, label }) => ({ level, label }));
+  if ((input.currentVersion?.bytes ?? input.archiveBytes ?? 0) > LARGE_ARCHIVE_BYTES) chips.push({ level: 'warn', label: 'Великий архів' });
+  return chips;
+}
+
 function archiveItem({ currentVersion, archiveSha256 }: ReadinessInput): ReadinessItem {
   const item = (level: ReadinessLevel, label: string): ReadinessItem => ({ key: 'archive', level, label });
   if (!currentVersion && !archiveSha256) return item('bad', 'Немає архіву');
@@ -189,6 +207,12 @@ const EVENTS: Readonly<Record<string, { icon: string; text: string }>> = {
   'version.delete': { icon: 'trash', text: 'Видалено версію архіву' },
   'version.checks': { icon: 'shield-check', text: 'Перезапущено перевірку архіву' },
   'version.test-run': { icon: 'play-circle', text: 'Збережено результат тестового запуску' },
+  'category.create': { icon: 'folders', text: 'Додано категорію' },
+  'category.update': { icon: 'folders', text: 'Змінено категорію' },
+  'category.reorder': { icon: 'folders', text: 'Змінено порядок категорій' },
+  'category.delete': { icon: 'trash', text: 'Видалено категорію' },
+  'key.create': { icon: 'shield-check', text: 'Видано код доступу' },
+  'key.revoke': { icon: 'x', text: 'Відкликано код доступу' },
 };
 
 /** How a journal row reads in "Історія рішень"; an action this build has no sentence for shows its name. */

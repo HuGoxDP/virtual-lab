@@ -1,0 +1,25 @@
+// path: src/app/pages/admin/access/access.component.scss
+
+@use '../shared' as admin;
+
+@include admin.page-head;
+@include admin.banner;
+@include admin.utilities;
+
+:host { display: block; min-width: 0; }
+
+.issue {
+  max-width: 640px; margin-bottom: var(--space-6);
+  form { display: grid; grid-template-columns: 1fr 180px auto; gap: var(--space-4); align-items: end; @media (max-width: 700px) { grid-template-columns: 1fr; } }
+  .banner { margin: var(--space-4) 0 0; }
+}
+.table-wrap { overflow-x: auto; }
+.keys-table { min-width: 720px; td, th { padding: 10px var(--space-3); vertical-align: middle; } }
+.name { overflow-wrap: anywhere; max-width: 280px; }
+.mine { margin-left: 8px; }
+.revoked { opacity: 0.55; }
+.nowrap { white-space: nowrap; }
+.actions { text-align: right; }
+.danger { color: #f0b4b4; }
+.token { font-family: ui-monospace, monospace; margin: var(--space-3) 0; }
+.dialog-actions { display: flex; gap: var(--space-3); justify-content: flex-end; margin-top: var(--space-4); }

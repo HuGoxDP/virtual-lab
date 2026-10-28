@@ -19,6 +19,8 @@ import { Subject, takeUntil } from 'rxjs';
 import { PlayerHost } from 'WebEngineTS/player-host';
 import type { PlayerError, PlayerHostOptions, PlayerLoadSource, PlayerProgress } from 'WebEngineTS/player-host';
 
+import { ENGINE_URL, PLAYER_URL, TRANSCODER_PATH } from '../../player/player-config';
+import type { PlayerHostLike } from '../../player/player-config';
 import { IconComponent } from '../../ui/icon/icon.component';
 import { ScenarioService, DownloadProgress } from '../../services/scenario.service';
 import { TelemetryService } from '../../services/telemetry.service';
@@ -35,15 +37,6 @@ import {
 } from './viewer-format';
 import { ViewerHudComponent } from './viewer-hud.component';
 import { ViewerLoadingComponent } from './viewer-loading.component';
-
-/** Where the sandboxed player, the engine bundle it imports and the KTX2 transcoder are served. */
-const PLAYER_URL = '/player/player.html';
-const ENGINE_URL = '/assets/WebEngineTS.standalone.js';
-/** The engine's default is `/basis/`, which 404s here: Angular publishes `src/assets` under `/assets`. */
-const TRANSCODER_PATH = '/assets/basis/';
-
-/** The slice of `PlayerHost` the viewer drives; a spec substitutes a fake with the same surface. */
-export type PlayerHostLike = Pick<PlayerHost, 'load' | 'restart' | 'pause' | 'resume' | 'measure' | 'dispose'>;
 
 /**
  * Viewer states for the loading UI.

@@ -27,4 +27,19 @@ describe('app routes', () => {
     expect(upload.canDeactivate?.length).toBe(1);
     expect(upload.data).toBeUndefined(); // no longer a placeholder slot
   });
+
+  it('DW-7.2 /admin itself is the dashboard, not a redirect', () => {
+    const home = (admin.children ?? []).find(route => route.path === '' && route.pathMatch === 'full')!;
+    expect(home.redirectTo).toBeUndefined();
+    expect(home.loadComponent).toBeTypeOf('function');
+  });
+
+  it('DW-7.1/7.3/7.4 queue, categories and access are real screens, moderator-only', () => {
+    for (const path of ['queue', 'categories', 'access']) {
+      const route = (admin.children ?? []).find(r => r.path === path)!;
+      expect(route.loadComponent, path).toBeTypeOf('function');
+      expect(route.data, path).toBeUndefined(); // no longer placeholder slots
+      expect(route.canActivate?.length, path).toBe(1);
+    }
+  });
 });

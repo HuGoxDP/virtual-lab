@@ -26,7 +26,7 @@ describe('AdminLoginComponent', () => {
   beforeEach(() => {
     sessionStorage.clear();
     TestBed.configureTestingModule({
-      providers: [provideRouter([{ path: 'admin/scenarios', component: StubPage }, { path: 'catalog', component: StubPage }]),
+      providers: [provideRouter([{ path: 'admin', component: StubPage }, { path: 'catalog', component: StubPage }]),
         provideHttpClient(), provideHttpClientTesting()],
     });
     http = TestBed.inject(HttpTestingController);
@@ -68,7 +68,7 @@ describe('AdminLoginComponent', () => {
     await fixture.whenStable();
 
     expect(sessionStorage.getItem('adminToken')).toBe('good-code');
-    expect(TestBed.inject(Router).url).toBe('/admin/scenarios');
+    expect(TestBed.inject(Router).url).toBe('/admin');
     expect(input().value).toBe('');
   });
 

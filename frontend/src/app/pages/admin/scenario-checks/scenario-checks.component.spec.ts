@@ -1,8 +1,8 @@
 // path: src/app/pages/admin/scenario-checks/scenario-checks.component.spec.ts
 //
-// Test-plan scenario 219 (DW-6.2): the Перевірка tab shows the stored static checks, re-runs them, and reads the
+// Test-plan scenarios 219 (DW-6.2) and 228 (DW-7.5, the test run): the Перевірка tab shows the stored static checks, re-runs them, and reads the
 // stored test run against the norms (<= 5 s, >= 30 FPS, <= 1 GB, 0 errors). The test run itself is Phase 7's:
-// the tab only raises `runTest`.
+// a moderator's test run (Phase 7) goes through a fake player host.
 
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
@@ -11,6 +11,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { AdminRole, ScenarioVersion, TestRun } from '../../../models/admin.model';
 import { AdminScenario } from '../../../models/scenario.model';
 import { AdminService } from '../../../services/admin.service';
+import { PLAYER_HOST_FACTORY } from '../../../player/player-config';
 import { ToastService } from '../../../ui/toast/toast.service';
 import { adminRow, settle, versionRow } from '../admin-testing';
 import { ScenarioChecksComponent } from './scenario-checks.component';
@@ -19,6 +20,9 @@ const GIB = 1024 ** 3;
 const GOOD_RUN: TestRun = { timeToFirstFrameMs: 3800, avgFps: 58, gpuMemoryBytes: 1.4 * GIB, consoleErrors: 0, ranAt: '2026-03-12T09:14:00Z', ranBy: 'Марія', engineBuild: '0.1.0-local.1', userAgent: 'Mozilla/5.0 <b>x</b>' };
 
 describe('ScenarioChecksComponent', () => {
+  // The player host a test run gets; each test of the run block installs its own fake.
+  type FakeHost = { load: ReturnType<typeof vi.fn>; measure: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn>; restart: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; resume: ReturnType<typeof vi.fn> };
+  let host: FakeHost;
   let fixture: ComponentFixture<ScenarioChecksComponent>;
   let root: HTMLElement;
   let http: HttpTestingController;
@@ -27,14 +31,16 @@ describe('ScenarioChecksComponent', () => {
 
   beforeEach(() => {
     sessionStorage.clear();
-    TestBed.configureTestingModule({ providers: [provideHttpClient(), provideHttpClientTesting()] });
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting(), { provide: PLAYER_HOST_FACTORY, useValue: () => host }],
+    });
     TestBed.inject(AdminService).setToken('code');
     http = TestBed.inject(HttpTestingController);
   });
 
   afterEach(() => http.verify());
 
-  async function open(role: AdminRole, versions: ScenarioVersion[], scenario: AdminScenario = adminRow('alpha'), testEnabled = false): Promise<void> {
+  async function open(role: AdminRole, versions: ScenarioVersion[], scenario: AdminScenario = adminRow('alpha'), testEnabled = true): Promise<void> {
     fixture = TestBed.createComponent(ScenarioChecksComponent);
     changed = 0;
     ran = [];
@@ -155,21 +161,134 @@ describe('ScenarioChecksComponent', () => {
     });
   });
 
-  describe('(runTest)', () => {
-    it('DW-6.2 the moderator\'s button is inert until the host enables it', async () => {
-      await open('moderator', [versionRow(1, 'current')]);
-      const button = q<HTMLButtonElement>('[data-action="run-test"]');
-      expect(button.disabled).toBe(true);
-      expect(button.getAttribute('title')).toContain('наступних оновлень');
-      button.click();
+  describe('the test run (DW-6.2, DW-7.5)', () => {
+    const METRICS = { timeToFirstFrameMs: 1800, avgFps: 59, gpuMemoryBytes: 400_000_000, consoleErrors: 0, engineBuild: 'build-7' };
+    const UA = () => navigator.userAgent.slice(0, 300);
+
+    function fakeHost(overrides: Partial<FakeHost> = {}): void {
+      host = { load: vi.fn().mockResolvedValue(undefined), measure: vi.fn().mockResolvedValue(METRICS), dispose: vi.fn(), restart: vi.fn(), pause: vi.fn(), resume: vi.fn(), ...overrides };
+    }
+
+    beforeEach(() => {
+      fakeHost();
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Blob(['zip']), { status: 200 })));
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    const runButton = () => q<HTMLButtonElement>('[data-action="run-test"]');
+    const SAVE = { method: 'POST', url: '/api/scenarios/alpha/versions/1/test-run' };
+    async function start(role: AdminRole = 'moderator', current = versionRow(1, 'current')): Promise<void> {
+      await open(role, [current]);
+      runButton().click();
+      await settle(fixture, 12);
+    }
+    async function answerSave(body: unknown, answer: object): Promise<void> {
+      const req = http.expectOne(SAVE);
+      expect(req.request.body).toEqual(body);
+      req.flush(answer);
+      await settle(fixture, 4);
+    }
+
+    it('DW-6.2 the moderator button is disabled when the host switches the test off, and does nothing', async () => {
+      await open('moderator', [versionRow(1, 'current')], adminRow('alpha'), false);
+      expect(runButton().disabled).toBe(true);
+      runButton().click();
       expect(ran).toEqual([]);
+      expect(root.querySelector('[role="dialog"]')).toBeNull();
     });
 
-    it('DW-6.2 when enabled it raises runTest with the version on screen', async () => {
+    it('the button is enabled by default', async () => {
+      await open('moderator', [versionRow(1, 'current')]);
+      expect(runButton().disabled).toBe(false);
+    });
+
+    it('DW-7.5 runs the archive in the player, measures, saves the report with device and engine build, and shows it', async () => {
       const current = versionRow(1, 'current');
-      await open('moderator', [current], adminRow('alpha'), true);
-      q<HTMLButtonElement>('[data-action="run-test"]').click();
+      await open('moderator', [current]);
+      runButton().click();
       expect(ran).toEqual([current]);
+      await settle(fixture, 12);
+      expect(fetch).toHaveBeenCalledWith(current.url, expect.anything());
+      expect(host.load).toHaveBeenCalledWith({ kind: 'blob', blob: expect.any(Blob) }, { diag: false });
+      expect(host.measure).toHaveBeenCalledWith(10);
+      await answerSave(
+        { ...METRICS, userAgent: UA() },
+        { testRun: { ...METRICS, userAgent: navigator.userAgent, ranBy: 'Марія', ranAt: '2026-03-12T09:14:00Z' } },
+      );
+      expect(root.querySelector('[role="dialog"]')).toBeNull();
+      expect(normRows()[0]).toEqual(['Час до першого кадру', '1,8 с — у нормі', 'до 5 с']);
+      expect(root.textContent).toContain('виконав(ла) Марія');
+      expect(root.textContent).toContain('Рушій: build-7');
+      expect(host.dispose).toHaveBeenCalled();
+    });
+
+    it('DW-7.5 a crashing fixture (the player fails to load) stores the error, not numbers', async () => {
+      fakeHost({ load: vi.fn().mockRejectedValue(new Error('Сценарій упав під час запуску')) });
+      await start();
+      await answerSave(
+        { error: 'Сценарій упав під час запуску', userAgent: UA() },
+        { testRun: { error: 'Сценарій упав під час запуску', ranBy: 'Марія' } },
+      );
+      expect(q('[data-role="run-error"]').textContent).toContain('Сценарій упав під час запуску');
+      expect(host.measure).not.toHaveBeenCalled();
+      expect(host.dispose).toHaveBeenCalled();
+    });
+
+    it('a measurement that rejects is stored as an error too', async () => {
+      fakeHost({ measure: vi.fn().mockRejectedValue(new Error('Сцена не запущена')) });
+      await start();
+      await answerSave({ error: 'Сцена не запущена', userAgent: UA() }, { testRun: { error: 'Сцена не запущена' } });
+      expect(q('[data-role="run-error"]')).not.toBeNull();
+    });
+
+    it('a failed archive download is stored as an error without starting a player', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 404 })));
+      await start();
+      await answerSave({ error: 'Помилка завантаження архіву: 404', userAgent: UA() }, { testRun: { error: 'Помилка завантаження архіву: 404' } });
+      expect(host.load).not.toHaveBeenCalled();
+    });
+
+    it('DW-7.5 an engine build of 500 characters is truncated to 100 before it is posted', async () => {
+      fakeHost({ measure: vi.fn().mockResolvedValue({ ...METRICS, engineBuild: 'E'.repeat(500) }) });
+      await start();
+      const req = http.expectOne(SAVE);
+      expect(req.request.body.engineBuild).toHaveLength(100);
+      req.flush({ testRun: { ...METRICS } });
+      await settle(fixture, 4);
+    });
+
+    it('a figure from the scenario that is not a number is posted as an error, never as figures', async () => {
+      fakeHost({ measure: vi.fn().mockResolvedValue({ ...METRICS, avgFps: 'lots' }) });
+      await start();
+      const req = http.expectOne(SAVE);
+      expect(req.request.body.error).toBeTruthy();
+      expect(req.request.body.avgFps).toBeUndefined();
+      req.flush({ testRun: { error: 'x' } });
+      await settle(fixture, 4);
+    });
+
+    it('cancelling disposes the player and posts nothing', async () => {
+      fakeHost({ measure: vi.fn().mockReturnValue(new Promise(() => undefined)) });
+      await start();
+      q<HTMLButtonElement>('[data-action="cancel-run"]').click();
+      await settle(fixture, 4);
+      expect(host.dispose).toHaveBeenCalled();
+      expect(root.querySelector('[role="dialog"]')).toBeNull();
+      http.expectNone(SAVE);
+    });
+
+    it('leaving the tab mid-run disposes the player', async () => {
+      fakeHost({ measure: vi.fn().mockReturnValue(new Promise(() => undefined)) });
+      await start();
+      fixture.destroy();
+      expect(host.dispose).toHaveBeenCalled();
+    });
+
+    it('a refused save shows the server message', async () => {
+      await start();
+      http.expectOne(SAVE).flush({ error: 'avgFps: число від 0 до 1000' }, { status: 400, statusText: 'x' });
+      await settle(fixture, 4);
+      expect(q('.banner-error').textContent).toContain('avgFps');
     });
   });
 
