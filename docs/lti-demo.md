@@ -97,7 +97,9 @@ docker compose exec moodle-db mariadb -ubn_moodle -plti-demo-moodle-db bitnami_m
 - The platform's nginx sends `X-Frame-Options: SAMEORIGIN` and `frame-ancestors`-style CSP; embedding the
   platform inside a Moodle iframe (deep-link picker, in-course launch) needs those relaxed on the LTI routes. That is
   the LTI code phases' job, not this stand's.
-- Full walkthrough (register tool, pick a lab, launch as a student, grade in the gradebook) is Phase 7.
+- The full walkthrough (register tool, pick a lab, launch as a student, grade in the gradebook) is recorded in
+  "Full walkthrough" at the end of this file. **Open defect found there:** the Deep Linking picker cannot be framed
+  by Moodle (see "Walkthrough findings"); until it is fixed the pick works only in a top-level window.
 - Stand secrets are demo defaults on purpose; never reuse them anywhere reachable.
 - Moodle runs with `sslproxy` only. `reverseproxy` must stay off: the site is reached under the same host name
   inside and outside the proxy, and Moodle answers 500 "Reverse proxy enabled so the server cannot be accessed
@@ -219,3 +221,43 @@ host names mapped to 127.0.0.1, the stand CA); there is no pick page yet, so the
 Result: Moodle created the gradebook line item from the Deep Linking `lineItem` (the plan's MEDIUM-confidence assumption
 held; no first-launch line-item fallback was needed). The activity URL is the tool's launch URL, so Moodle matches the tool
 by domain (`typeid` 0 in the form).
+
+## Full walkthrough (Phase 7, 2026-10-28)
+
+Run on the stand above with real Chromium sessions (Playwright, `*.lti.test` mapped to 127.0.0.1, the stand CA
+trusted for that browser only; no Windows settings touched). Screenshots are in `docs/lti-demo/`. Accounts and URLs are
+the ones in the tables above. Moodle 5.0.2, engine build `0.1.0-local.1793106513927`.
+
+Stand setup done for the walkthrough, in the Moodle UI as `admin` (Manage tools > the tool's pencil):
+*Tool configuration usage* = "Show in activity chooser and as a preconfigured tool" (without it the tool is missing from the
+activity chooser) and *Default launch container* = "New window" (the decision: no iframe launch, no Platform Storage).
+Stale activity "Circuits smoke" (pointed at the non-existent id `circuits`) was deleted with the Moodle CLI
+(`course_delete_module`).
+
+| # | Step | Result | Screenshot |
+|---|---|---|---|
+| 1 | Registration (done in Phase 4) and Manage tools as `admin` | one tool, "Віртуальна 3D Лабораторія", state Active; `lti_registrations` = (`https://moodle.lti.test`, client `FHPGYDKOYPWeRVW`, deployment `1`) | `01-manage-tools.png` |
+| 2a | `teacher`: course LAB101 > Edit mode > Add an activity or resource | the tool is offered in the chooser; selecting it opens the module form with **Select content** | `02-add-activity-chooser.png` |
+| 2b | **Select content** in the form | modal opens **blank**: Chromium logs `Framing 'https://lab.lti.test/' violates ... frame-ancestors 'self'` | `03-select-content-iframe-blocked.png` |
+| 2c | Fallback: the same Deep Linking launch as a top-level window (`/mod/lti/contentitem.php?id=1&course=2`) | `/lti/pick` lists the catalog; picking "Електричні кола" and *Додати до курсу* posts to `/api/lti/deep-link`, Moodle accepts the signed JWT at `contentitem_return.php` and returns `toolurl`, `custom scenario_id=electric-circuits`, `grade_modgrade_point 100`, `lineitemresourceid electric-circuits` | `04-lti-pick-catalog.png`, `05-lti-pick-selected.png` |
+| 2d | Fallback: create the activity from those values | Moodle CLI `add_moduleinfo` (same fallback as Phase 5; the return page is written for the iframe, so the form cannot be completed from a top-level window). cmid 8 "Електричні кола (демо)", gradebook item grademax 100 | `06-student2-course.png` (before) |
+| 3 | `student2` opens cmid 8 from the course | Moodle opens a new window; `lab.lti.test/play/electric-circuits?lti=1`, task panel "розв'язано 0 з 4", button «Здати». Tasks solved by dragging the engine's sliders in the player (series: R2 20 to 10 Ом at 12 В gives 0,2 А; single lamp: EMF 12 to 15 В gives 0,5 А): "розв'язано 2 з 4". «Здати» shows "Ваш результат: 50 з 100", «Так, здати» | `07-student2-launch-task-panel.png`, `08-student2-tasks-solved.png`, `09-student2-submit-confirm.png`, `10-student2-submitted.png` |
+| 4 | Gradebook | grader report: `student2` 50.00 in "Електричні кола (демо)", `student` 85.00 in "Електричні кола" (Phase 5 smoke). DB: `mdl_grade_grades` itemid 8, `student2`, rawgrade 50, finalgrade 50, rawgrademax 100 | `11-gradebook-grader-report.png` |
+| 5 | Relaunch cmid 8 as `student2` | "Роботу здано, оцінка 50 з 100", no submit button (0 buttons in the DOM) | `12-student2-relaunch-submitted.png` |
+| 6 | Non-graded: Molecules.zip published through the admin API (`POST /api/catalog`, `POST /api/scenarios/molecules/archive`; `scenarios.graded = false`); picked through the same Deep Linking launch (`scenario_id=molecules`), activity cmid 9; `student2` presses «Завершити» (no confirmation) | "Роботу здано, оцінка 100 з 100"; grader report shows 100.00 | `14-molecules-student2-finish-button.png`, `15-molecules-student2-finished.png`, `11-gradebook-grader-report.png` |
+| 7 | `teacher` launches cmid 8 | instructor session: "Режим перегляду: здавати роботу може лише студент.", no submit button | `13-instructor-view-mode.png` |
+
+Platform side after the run (`lti_sessions`, 17 rows): `sub`, `role`, `context_id`, `resource_link_id`, `scenario_id`,
+`message_type`, `expires_at` (+4 h); no names, e-mails or grades (`docs/privacy.md`).
+
+### Walkthrough findings
+
+- **Open defect: the Deep Linking picker is not frameable.** Moodle 5 opens "Select content" as a modal *iframe*
+  (there is no new-window option for it). The launch itself is frameable (`/api/lti/` sends no `X-Frame-Options`), but it
+  redirects to the SPA route `/lti/pick`, which the platform's nginx serves with `frame-ancestors 'self'`
+  (`nginx/csp.conf`). So the teacher's pick works only as a top-level window, not "without leaving Moodle". Fixing it needs a
+  decision (which origins may frame the page: `https:` or the registered issuers; and `lti_session` is a third-party cookie
+  inside that iframe, blocked by Safari/Firefox ETP, so it needs `Partitioned` or Platform Storage). The resource launch
+  (student, instructor) is unaffected: it uses a new window.
+- The 4-hour session means a student who keeps the lab open longer than `LTI_SESSION_TTL_SECONDS` gets the "Сесія LTI
+  завершилась" message and must relaunch from Moodle.

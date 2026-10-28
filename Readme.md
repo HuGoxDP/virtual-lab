@@ -167,6 +167,7 @@ cp .env.example .env
 | FRONTEND_PORT | Зовнішній порт сайту |
 | TELEMETRY_RATE_LIMIT | Необов'язково: скільки телеметричних запитів з однієї адреси за 15 хв (за замовчуванням 300) |
 | MAX_ARCHIVE_BYTES | Необов'язково: максимальний розмір архіву в байтах (за замовчуванням 209715200 = 200 MiB). Більший архів — відповідь 413. nginx приймає до 512 MiB (`client_max_body_size`), тож піднімаючи ліміт вище, змініть і nginx |
+| LTI_PUBLIC_URL / LTI_REGISTRATION_SECRET | Необов'язково, для роботи в Moodle: публічна `https`-адреса платформи й секрет (≥ 16 символів) у посиланні реєстрації. Поки `LTI_PUBLIC_URL` порожній, `/api/lti` відповідає 503. Решта (`LTI_SESSION_TTL_SECONDS`, `LTI_RATE_LIMIT`, ключ інструмента) — у `.env.example` |
 
 ### Content Security Policy
 
@@ -200,6 +201,23 @@ cp .env.example .env
    # потім оновіть DB_PASSWORD у .env і перезапустіть бекенд
    docker compose up -d backend
    ```
+
+### Робота як LTI-інструмент (Moodle)
+
+Платформа вміє працювати інструментом LTI 1.3: адміністратор Moodle реєструє її одним посиланням, викладач обирає
+лабораторну з каталогу платформи, студент відкриває її з курсу без окремого входу, натискає «Здати» («Завершити» для
+сценарію без завдань), а оцінка потрапляє в журнал Moodle.
+
+1. У `.env` задайте `LTI_PUBLIC_URL` (лише `https`) і `LTI_REGISTRATION_SECRET`, перезапустіть backend.
+2. Moodle: Site administration > Plugins > Activity modules > External tool > Manage tools; у полі *Tool URL or
+   registration URL* вставте `https://<платформа>/api/lti/register?secret=<LTI_REGISTRATION_SECRET>` і натисніть
+   *Add LTI Advantage*; потім активуйте інструмент. Після реєстрації змініть секрет.
+3. У налаштуваннях інструмента: «Show in activity chooser», контейнер запуску «New window», надсилання імені й пошти «Never».
+4. Сценарій оцінюється, якщо в його `manifest.json` стоїть `"graded": true` (Circuits); без цього ключа кнопка «Завершити»
+   дає 100 з 100.
+
+Платформа не зберігає оцінок, імен і пошти — див. [`docs/privacy.md`](docs/privacy.md). Локальний стенд Moodle + HTTPS і
+записаний повний прогін (зі знімками екрана): [`docs/lti-demo.md`](docs/lti-demo.md).
 
 ### Публікація сценарію (через `/admin`)
 
