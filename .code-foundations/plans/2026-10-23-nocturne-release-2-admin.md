@@ -2,7 +2,7 @@
 **Created:** 2026-10-23
 **Status:** in-progress
 **Started:** 2026-10-27 12:37
-**Current Phase:** 6
+**Current Phase:** 7
 **Superseded in part (Phase 1):** by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
 **Complexity:** complex
 **Review cadence:** 2
@@ -588,3 +588,10 @@ Summary: The moderator's backend is complete — category CRUD/reorder/visibilit
 - [x] Committed
 Commit: d5c9674
 Summary: The new admin frame is live — `/admin/login` by personal code (`AdminSession`, sessionStorage only), `<vl-admin-shell>` with role-aware nav and a 390 px drawer, `/admin/scenarios` list with status/category filters and a moderator bulk bar, `/admin/scenarios/:id/:tab` with the reusable `<vl-scenario-meta-form>` (live catalog card, readiness, preview upload) and the Публікація tab (`transitionsFor` mirrors the backend table, audit history); `AdminApi` covers every Phase 2–4 route; Файл/Перевірка tabs and upload/queue/categories/access are slots; the old admin lives at `/admin/legacy` (moderators); e2e helpers take a key; frontend 500/500, build + check:csp green; e2e `admin-workflow` and five changed specs not yet run.
+
+### Phase 6: Admin UI — files, checks and upload wizard (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (interrupted once by an API session limit; the same agent resumed)
+- [x] REVIEW: Verification passed (attempt 2 — attempt 1 failed: the Публікація history had no stale-response guard, an edge case this phase carried)
+- [x] Committed
+Commit: 8889615
+Summary: Authors can now upload end to end in the new admin — the Файл tab (`scenario-files`: shared `<vl-archive-upload>` with abortable progress, versions by role, contents, pending banner with `?draft=` link and decisions), the Перевірка tab (`scenario-checks`: stored checks + re-run, test run vs `TEST_NORMS`, an inert «Тестовий запуск» behind `testEnabled` with a `(runTest)` output for Phase 7) and the `/admin/upload` wizard over `from-archive`; tabs guard against stale responses; `AdminSession.restore()` survives transient failures; the legacy admin, `/admin/legacy` and `_legacy.scss` are deleted; frontend 598/598, build + check:csp green; e2e `admin-upload-wizard`, `admin-files-tab`, rewritten `admin-golden-path` not yet run.
