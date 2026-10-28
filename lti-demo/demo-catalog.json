@@ -1,0 +1,24 @@
+{
+  "scenarios": [
+    {
+      "id": "electric-circuits",
+      "archive": "Circuits.zip",
+      "title": "Електричні кола",
+      "description": "Чотири схеми, які студент збирає повзунками",
+      "fullDescription": "",
+      "category": "physics",
+      "categoryLabel": "Фізика",
+      "version": "1.0.0"
+    },
+    {
+      "id": "molecules",
+      "archive": "Molecules.zip",
+      "title": "Молекулярні моделі",
+      "description": "Кулестрижневі моделі 46 молекул",
+      "fullDescription": "",
+      "category": "chemistry",
+      "categoryLabel": "Хімія",
+      "version": "1.0.0"
+    }
+  ]
+}

@@ -84,6 +84,26 @@ docker compose exec platform-api node -e 'fetch("https://moodle.lti.test/login/i
 # course and accounts
 docker compose exec moodle-db mariadb -ubn_moodle -plti-demo-moodle-db bitnami_moodle -e "select shortname from mdl_course; select username from mdl_user"
 ```
+## Reset before a demo (one command)
+
+```powershell
+cd virtual-lab\lti-demo
+.\reset-demo.ps1        # idempotent; never runs `down -v`; Windows PowerShell 5.1 or pwsh 7
+```
+
+What it does, in order: waits for the containers to be healthy; reruns `moodle/seed.php` (course, `teacher`/`student`/`student2`,
+enrolments); runs `moodle/reset.php` as the web user (deletes every `lti` activity of LAB101, which removes its gradebook
+items and grades; asserts the tool is Active, "Show in activity chooser" and default launch container "New window", fixing
+them if not); creates or updates the two scenarios of `demo-catalog.json` (`electric-circuits`, graded, from
+`ScenarioCreator/ReleaseScenarios/Circuits.zip`; `molecules`, from `Molecules.zip`), publishes them, uploads the archives
+through `POST /api/scenarios/:id/archive` and repairs the category labels (the API keeps a stored label, so this one step is
+SQL, with the text passed as hex of its UTF-8 bytes); purges `lti_sessions` / `lti_states` (registrations and the tool key
+stay); checks `GET /api/catalog`. It reaches the platform with `curl.exe --resolve` and the stand CA, so it needs neither the
+hosts entry nor the trusted CA. Other catalog rows are reported, never deleted. Use `-ReleaseDir <folder>` if the
+ScenarioCreator checkout is elsewhere. Not scriptable: the tool *registration* itself (a missing one stops the script with
+a pointer to "Register the tool in Moodle" below) and the one-time hosts/CA steps. The demo script and the values that solve the
+Circuits tasks: [`lti-demo-cheatsheet.md`](lti-demo-cheatsheet.md).
+
 ## Where things are in Moodle
 
 - **Manage tools** (LTI tool registration): Site administration > Plugins > Activity modules > External tool >
@@ -267,6 +287,7 @@ Platform side after the run (`lti_sessions`, 17 rows): `sub`, `role`, `context_i
   Firefox (their own cookie protections), only Chromium. The resource launch (student, instructor) still uses a
   new window and is unaffected.
 - Stand note: the Molecules entry shows as "???????????" in the picker; its title is stored as question marks
-  (a data problem of the stand's catalog, probably written through a non-UTF-8 client; not the picker's).
+  (a data problem of the stand's catalog, probably written through a non-UTF-8 client; not the picker's). Fixed
+  2026-10-28 by `lti-demo/reset-demo.ps1`: the title and the stored category label are rewritten from `demo-catalog.json`.
 - The 4-hour session means a student who keeps the lab open longer than `LTI_SESSION_TTL_SECONDS` gets the message "Сесію Moodle завершено. Відкрийте
   роботу знову з курсу в Moodle, щоб здати її." (`lti-submit.component.ts`) and must relaunch from Moodle.

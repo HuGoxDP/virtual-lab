@@ -217,7 +217,8 @@ cp .env.example .env
    дає 100 з 100.
 
 Платформа не зберігає оцінок, імен і пошти — див. [`docs/privacy.md`](docs/privacy.md). Локальний стенд Moodle + HTTPS і
-записаний повний прогін (зі знімками екрана): [`docs/lti-demo.md`](docs/lti-demo.md).
+записаний повний прогін (зі знімками екрана): [`docs/lti-demo.md`](docs/lti-demo.md). Підготовка до показу: скидання
+стенда однією командою `lti-demo\reset-demo.ps1` і шпаргалка — [`docs/lti-demo-cheatsheet.md`](docs/lti-demo-cheatsheet.md).
 
 ### Публікація сценарію (через `/admin`)
 
