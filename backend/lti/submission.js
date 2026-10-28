@@ -5,12 +5,15 @@
 // Knows nothing about Express: throws `LtiError`, returns plain objects.
 
 const { LtiError } = require('./http');
-const { pinnedUrl, getAccessToken, readResult, postScore } = require('./grades');
+const { pinnedUrl, getAccessToken, forgetAccessToken, readResult, postScore } = require('./grades');
 
 const GONE = 'Лабораторну знято';
 
 /** Submissions currently in flight, so a double click cannot post twice before the first answer is known. */
 const inFlight = new Set();
+
+/** Anything but an `LtiError` out of the grade calls is our own failure (an unloadable tool key, a bug). */
+const UNAVAILABLE = 'Оцінювання тимчасово недоступне на сервері. Спробуйте пізніше';
 
 const clamp01 = value => Math.min(1, Math.max(0, value));
 
@@ -32,18 +35,33 @@ function resolveScore(graded, raw) {
   return clamp01(raw);
 }
 
-/** Token + existing result for a session's line item. Any failure is a 502 and claims nothing. */
+/** Identifies one learner's work on one line item: the key of the in-flight guard and of the Result cache. */
+const workKey = lti => JSON.stringify([lti.issuer, lti.clientId, lti.sub, lti.lineitemUrl]);
+
+/** What to log and answer for a failure that is not an `LtiError`: names the kind, never the message (may hold key material). */
+const describeUnexpected = err => `${err?.name ?? 'Error'}${err?.code ? ` ${err.code}` : ''}`;
+
+/**
+ * Token + existing result for a session's line item. Any failure is a 502 and claims nothing; one that is not an
+ * `LtiError` is passed on as is (callers decide whether it degrades or becomes a 503). A failed Results call drops
+ * the cached token: it may be the reason.
+ */
 async function lookUpResult(lti, registration, deps) {
   pinnedUrl(lti.lineitemUrl, registration, 'line item'); // before a token is requested for nothing
   const token = await getAccessToken(registration, deps);
-  const existing = await readResult({ lineitemUrl: lti.lineitemUrl, sub: lti.sub, token }, registration, deps);
-  return { token, existing };
+  try {
+    const existing = await readResult({ lineitemUrl: lti.lineitemUrl, sub: lti.sub, token }, registration, deps);
+    return { token, existing };
+  } catch (err) {
+    forgetAccessToken(registration, deps);
+    throw err;
+  }
 }
 
 /**
  * Answer for `GET /api/lti/session`. A failing LMS must not hide the lab, so a failed Result read degrades to
  * `submitted: null` (logged); `submit` asks again and is the authority.
- * @param {object} deps `{ store, fetch, signToolJwt }`
+ * @param {object} deps `{ store, fetch, signToolJwt, cache }` (`cache` from grade-cache.js, optional)
  */
 async function describeSession(lti, deps) {
   const scenario = lti.scenarioId ? await deps.store.getScenario(lti.scenarioId) : null;
@@ -52,13 +70,21 @@ async function describeSession(lti, deps) {
   if (isLearnerOnResource(lti) && lti.lineitemUrl) {
     const registration = await deps.store.getRegistration(lti.issuer, lti.clientId);
     if (registration) {
-      try {
-        const { existing } = await lookUpResult(lti, registration, deps);
-        if (existing !== null) submitted = { score: existing };
-      } catch (err) {
-        if (!(err instanceof LtiError)) throw err;
-        console.warn(`[LTI] session: could not read the result (${err.status}): ${err.detail}`);
+      const key = workKey(lti);
+      const remembered = deps.cache?.results.get(key);
+      let existing = remembered?.value ?? null;
+      if (!remembered) {
+        const ticket = deps.cache?.results.begin();
+        try {
+          ({ existing } = await lookUpResult(lti, registration, deps));
+          deps.cache?.results.set(key, existing, ticket);
+        } catch (err) {
+          // Degrade, whatever failed: the lab must open. Only an LtiError's detail is safe to print whole.
+          if (err instanceof LtiError) console.warn(`[LTI] session: could not read the result (${err.status}): ${err.detail}`);
+          else console.error(`[LTI] session: could not read the result, unexpected ${describeUnexpected(err)}`);
+        }
       }
+      if (existing !== null) submitted = { score: existing };
     }
   }
 
@@ -90,15 +116,28 @@ async function submitScore(lti, rawScore, deps) {
 
   const score = resolveScore(scenario.graded, rawScore);
 
-  const key = JSON.stringify([lti.issuer, lti.clientId, lti.sub, lti.lineitemUrl]);
+  const key = workKey(lti);
   if (inFlight.has(key)) throw new LtiError(409, 'Роботу вже здають. Зачекайте відповіді', 'duplicate submit in flight');
   inFlight.add(key);
   try {
+    // Always asks the LMS: the Result cache serves `describeSession` only, a stale "not submitted" must not
+    // let a second grade through. The cached token may be reused.
     const { token, existing } = await lookUpResult(lti, registration, deps);
     if (existing !== null) {
+      deps.cache?.results.delete(key);
       throw new LtiError(409, 'Роботу вже здано', `result already present (${existing})`, { score: existing });
     }
-    await postScore({ lineitemUrl: lti.lineitemUrl, sub: lti.sub, score, token }, registration, deps);
+    try {
+      await postScore({ lineitemUrl: lti.lineitemUrl, sub: lti.sub, score, token }, registration, deps);
+    } catch (err) {
+      forgetAccessToken(registration, deps);
+      throw err;
+    }
+    deps.cache?.results.delete(key);
+  } catch (err) {
+    throw err instanceof LtiError
+      ? err
+      : new LtiError(503, UNAVAILABLE, `grade passback failed, unexpected ${describeUnexpected(err)}`);
   } finally {
     inFlight.delete(key);
   }

@@ -150,7 +150,7 @@ async function createFakePlatform() {
     /** Signs `claims` as the platform. `alg`, `key`, `kid`, `exp` are for forging. */
     async sign(claims, { key = privateKey, alg = 'RS256', kid = 'fake-1', exp = '5m', iat = true } = {}) {
       const jwt = new SignJWT(claims).setProtectedHeader({ alg, kid });
-      if (iat) jwt.setIssuedAt();
+      if (iat) jwt.setIssuedAt(iat === true ? undefined : iat);
       if (exp) jwt.setExpirationTime(exp);
       return jwt.sign(key);
     },

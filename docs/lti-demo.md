@@ -146,9 +146,22 @@ The platform backend is an LTI 1.3 tool (`backend/lti/`, mounted at `/api/lti`; 
 | `GET /api/lti/register?secret=...` | Dynamic Registration (Moodle appends `openid_configuration` and `registration_token`) |
 | `GET\|POST /api/lti/login` | OIDC initiation |
 | `POST /api/lti/launch` | `id_token` validation, session cookie `lti_session`, redirect to `/play/:id?lti=1` or `/lti/pick` |
-| `GET /api/lti/session` | `{ scenarioId, role, messageType, graded, submitted: { score } \| null }`; `submitted` is asked of Moodle (AGS Results) |
+| `GET /api/lti/session` | `{ scenarioId, role, messageType, graded, submitted: { score } \| null }`; `submitted` is asked of Moodle (AGS Results), remembered in memory for 30 s per learner and line item; `null` also when that lookup fails for any reason (Moodle down, tool key unreadable) |
 | `POST /api/lti/submit` | JSON `{ score? }` (0..1): the learner's score to the Moodle gradebook, once (Phase 5) |
 | `POST /api/lti/deep-link` | JSON or form `{ scenarioId }`: the teacher's pick, answered as an auto-submit page to Moodle (Phase 5) |
+
+Hardening notes (no API shape changed):
+
+- **`iat` window.** A launch `id_token` is accepted only when its `iat` is at most 60 s in the future and at most 10 min
+  old (the login state's lifetime), besides the usual `exp` check; otherwise 401.
+- **Client address for the rate limit.** `TRUST_PROXY` (default `1`, the production nginx) says how many proxies sit
+  before the API, so `X-Forwarded-For` yields the real client and each user has their own `/api/lti` bucket. The stand
+  sets `2` (TLS proxy + nginx); `0` means no proxy and the header is ignored. `true`/`all` are refused. See `.env.example`.
+- **Moodle calls are cached in memory** (per process, bounded): the AGS access token per registration until a minute before
+  its `expires_in`, and the "already submitted?" answer per learner and line item for 30 s. A successful submit or a 409
+  drops that answer. `POST /submit` always re-reads the Result from Moodle; only the token may be reused.
+- **Degradation.** If the grade lookup fails for a reason that is not Moodle's (e.g. the tool key cannot be loaded),
+  `GET /session` still answers with `submitted: null`; `POST /submit` answers `503 { error }` instead of a bare 500.
 
 After changing backend code or nginx, rebuild only the platform: `docker compose up -d --build platform-api platform-web`,
 then `docker compose restart proxy` (the proxy caches the old container address of `platform-web`).

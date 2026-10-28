@@ -71,12 +71,21 @@ function lineItemSubUrl(lineitemUrl, suffix) {
   return url;
 }
 
+const tokenCacheKey = (registration, tokenUrl) =>
+  JSON.stringify([registration.issuer, registration.clientId, tokenUrl.href, SCOPES]);
+
 /**
  * Client-credentials access token for the AGS scopes: the tool authenticates with a signed JWT assertion.
+ * Reused from `cache.tokens` until shortly before the platform's `expires_in` (a reply without one is not cached).
+ * @param {{ fetch: Function, signToolJwt: Function, cache?: object }} deps
  * @returns {Promise<string>}
  */
-async function getAccessToken(registration, { fetch: fetchFn, signToolJwt }) {
+async function getAccessToken(registration, { fetch: fetchFn, signToolJwt, cache }) {
   const tokenUrl = pinnedUrl(registration.authTokenUrl, registration, 'token endpoint');
+  const cacheKey = tokenCacheKey(registration, tokenUrl);
+  const cached = cache?.tokens.get(cacheKey);
+  if (cached) return cached;
+
   const assertion = await signToolJwt({
     iss: registration.clientId,
     sub: registration.clientId,
@@ -96,9 +105,17 @@ async function getAccessToken(registration, { fetch: fetchFn, signToolJwt }) {
   }, 'token');
   if (status !== 200) throw fail(`token endpoint answered HTTP ${status}`);
 
-  const token = parseJson(text, 'token endpoint').access_token;
+  const reply = parseJson(text, 'token endpoint');
+  const token = reply.access_token;
   if (typeof token !== 'string' || !token) throw fail('token endpoint returned no access_token');
+  cache?.tokens.set(cacheKey, token, Number(reply.expires_in));
   return token;
+}
+
+/** Drops the cached token, e.g. after the platform refused it, so the next call asks for a fresh one. */
+function forgetAccessToken(registration, { cache }) {
+  const tokenUrl = parseHttpsUrl(registration.authTokenUrl);
+  if (tokenUrl) cache?.tokens.delete(tokenCacheKey(registration, tokenUrl));
 }
 
 /**
@@ -143,4 +160,4 @@ async function postScore({ lineitemUrl, sub, score, token }, registration, { fet
   if (status < 200 || status >= 300) throw fail(`score endpoint answered HTTP ${status}`);
 }
 
-module.exports = { pinnedUrl, getAccessToken, readResult, postScore, SCOPES, SCORE_MAXIMUM, RESULT_MEDIA_TYPE, SCORE_MEDIA_TYPE };
+module.exports = { pinnedUrl, getAccessToken, forgetAccessToken, readResult, postScore, SCOPES, SCORE_MAXIMUM, RESULT_MEDIA_TYPE, SCORE_MEDIA_TYPE };

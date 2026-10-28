@@ -10,6 +10,8 @@
 
 const { jwtVerify, errors: joseErrors } = require('jose');
 
+const { STATE_TTL_SECONDS } = require('./config');
+
 const {
   LtiError, STATE_COOKIE_PREFIX, SESSION_COOKIE,
   randomToken, sha256Hex, safeEqual, parseCookies, serializeCookie, str, parseHttpsUrl,
@@ -43,6 +45,10 @@ const INSTRUCTOR_ROLES = new Set([
 ]);
 
 const CLOCK_TOLERANCE_SECONDS = 5;
+/** An `iat` further ahead than this is a platform clock gone wrong (or a forged token), not skew. */
+const IAT_FUTURE_SKEW_SECONDS = 60;
+/** A launch token is consumed within seconds of being minted; the login state it answers lives this long. */
+const IAT_MAX_AGE_SECONDS = STATE_TTL_SECONDS;
 const SCENARIO_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
 /** `instructor` when any role is an instructor/administrator URI, else `learner` (least privilege). */
@@ -228,6 +234,14 @@ async function completeLaunch(body, cookieHeader, { store, config, getKeyResolve
     }));
   } catch (err) {
     throw mapVerifyError(err);
+  }
+
+  // `exp` alone lets a platform mint (or an old capture keep) a token that is "valid" for days: bound `iat` too.
+  const nowSeconds = Date.now() / 1000;
+  if (typeof payload.iat !== 'number' || payload.iat > nowSeconds + IAT_FUTURE_SKEW_SECONDS
+      || payload.iat < nowSeconds - IAT_MAX_AGE_SECONDS) {
+    throw new LtiError(401, 'Токен запуску LTI видано у неприпустимий час. Відкрийте завдання з LMS ще раз',
+      `iat ${payload.iat} outside the accepted window (-${IAT_MAX_AGE_SECONDS}s..+${IAT_FUTURE_SKEW_SECONDS}s)`);
   }
 
   // `aud` may be a list; then the spec requires azp to name us.

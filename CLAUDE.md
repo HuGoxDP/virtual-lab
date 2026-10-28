@@ -322,7 +322,7 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 527 tests; needs docker-compose.test.yml up
+cd backend  && npm test           # 561 tests; needs docker-compose.test.yml up
 cd frontend && npx ng test --no-watch   # 342 tests
 cd frontend && npm run test:scripts     # the CSP checker's own tests (node --test)
 cd frontend && npm run build && npm run check:csp   # built index.html: no import map, nonce or blob: script-src

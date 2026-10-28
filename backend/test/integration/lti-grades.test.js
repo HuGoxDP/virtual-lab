@@ -28,25 +28,35 @@ let available = false;
 let platform;
 let app;
 let toolJwks;
+/** Moves the grade caches' clock forward without sleeping. */
+let clockSkewMs = 0;
 
-test.before(async () => {
-  available = await isAvailable(pool);
-  if (!available) return;
-  await prepareSchema(pool);
-  platform = await createFakePlatform();
+/** A fresh router, and with it fresh grade caches: nothing a test cached reaches the next one. */
+function buildApp() {
   const instance = express();
   instance.use('/api/lti', createLtiRouter({
     pool,
     env: { LTI_PUBLIC_URL: TOOL, LTI_TOOL_PRIVATE_KEY: TOOL_KEY },
     fetch: platform.fetch,
     getKeyResolver: platform.getKeyResolver,
+    now: () => Date.now() + clockSkewMs,
   }));
-  app = instance;
+  return instance;
+}
+
+test.before(async () => {
+  available = await isAvailable(pool);
+  if (!available) return;
+  await prepareSchema(pool);
+  platform = await createFakePlatform();
+  app = buildApp();
   toolJwks = createLocalJWKSet((await request(app).get('/api/lti/jwks')).body);
 });
 
 test.beforeEach(async () => {
   if (!available) return;
+  clockSkewMs = 0;
+  app = buildApp();
   await truncateAll(pool);
   await pool.query(`
     INSERT INTO lti_registrations (issuer, client_id, deployment_ids, auth_login_url, auth_token_url, jwks_uri)
@@ -619,4 +629,233 @@ test('submit: a registration that vanished is 403', async t => {
 
   assertError(await submit(cookie), 403);
   assertError(await pick(await teacherSession()), 403);
+});
+
+// ── Caching of the Moodle lookups (H.3) ──────────────
+
+const RESULT_TTL_SECONDS = 30;
+const holdsGrade = (score = 100) => [{ userId: 'user-1', resultScore: score, resultMaximum: 100 }];
+
+test('H_3 two quick session reads cost one Results request and one token request', async t => {
+  if (skipUnlessDb(t)) return;
+  const cookie = await makeSession();
+
+  const first = await sessionInfo(cookie);
+  const second = await sessionInfo(cookie);
+
+  assert.equal(first.status, 200);
+  assert.deepEqual(second.body, first.body);
+  assert.equal(platform.ags.resultRequests.length, 1);
+  assert.equal(platform.ags.tokenRequests.length, 1);
+});
+
+test('H_3 a session read is served from memory for 30 s, then asks Moodle again', async t => {
+  if (skipUnlessDb(t)) return;
+  const cookie = await makeSession();
+  await sessionInfo(cookie);
+
+  clockSkewMs = (RESULT_TTL_SECONDS - 1) * 1000;
+  platform.ags.results.body = holdsGrade();
+  assert.equal((await sessionInfo(cookie)).body.submitted, null, 'still the remembered answer');
+  assert.equal(platform.ags.resultRequests.length, 1);
+
+  clockSkewMs = (RESULT_TTL_SECONDS + 1) * 1000;
+  assert.deepEqual((await sessionInfo(cookie)).body.submitted, { score: 1 });
+  assert.equal(platform.ags.resultRequests.length, 2);
+});
+
+test('H_3 a remembered "already submitted" is served from memory too', async t => {
+  if (skipUnlessDb(t)) return;
+  platform.ags.results.body = holdsGrade(80);
+  const cookie = await makeSession();
+
+  await sessionInfo(cookie);
+  const again = await sessionInfo(cookie);
+
+  assert.deepEqual(again.body.submitted, { score: 0.8 });
+  assert.equal(platform.ags.resultRequests.length, 1);
+});
+
+test('H_3 a successful submit invalidates the remembered answer: the next session read shows the grade', async t => {
+  if (skipUnlessDb(t)) return;
+  const cookie = await makeSession();
+  assert.equal((await sessionInfo(cookie)).body.submitted, null);
+
+  const res = await submit(cookie, { score: 0.5 });
+  assert.equal(res.status, 200);
+  platform.ags.results.body = holdsGrade(50); // what Moodle now holds
+
+  assert.deepEqual((await sessionInfo(cookie)).body.submitted, { score: 0.5 });
+});
+
+test('H_3 submit stays the authority: it re-reads Moodle even when a session read remembered "not submitted"', async t => {
+  if (skipUnlessDb(t)) return;
+  const cookie = await makeSession();
+  assert.equal((await sessionInfo(cookie)).body.submitted, null);
+  const readsBefore = platform.ags.resultRequests.length;
+  platform.ags.results.body = holdsGrade(70); // graded elsewhere (e.g. by the teacher) in the meantime
+
+  const res = await submit(cookie, { score: 1 });
+
+  assertError(res, 409, ['score']);
+  assert.equal(res.body.score, 0.7);
+  assert.equal(platform.ags.resultRequests.length, readsBefore + 1, 'submit did ask Moodle');
+  assert.equal(platform.ags.scores.length, 0);
+});
+
+test('H_3 a 409 invalidates the remembered answer', async t => {
+  if (skipUnlessDb(t)) return;
+  const cookie = await makeSession();
+  await sessionInfo(cookie);
+  platform.ags.results.body = holdsGrade(70);
+  assert.equal((await submit(cookie)).status, 409);
+
+  assert.deepEqual((await sessionInfo(cookie)).body.submitted, { score: 0.7 });
+});
+
+test('H_3 a session read that began before a submit cannot store its stale answer after it', async t => {
+  if (skipUnlessDb(t)) return;
+  const cookie = await makeSession();
+  platform.ags.results.delayMs = 150;
+
+  const slowRead = sessionInfo(cookie).then(res => res); // reads "not submitted" from Moodle, slowly
+  await new Promise(resolve => setTimeout(resolve, 40));
+  platform.ags.results.delayMs = 0;
+  const posted = await submit(cookie, { score: 1 }); // 409 or 200: either way invalidates
+  assert.ok([200, 409].includes(posted.status));
+  platform.ags.results.body = holdsGrade();
+  await slowRead;
+
+  assert.deepEqual((await sessionInfo(cookie)).body.submitted, { score: 1 });
+});
+
+test('H_3 the AGS token is reused across learners and endpoints, a session read and a submit share it', async t => {
+  if (skipUnlessDb(t)) return;
+  const alice = await makeSession();
+  const bob = await makeSession({ sub: 'user-2' });
+
+  await sessionInfo(alice);
+  await sessionInfo(bob);
+  await submit(alice, { score: 1 });
+
+  assert.equal(platform.ags.resultRequests.length, 3);
+  assert.equal(platform.ags.tokenRequests.length, 1, 'one token for all of it');
+  assert.equal(platform.ags.scores.length, 1);
+});
+
+test('H_3 the token is refreshed shortly before its expires_in', async t => {
+  if (skipUnlessDb(t)) return;
+  platform.ags.token = { status: 200, body: { access_token: 'ags-token-1', expires_in: 3600 } };
+  const cookie = await makeSession();
+  await sessionInfo(cookie);
+
+  clockSkewMs = (3600 - 120) * 1000; // inside the lifetime and outside the 30 s result memory
+  await sessionInfo(cookie);
+  assert.equal(platform.ags.tokenRequests.length, 1, 'still valid, reused');
+
+  clockSkewMs = (3600 - 30) * 1000; // within the safety margin of the expiry
+  await sessionInfo(cookie);
+  assert.equal(platform.ags.tokenRequests.length, 2, 'refreshed before it could die mid-request');
+});
+
+test('H_3 a token without a usable expires_in is never kept', async t => {
+  if (skipUnlessDb(t)) return;
+  const cookie = await makeSession();
+
+  for (const body of [{ access_token: 'ags-token-1' }, { access_token: 'ags-token-1', expires_in: 30 },
+    { access_token: 'ags-token-1', expires_in: 'soon' }]) {
+    platform.ags.token = { status: 200, body };
+    platform.ags.tokenRequests.length = 0;
+    clockSkewMs += (RESULT_TTL_SECONDS + 1) * 1000;
+    await sessionInfo(cookie);
+    clockSkewMs += (RESULT_TTL_SECONDS + 1) * 1000; // the remembered result is gone, the token must be asked for again
+    await sessionInfo(cookie);
+    assert.equal(platform.ags.tokenRequests.length, 2, JSON.stringify(body));
+  }
+});
+
+test('H_3 a token Moodle refuses is dropped, so the next call fetches a new one', async t => {
+  if (skipUnlessDb(t)) return;
+  const cookie = await makeSession();
+  platform.ags.token = { status: 200, body: { access_token: 'revoked', expires_in: 3600 } };
+  const refused = await sessionInfo(cookie); // fake Moodle answers 401 to any token but ags-token-1
+  assert.equal(refused.body.submitted, null);
+  assert.equal(platform.ags.tokenRequests.length, 1);
+
+  platform.ags.token = { status: 200, body: { access_token: 'ags-token-1', expires_in: 3600 } };
+  platform.ags.results.body = holdsGrade();
+  const recovered = await sessionInfo(cookie);
+
+  assert.deepEqual(recovered.body.submitted, { score: 1 }, 'a failed read is not remembered');
+  assert.equal(platform.ags.tokenRequests.length, 2);
+});
+
+test('H_3 caches are per router: a second router starts cold', async t => {
+  if (skipUnlessDb(t)) return;
+  const cookie = await makeSession();
+  await sessionInfo(cookie);
+
+  app = buildApp();
+  await sessionInfo(cookie);
+
+  assert.equal(platform.ags.resultRequests.length, 2);
+});
+
+// ── A failure that is not the LMS's (H.4) ────────────
+
+/** A router whose tool key cannot be loaded: signing the token assertion throws a plain Error, not an LtiError. */
+const BROKEN_KEY = 'SECRET-KEY-MATERIAL-that-is-not-a-pem';
+function buildAppWithBrokenKey() {
+  const instance = express();
+  instance.use('/api/lti', createLtiRouter({
+    pool,
+    env: { LTI_PUBLIC_URL: TOOL, LTI_TOOL_PRIVATE_KEY: BROKEN_KEY },
+    fetch: platform.fetch,
+    getKeyResolver: platform.getKeyResolver,
+  }));
+  return instance;
+}
+
+/** Runs `fn` with console output captured; returns everything that was logged, as one string. */
+async function captureLogs(fn) {
+  const lines = [];
+  const originals = { warn: console.warn, error: console.error, log: console.log };
+  for (const level of Object.keys(originals)) console[level] = (...args) => lines.push(args.join(' '));
+  try {
+    await fn();
+  } finally {
+    Object.assign(console, originals);
+  }
+  return lines.join('\n');
+}
+
+test('H_4 session degrades to submitted null when the tool key cannot be loaded, and logs no secret', async t => {
+  if (skipUnlessDb(t)) return;
+  app = buildAppWithBrokenKey();
+  const cookie = await makeSession();
+  let res;
+
+  const logs = await captureLogs(async () => { res = await sessionInfo(cookie); });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, {
+    scenarioId: 'circuits', role: 'learner', messageType: 'resource', graded: true, submitted: null,
+  });
+  assert.match(logs, /\[LTI\] session/);
+  assert.doesNotMatch(logs, /SECRET-KEY-MATERIAL/);
+  noAgsCalls();
+});
+
+test('H_4 submit answers a proper 503 {error} when the tool key cannot be loaded, and stays retryable', async t => {
+  if (skipUnlessDb(t)) return;
+  app = buildAppWithBrokenKey();
+  const cookie = await makeSession();
+
+  for (let attempt = 0; attempt < 2; attempt++) { // the second also proves the in-flight guard was released
+    let res;
+    const logs = await captureLogs(async () => { res = await submit(cookie, { score: 1 }); });
+    assertError(res, 503);
+    assert.doesNotMatch(logs, /SECRET-KEY-MATERIAL/);
+  }
+  assert.equal(platform.ags.scores.length, 0);
 });

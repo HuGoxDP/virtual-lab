@@ -13,6 +13,7 @@ const storage = require('./storage');
 const { validateScenarioArchive } = require('./archive-validation');
 const { validateFeatures } = require('./catalog-input');
 const { createLtiRouter } = require('./lti');
+const { parseTrustProxy } = require('./trust-proxy');
 
 const app = express();
 
@@ -25,9 +26,12 @@ if (process.env.CORS_ORIGIN) {
 
 app.use(express.json());
 
-// nginx sits in front and sets X-Forwarded-For; without this the rate limiter
-// would bucket every client under the proxy's address.
-app.set('trust proxy', 1);
+// nginx sits in front and sets X-Forwarded-For; without this the rate limiters
+// would bucket every client under the proxy's address. TRUST_PROXY names how many
+// proxies really are in front (default 1): trusting more lets a client choose its own address.
+const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
+if (trustProxy.warning) console.warn(`[API] ${trustProxy.warning}`);
+app.set('trust proxy', trustProxy.value);
 
 // ── Подключение к PostgreSQL ─────────────────────────
 const pool = new Pool({

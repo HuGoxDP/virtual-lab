@@ -25,6 +25,7 @@ const { createRemoteJWKSet } = require('jose');
 
 const { readConfig } = require('./config');
 const { createKeyStore } = require('./keys');
+const { createGradeCache } = require('./grade-cache');
 const { createStore } = require('./store');
 const { createRequireLtiSession } = require('./session');
 const { registerTool } = require('./registration');
@@ -79,15 +80,16 @@ function registrationDonePage(nonce) {
 
 /**
  * @param {{ pool: import('pg').Pool, env?: NodeJS.ProcessEnv,
- *           fetch?: typeof fetch, getKeyResolver?: (jwksUri: string) => unknown }} deps
- *   `fetch` and `getKeyResolver` exist so tests can stand in for the platform; production uses the defaults.
+ *           fetch?: typeof fetch, getKeyResolver?: (jwksUri: string) => unknown, now?: () => number }} deps
+ *   `fetch`, `getKeyResolver` and `now` (the clock of the grade caches) exist so tests can stand in for the platform; production uses the defaults.
  * @returns {import('express').Router}
  */
-function createLtiRouter({ pool, env = process.env, fetch: fetchFn = globalThis.fetch, getKeyResolver }) {
+function createLtiRouter({ pool, env = process.env, fetch: fetchFn = globalThis.fetch, getKeyResolver, now }) {
   const config = readConfig(env);
   const store = createStore(pool);
   const keys = createKeyStore(env);
   const resolveKeys = getKeyResolver ?? createRemoteKeyResolverCache();
+  const gradeCache = createGradeCache({ now });
 
   current = { store, keys, config, requireLtiSession: createRequireLtiSession(store) };
 
@@ -198,7 +200,7 @@ function createLtiRouter({ pool, env = process.env, fetch: fetchFn = globalThis.
     }
     next();
   };
-  const grades = () => ({ store, fetch: fetchFn, signToolJwt });
+  const grades = () => ({ store, fetch: fetchFn, signToolJwt, cache: gradeCache });
 
   // ── GET /api/lti/session ──
   router.get('/session', sessionBound, handle('session', async (req, res) => {

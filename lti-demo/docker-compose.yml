@@ -141,6 +141,9 @@ services:
       # The backend calls https://moodle.lti.test (token endpoint, AGS) and must trust the demo CA.
       NODE_EXTRA_CA_CERTS: /certs/ca.crt
       # LTI tool: public origin, the secret in the registration URL (demo value), key kept on a volume.
+      # Two proxies in a row (TLS proxy, then platform-web's nginx): the client is the XFF entry before both,
+      # so every user gets a rate-limit bucket of their own instead of one shared by the TLS proxy's address.
+      TRUST_PROXY: 2
       LTI_PUBLIC_URL: https://lab.lti.test
       LTI_REGISTRATION_SECRET: ${LTI_REGISTRATION_SECRET:-lti-demo-registration-secret}
       LTI_TOOL_KEY_FILE: /srv/lti/tool-key.pem

@@ -44,6 +44,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       PORT: ${API_PORT}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      # How many proxies sit in front of the API (nginx = 1): which X-Forwarded-For entry the rate limiters believe.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       # LTI 1.3 tool (optional; /api/lti answers 503 while LTI_PUBLIC_URL is empty). See .env.example.
       LTI_PUBLIC_URL: ${LTI_PUBLIC_URL:-}
       LTI_REGISTRATION_SECRET: ${LTI_REGISTRATION_SECRET:-}

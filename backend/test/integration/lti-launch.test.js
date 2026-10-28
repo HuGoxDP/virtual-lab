@@ -420,6 +420,29 @@ test('DW_4_1 forged, malformed and out-of-policy tokens are rejected without a s
   }
 });
 
+test('H_1 iat is bounded: the future beyond 60 s of skew and a token older than 10 min are 401', async t => {
+  if (skipUnlessDb(t)) return;
+  const now = () => Math.floor(Date.now() / 1000);
+
+  const cases = [
+    ['iat 5 minutes ahead', now() + 300, 401],
+    ['iat 2 minutes ahead', now() + 120, 401],
+    ['iat 11 minutes old', now() - 11 * 60, 401],
+    ['iat a day old', now() - 86400, 401],
+    ['iat 30 s ahead (clock skew)', now() + 30, 303],
+    ['iat 9 minutes old', now() - 9 * 60, 303],
+    ['iat now', now(), 303],
+  ];
+  for (const [name, iat, status] of cases) {
+    await t.test(name, async () => {
+      await truncateAll(pool); await saveRegistration();
+      const res = await launchWith(nonce => resourceClaims(nonce), { sign: { iat } });
+      if (status === 303) return assert.equal(res.status, 303);
+      await assertRejected(res, 401);
+    });
+  }
+});
+
 test('DW_4_1 requests without a usable state cookie are refused, and a refusal does not burn the state', async t => {
   if (skipUnlessDb(t)) return;
 
