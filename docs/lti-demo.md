@@ -268,5 +268,5 @@ Platform side after the run (`lti_sessions`, 17 rows): `sub`, `role`, `context_i
   new window and is unaffected.
 - Stand note: the Molecules entry shows as "???????????" in the picker; its title is stored as question marks
   (a data problem of the stand's catalog, probably written through a non-UTF-8 client; not the picker's).
-- The 4-hour session means a student who keeps the lab open longer than `LTI_SESSION_TTL_SECONDS` gets the "Сесія LTI
-  завершилась" message and must relaunch from Moodle.
+- The 4-hour session means a student who keeps the lab open longer than `LTI_SESSION_TTL_SECONDS` gets the message "Сесію Moodle завершено. Відкрийте
+  роботу знову з курсу в Moodle, щоб здати її." (`lti-submit.component.ts`) and must relaunch from Moodle.

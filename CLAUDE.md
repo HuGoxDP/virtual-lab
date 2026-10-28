@@ -322,8 +322,8 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 348 tests; needs docker-compose.test.yml up
-cd frontend && npx ng test --no-watch   # 293 tests
+cd backend  && npm test           # 527 tests; needs docker-compose.test.yml up
+cd frontend && npx ng test --no-watch   # 342 tests
 cd frontend && npm run test:scripts     # the CSP checker's own tests (node --test)
 cd frontend && npm run build && npm run check:csp   # built index.html: no import map, nonce or blob: script-src
 cd e2e      && npm test           # 104 Playwright tests (a few skip: by design, or editor-csp without its stack);
