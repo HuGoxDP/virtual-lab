@@ -2,7 +2,7 @@
 **Created:** 2026-10-23
 **Status:** in-progress
 **Started:** 2026-10-27 12:37
-**Current Phase:** 5
+**Current Phase:** 6
 **Superseded in part (Phase 1):** by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
 **Complexity:** complex
 **Review cadence:** 2
@@ -334,7 +334,7 @@ reused by Phase 6's wizard.
   `/admin/legacy`; unit + e2e.
 - OUT: running a test (Phase 7).
 
-**Edge cases:** cancelling an upload aborts it and leaves no half-created scenario; leaving the wizard after
+**Edge cases:** `AdminSession.restore()` keeps the code on a transient failure (5xx, network) and drops it only on a credential rejection; the Публікація history and the new tabs ignore a stale response after the scenario id changes (Phase 5 review notes); cancelling an upload aborts it and leaves no half-created scenario; leaving the wizard after
 step 1 keeps the draft (listed); a 409 for an upload in review explains withdrawal; an archive over
 `maxArchiveBytes` is refused before upload.
 **Depends on:** Phase 5 | **Unlocks:** Phase 7
@@ -571,3 +571,10 @@ Summary: Scenarios carry `status` (draft/review/published/rejected) driven by `a
 - [x] Committed
 Commit: e687272
 Summary: The moderator's backend is complete — category CRUD/reorder/visibility (`backend/routes/categories.js`; hidden categories unpublish everywhere via `PUBLIC_ROW`), a second content-addressed preview store (`createStore` in `backend/storage.js`, `/previews/` in nginx, `inspectPreview` by magic bytes, `img-src` without `https:`, migration 010), per-version checks/contents/test-run (`backend/routes/version-tools.js`; test runs accept numbers or `{error}`), bulk per-id actions, scoped dashboard/history, extended admin rows (`ownerLabel`, `pendingVersionId`, `currentVersion` + `checked`) and `/api/config.preview`; `backend/Dockerfile` now copies `routes/`; backend 1237/1237, frontend 309/309, CSP script tests 8/8; `csp.spec.ts` changed but not yet run.
+
+### Phase 5: Admin UI — sign-in, shell, list, metadata and publication (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (interrupted once by an API session limit; the same agent resumed)
+- [x] REVIEW: Verification passed (attempt 2 — attempt 1 failed: the unsaved-changes guard fired on same-scenario tab switches, masked by jsdom's unimplemented `confirm`; eight `AdminApi` methods and `AdminSlotComponent` lacked tests)
+- [x] Committed
+Commit: d5c9674
+Summary: The new admin frame is live — `/admin/login` by personal code (`AdminSession`, sessionStorage only), `<vl-admin-shell>` with role-aware nav and a 390 px drawer, `/admin/scenarios` list with status/category filters and a moderator bulk bar, `/admin/scenarios/:id/:tab` with the reusable `<vl-scenario-meta-form>` (live catalog card, readiness, preview upload) and the Публікація tab (`transitionsFor` mirrors the backend table, audit history); `AdminApi` covers every Phase 2–4 route; Файл/Перевірка tabs and upload/queue/categories/access are slots; the old admin lives at `/admin/legacy` (moderators); e2e helpers take a key; frontend 500/500, build + check:csp green; e2e `admin-workflow` and five changed specs not yet run.
