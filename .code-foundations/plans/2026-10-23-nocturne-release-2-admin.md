@@ -1,8 +1,10 @@
 # Plan: Release 2 — admin, roles and scenario isolation on Nocturne
 **Created:** 2026-10-23
-**Status:** in-progress
+**Status:** complete
 **Started:** 2026-10-27 12:37
 **Current Phase:** 7
+**Completed:** 2026-10-29 00:30
+**Duration:** ~36 h wall clock (2026-10-27 12:37 → 2026-10-29), much of it waiting on API session limits
 **Superseded in part (Phase 1):** by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
 **Complexity:** complex
 **Review cadence:** 2
@@ -609,3 +611,14 @@ Summary: Authors can now upload end to end in the new admin — the Файл tab
 - [x] Committed
 Commit: a62d4a4
 Summary: The moderator workflow is complete — `/admin` dashboard, queue with inline decisions, Напрями, Доступ (one-time token dialog), and the «Тестовий запуск» on Перевірка via `PlayerHost` with `test-run-report.ts` as the trust boundary; the viewer shares `player/player-config.ts`; frontend 712/712, build + check:csp green; `admin-moderation` e2e 3/3 on the `vl-r2` stack (:8047).
+
+### VERIFY (2026-10-28/29)
+- Verification stack: compose project `vl-r2` (`C:/Users/HuGox/vl-r2/override.yml`, own containers/volumes, :8047) built from the worktree; catalog filled by `publish:release` (upload → approve).
+- Full e2e on HEAD `6146547`: 106 passed, 19 skipped, 8 failed → one fix agent, committed per phase:
+- [x] fix(phase-2) 50ceb76 — width-limited text fields validated (400, not 500)
+- [x] fix(phase-3) 35ad0c8 — scenario-page e2e publishes its rows; 390 px catalog fix reapplied from main d8a3222
+- [x] fix(phase-5) 40fd8c0 — `.table-wrap` position: relative (390 px overflow); e2e follows the dashboard landing, 255-char title
+- [x] fix(phase-6) feaf3cf — wizard step numbers aria-hidden; Перевірка e2e expects the enabled test run
+- [x] fix(phase-7) 2d06b67 — the same table fix on Доступ and Напрями
+- [x] Blocking re-review of the fixes: PASS (`…-phase-verify-review.md`)
+- Suite on HEAD `2d06b67`: backend 1269/1269; frontend 715/715; build + check:csp green; e2e 114 passed, 19 skipped, 0 failed (cited from the verify review's run).
