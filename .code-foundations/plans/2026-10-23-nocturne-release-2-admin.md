@@ -602,3 +602,10 @@ Summary: The new admin frame is live — `/admin/login` by personal code (`Admin
 - [x] Committed
 Commit: 8889615
 Summary: Authors can now upload end to end in the new admin — the Файл tab (`scenario-files`: shared `<vl-archive-upload>` with abortable progress, versions by role, contents, pending banner with `?draft=` link and decisions), the Перевірка tab (`scenario-checks`: stored checks + re-run, test run vs `TEST_NORMS`, an inert «Тестовий запуск» behind `testEnabled` with a `(runTest)` output for Phase 7) and the `/admin/upload` wizard over `from-archive`; tabs guard against stale responses; `AdminSession.restore()` survives transient failures; the legacy admin, `/admin/legacy` and `_legacy.scss` are deleted; frontend 598/598, build + check:csp green; e2e `admin-upload-wizard`, `admin-files-tab`, rewritten `admin-golden-path` not yet run.
+
+### Phase 7: Admin UI — moderation (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (interrupted twice by API session limits; the same agent resumed)
+- [x] REVIEW: Verification passed (attempt 2 — attempt 1 failed: the DW-7.6 e2e did not accept the queue's publish-anyway `confirm`, so the path never ran; spec fixed, now green against a stack built from this branch)
+- [x] Committed
+Commit: a62d4a4
+Summary: The moderator workflow is complete — `/admin` dashboard, queue with inline decisions, Напрями, Доступ (one-time token dialog), and the «Тестовий запуск» on Перевірка via `PlayerHost` with `test-run-report.ts` as the trust boundary; the viewer shares `player/player-config.ts`; frontend 712/712, build + check:csp green; `admin-moderation` e2e 3/3 on the `vl-r2` stack (:8047).
