@@ -8,7 +8,7 @@
 
 :host { display: block; min-width: 0; }
 
-.table-wrap { overflow-x: auto; margin-bottom: var(--space-6); }
+.table-wrap { position: relative; overflow-x: auto; margin-bottom: var(--space-6); }
 .categories-table { min-width: 760px; td, th { vertical-align: middle; padding: 10px var(--space-3); } }
 .order { white-space: nowrap; }
 .rot-up { display: inline-block; transform: rotate(90deg); }

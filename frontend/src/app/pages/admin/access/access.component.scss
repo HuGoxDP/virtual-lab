@@ -13,7 +13,7 @@
   form { display: grid; grid-template-columns: 1fr 180px auto; gap: var(--space-4); align-items: end; @media (max-width: 700px) { grid-template-columns: 1fr; } }
   .banner { margin: var(--space-4) 0 0; }
 }
-.table-wrap { overflow-x: auto; }
+.table-wrap { position: relative; overflow-x: auto; }
 .keys-table { min-width: 720px; td, th { padding: 10px var(--space-3); vertical-align: middle; } }
 .name { overflow-wrap: anywhere; max-width: 280px; }
 .mine { margin-left: 8px; }
