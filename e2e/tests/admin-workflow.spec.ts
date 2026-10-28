@@ -2,12 +2,12 @@
 //
 // test-plan.md scenarios 214-216 (nocturne release 2, phase 5: DW-5.1, DW-5.5): the new admin driven through its
 // UI with personal keys - sign in, edit, submit - plus what the unit suite cannot see: the real viewport at 390 px,
-// a 300-character title in the real layout, a key revoked under a running session, and the browser's own dialogs.
+// a column-wide (255-character) title in the real layout, a key revoked under a running session, and the browser's own dialogs.
 //
 //   214  sign-in by code, name and role, sign-out (the old `/admin/legacy` is gone: admin-files-tab.spec.ts, #224)
 //   215  author: sign in -> edit Метадані -> submit for review (archive seeded through the key-parameterised helper)
 //   216  unsaved edits survive a tab switch and ask before leaving; a revoked key returns to sign-in with the reason;
-//        390 px drawer; a 300-character unbroken title keeps the layout
+//        390 px drawer; a 255-character (column maximum) unbroken title keeps the layout
 //
 // Needs the full stack and the bootstrap ADMIN_TOKEN (it issues and revokes the keys it uses), like the rest of the suite.
 
@@ -73,7 +73,7 @@ test.describe('admin workflow', () => {
         await expect(page.locator('.sidebar').getByRole('link', { name: 'Черга модерації' })).toHaveCount(0);
 
         await page.goto('/admin/queue');
-        await expect(page).toHaveURL(/\/admin\/scenarios$/); // a moderator-only section sends an author home
+        await expect(page).toHaveURL(/\/admin$/); // a moderator-only section sends an author home: the dashboard (decision #47)
       } finally {
         await revokeKey(key.id);
       }
@@ -118,6 +118,8 @@ test.describe('admin workflow', () => {
 
     test('DW-5.5 sign in -> edit -> submit for review', async ({ page }) => {
       await signInThroughForm(page, key.token);
+      await expect(page).toHaveURL(/\/admin$/); // sign-in lands on the dashboard (decision #47)
+      await openSection(page, 'Мої сценарії');
 
       const listRow = page.locator('tr.row', { hasText: id });
       await expect(listRow).toBeVisible();
@@ -217,11 +219,11 @@ test.describe('admin workflow', () => {
       await expect(page.locator('.sidebar')).toBeHidden();
     });
 
-    test('DW-5.5 a 300-character unbroken title keeps the layout in the list and the editor', async ({ page }) => {
+    test('DW-5.5 a 255-character (column maximum) unbroken title keeps the layout in the list and the editor', async ({ page }) => {
       const id = uniqueScenarioId('long');
-      const title = 'Ж'.repeat(300);
+      const title = 'Ж'.repeat(255);
       try {
-        await createScenario({ id, title, category: 'test', categoryLabel: 'Test', author: 'Я'.repeat(300) });
+        await createScenario({ id, title, category: 'test', categoryLabel: 'Test', author: 'Я'.repeat(255) });
         await signedInWith(page, ADMIN_TOKEN);
 
         await page.goto('/admin/scenarios');

@@ -153,6 +153,14 @@ describe('ScenarioListComponent', () => {
       expect(cell.classList.contains('wrap')).toBe(true);
     });
 
+    it('DW-5.5 the scrolling table wrapper is a positioned box, so a visually-hidden header cell cannot widen the page at 390 px', () => {
+      // `.visually-hidden` is position:absolute; with no positioned ancestor its box escapes the wrapper's overflow clip
+      // and the viewport gains a horizontal scroll bar.
+      const style = getComputedStyle(root.querySelector<HTMLElement>('.table-wrap')!);
+      expect(style.position).toBe('relative');
+      expect(style.overflowX).toBe('auto');
+    });
+
     it('"Новий сценарій" goes to the upload section', () => {
       expect(root.querySelector('.page-head a.btn-primary')?.getAttribute('href')).toBe('/admin/upload');
     });

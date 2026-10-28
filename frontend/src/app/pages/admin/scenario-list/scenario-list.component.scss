@@ -41,7 +41,7 @@
 }
 .bulk-results-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 
-.table-wrap { overflow-x: auto; }
+.table-wrap { position: relative; overflow-x: auto; }
 .scenario-table { min-width: 860px; td, th { padding: 10px var(--space-3); vertical-align: middle; } }
 .select-col { width: 34px; }
 .row.selected { background-color: color-mix(in srgb, var(--color-accent) 8%, transparent); }

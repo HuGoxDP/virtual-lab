@@ -555,7 +555,10 @@ independently of `auth.js`. Scenarios 17-23 above still hold for the bootstrap m
 181. [I] Author field rules (DW-2.4): each forbidden field (`scenarioUrl`, `manifestUrl`, `imageUrl`, `author`, `isPublished`,
      `archive*`) -> 400 on POST and PUT; unknown `category` -> 400 and no category row; `categoryLabel` ignored; POST by
      an author -> unpublished, owned, `author` = key label; another author's scenario -> 403; moderator POST keeps
-     create-on-unknown-slug; upload into one's own unpublished scenario 201, into a published one 403.
+     create-on-unknown-slug; upload into one's own unpublished scenario 201, into a published one 403. Text widths
+     (found at VERIFY, `catalog-text-widths.test.js` + `catalog-input.test.js`): `id` 100, `title` 255, `category` 50,
+     `categoryLabel` 100, `version` 20, `author` 255, `manifestUrl` 300 - each stored at the width, 400 with a Ukrainian
+     message one over (never a 500), a non-string 400, widths counted in characters not UTF-16 units, on POST and PUT.
 182. [I] Audit (DW-2.5): one `audit_events` row per authenticated mutation (create, update, delete, archive, key create and
      revoke, non-dry-run GC); none for reads, telemetry, dry runs or refused requests; the row rolls back with a failed
      transaction; history survives deleting the scenario.
@@ -660,12 +663,12 @@ Specs: `frontend/src/app/services/{admin-api,admin-session,admin}.service.spec.t
 213. [U] Edit page (DW-5.5): unsaved edits survive Метадані -> Публікація -> Метадані; leaving asks (stay / go) and a clean
      page does not; `beforeunload`; refetch after a save; not found, error and retry; a 300-character title.
 214. [E] Sign-in (DW-5.1): bootstrap shows name and role, the code never reaches `localStorage` or the URL, sign-out clears the
-     session; an author gets the author menu and a moderator-only section sends them to the list; revoked and
+     session; an author gets the author menu and a moderator-only section sends them to the dashboard (`/admin`, decision #47); revoked and
      empty codes. *Written and type-checked; run by the orchestrator at VERIFY.*
 215. [E] Author flow (DW-5.5): sign in as a key -> own row only -> edit Метадані (live card, counter) -> save -> Публікація ->
      submit -> status and history; the archive is seeded through the key-parameterised helper. *Not run.*
 216. [E] Edge cases (DW-5.5): unsaved edits across a tab switch and the browser prompt; a key revoked mid-session and on reload
-     returns to sign-in with the reason; at 390 px the sidebar is a drawer; a 300-character title keeps the layout. *Not run.*
+     returns to sign-in with the reason; at 390 px the sidebar is a drawer; a 255-character (the `title` column maximum; a 300-character one is now a 400, scenario 181) unbroken title keeps the layout. *Not run.*
 
 #### Nocturne release 2, phase 6: admin UI - files, checks and the upload wizard
 

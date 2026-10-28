@@ -41,7 +41,7 @@
 .banner { margin-bottom: 0; }
 
 .decisions { margin-top: var(--space-4); }
-.table-wrap { overflow-x: auto; }
+.table-wrap { position: relative; overflow-x: auto; }
 .row-title { color: var(--color-text); text-decoration: none; overflow-wrap: anywhere; &:hover { color: var(--color-accent); } }
 .decision { display: inline-flex; align-items: center; gap: 6px; }
 .decision-note { display: block; margin-top: 2px; font-size: 12.5px; font-style: italic; overflow-wrap: anywhere; color: color-mix(in srgb, var(--color-text) 70%, transparent); }
