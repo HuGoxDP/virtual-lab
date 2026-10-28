@@ -1,0 +1,31 @@
+// path: src/app/pages/viewer/lti-submit.component.scss
+
+// Top-right, clear of the HUD's exit button and title (left) and of its bottom-right controls.
+:host {
+  position: absolute;
+  top: var(--space-6);
+  right: var(--space-6);
+  z-index: 55;
+  max-width: min(360px, calc(100vw - 2 * var(--space-6)));
+}
+
+.lti-panel {
+  padding: var(--space-4) var(--space-6);
+  background: color-mix(in srgb, var(--color-bg) 82%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: 13.5px;
+  line-height: 1.45;
+
+  p { margin: 0 0 var(--space-4); }
+}
+
+.lti-submitted strong { color: var(--color-accent); }
+
+.lti-ready { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-3); }
+
+.lti-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+
+.lti-error { margin: 0; color: var(--color-accent); }

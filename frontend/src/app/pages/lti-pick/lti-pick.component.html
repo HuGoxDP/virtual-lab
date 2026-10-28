@@ -1,0 +1,47 @@
+<!-- path: src/app/pages/lti-pick/lti-pick.component.html -->
+
+<main class="pick">
+  <h1 class="pick-title">Оберіть лабораторну роботу</h1>
+
+  @switch (access()) {
+    @case ('loading') {
+      <p class="text-muted pick-status" role="status">Завантаження…</p>
+    }
+    @case ('denied') {
+      <p class="pick-denied" role="alert">{{ message() }}</p>
+    }
+    @case ('allowed') {
+      <!-- A native POST: the answer is a full page that posts on to Moodle, so it must be a top-level navigation. -->
+      <!-- The radios sit outside the form so only `scenarioId` is posted; the hidden input and the button join it by id. -->
+      <form id="pick-form" method="post" action="/api/lti/deep-link">
+        <input type="hidden" name="scenarioId" [value]="selectedId() ?? ''" />
+      </form>
+
+      <div class="pick-form">
+        <input class="input pick-search" type="search" aria-label="Пошук сценаріїв" placeholder="Пошук сценаріїв"
+               (input)="onSearch($event)" />
+
+        @if (catalogError(); as error) {
+          <p class="pick-denied" role="alert">{{ error }}</p>
+        } @else if (isLoaded() && scenarios().length === 0) {
+          <p class="text-muted pick-status">Нічого не знайдено.</p>
+        }
+
+        <ul class="pick-list" role="radiogroup" aria-label="Сценарії">
+          @for (scenario of scenarios(); track scenario.id) {
+            <li>
+              <label class="pick-row" [class.is-selected]="selectedId() === scenario.id">
+                <input type="radio" name="vl-pick" [value]="scenario.id" [checked]="selectedId() === scenario.id"
+                       (change)="select(scenario.id)" />
+                <span class="pick-name">{{ scenario.title }}</span>
+                <span class="text-muted pick-category">{{ scenario.categoryLabel }}</span>
+              </label>
+            </li>
+          }
+        </ul>
+
+        <button type="submit" form="pick-form" class="btn btn-primary pick-submit" [disabled]="!canSubmit()">Додати до курсу</button>
+      </div>
+    }
+  }
+</main>

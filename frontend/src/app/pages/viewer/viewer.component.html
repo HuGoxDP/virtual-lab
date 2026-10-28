@@ -20,6 +20,11 @@
     />
   }
 
+  <!-- LMS launch only (?lti=1): submit / finish, view mode, the grade. Never rendered on the public viewer. -->
+  @if (ltiMode() && state() === 'running') {
+    <vl-lti-submit [result]="ltiResult()" />
+  }
+
   <!--
     Which engine build the player runs. Only under ?diag=1. The page holds no engine, so the build is
     asked of the player once the scenario is running and appears about a second later; there is

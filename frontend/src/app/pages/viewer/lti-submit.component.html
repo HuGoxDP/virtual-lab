@@ -1,0 +1,42 @@
+<!-- path: src/app/pages/viewer/lti-submit.component.html -->
+
+@switch (mode()) {
+  @case ('unavailable') {
+    <div class="lti-panel lti-unavailable" role="alert">{{ unavailable() }}</div>
+  }
+  @case ('view') {
+    <div class="lti-panel lti-view">Режим перегляду: здавати роботу може лише студент.</div>
+  }
+  @case ('submitted') {
+    <div class="lti-panel lti-submitted" role="status">
+      <strong>Роботу здано</strong>@if (submittedPoints() !== null) {<span>, оцінка {{ submittedPoints() }} з {{ gradeMax }}</span>}
+    </div>
+  }
+  @case ('ready') {
+    <div class="lti-panel lti-ready">
+      @if (confirming()) {
+        <div class="lti-confirm" role="alertdialog" aria-label="Підтвердження здачі">
+          <p>
+            @if (hasResult()) {
+              Ваш результат: <strong>{{ pendingPoints() }} з {{ gradeMax }}</strong>.
+            } @else {
+              Результат ще не отримано від сценарію, буде надіслано <strong>0 з {{ gradeMax }}</strong>.
+            }
+            Здати роботу? Після цього змінити оцінку не вийде.
+          </p>
+          <div class="lti-actions">
+            <button type="button" class="btn btn-primary lti-confirm-yes" [disabled]="busy()" (click)="send()">Так, здати</button>
+            <button type="button" class="btn btn-secondary lti-confirm-no" [disabled]="busy()" (click)="cancel()">Скасувати</button>
+          </div>
+        </div>
+      } @else {
+        <button type="button" class="btn btn-primary lti-submit" [disabled]="busy()" (click)="begin()">
+          {{ graded() ? 'Здати' : 'Завершити' }}
+        </button>
+      }
+      @if (error(); as message) {
+        <p class="lti-error" role="alert">{{ message }}</p>
+      }
+    </div>
+  }
+}

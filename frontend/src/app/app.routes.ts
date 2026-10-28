@@ -24,6 +24,11 @@ export const routes: Routes = [
       import('./pages/viewer/viewer.component').then(m => m.ViewerComponent),
   },
   {
+    path: 'lti/pick',
+    loadComponent: () =>
+      import('./pages/lti-pick/lti-pick.component').then(m => m.LtiPickComponent),
+  },
+  {
     path: 'admin',
     loadComponent: () =>
       import('./pages/admin/admin.component').then(m => m.AdminComponent),

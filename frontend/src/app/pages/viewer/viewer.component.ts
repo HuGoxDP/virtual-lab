@@ -33,6 +33,7 @@ import {
 } from './viewer-format';
 import { ViewerHudComponent } from './viewer-hud.component';
 import { ViewerLoadingComponent } from './viewer-loading.component';
+import { LtiResult, LtiSubmitComponent } from './lti-submit.component';
 
 /** Where the sandboxed player, the engine bundle it imports and the KTX2 transcoder are served. */
 const PLAYER_URL = '/player/player.html';
@@ -51,7 +52,7 @@ type ViewerState = 'idle' | 'downloading' | 'loading-engine' | 'running' | 'erro
 @Component({
   selector: 'app-viewer',
   standalone: true,
-  imports: [ViewerHudComponent, ViewerLoadingComponent, IconComponent],
+  imports: [ViewerHudComponent, ViewerLoadingComponent, LtiSubmitComponent, IconComponent],
   templateUrl: './viewer.component.html',
   styleUrls: ['./viewer.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -142,6 +143,18 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    */
   readonly streamingRequested = signal(false);
 
+  /**
+   * Whether the page was opened from an LMS launch (`?lti=1`): only then does it show the submit
+   * controls (and only then does anything ask `/api/lti/session`). The public viewer is untouched.
+   */
+  readonly ltiMode = signal(false);
+
+  /**
+   * The scenario's latest `{score, completed}`, kept here rather than in the submit controls so a
+   * report that arrives before the LMS session has loaded is not lost. Cleared on every (re)start.
+   */
+  readonly ltiResult = signal<LtiResult | null>(null);
+
   readonly isLoading = computed(
     () => this.state() === 'downloading' || this.state() === 'loading-engine'
   );
@@ -161,6 +174,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     const query = this.route.snapshot.queryParamMap;
     this.buildStampVisible.set(readFlag(query.get('diag')));
     this.streamingRequested.set(readFlag(query.get('stream')));
+    this.ltiMode.set(readFlag(query.get('lti')));
 
     // Probe before starting: a machine without WebGL2 should see the explanation, not a frame that
     // fails inside the sandbox.
@@ -178,6 +192,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
         onFps: value => this.fps.set(value),
         onPaused: value => this.paused.set(value),
         onContextLost: () => this.contextLost.set(true),
+        onResult: result => this.ltiResult.set({ score: result.score, completed: result.completed }),
         onError: error => this.onPlayerError(error),
       },
     });
@@ -360,6 +375,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     }
     this.fps.set(null);
     this.paused.set(false); // a fresh frame never starts paused
+    this.ltiResult.set(null); // a new run has reported nothing yet
 
     try {
       // diag is always false: the profiler is off on the platform, whatever the scenario or `?diag=1` says.

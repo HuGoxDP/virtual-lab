@@ -44,6 +44,12 @@ export default defineConfig({
     // The UI is Ukrainian; a mismatched locale would change date formatting.
     locale: 'uk-UA',
     timezoneId: 'Europe/Kyiv',
+    // Only for the HTTPS lti-demo stand (local CA, names not in the hosts file):
+    // E2E_INSECURE_TLS=1 E2E_HOST_RULES="MAP lab.lti.test 127.0.0.1" E2E_BASE_URL=https://lab.lti.test
+    ignoreHTTPSErrors: !!process.env.E2E_INSECURE_TLS,
+    launchOptions: process.env.E2E_HOST_RULES
+      ? { args: [`--host-resolver-rules=${process.env.E2E_HOST_RULES}`] }
+      : {},
   },
 
   projects: [
