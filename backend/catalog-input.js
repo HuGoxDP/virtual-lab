@@ -123,7 +123,42 @@ function imageUrlProblem(value, current) {
   return 'imageUrl змінюється завантаженням зображення; дозволено лише порожнє значення, поточне або шлях /previews/…';
 }
 
+/**
+ * The widest text each `scenarios` column holds (`db/init.sql`, migrations 002, 005). A longer value
+ * is a 400 here instead of a database error that surfaces as a 500. Columns with no width (TEXT) are not listed.
+ * `nullable` fields may be sent as null (a PUT clears them); the others, when sent, must be strings.
+ */
+const SCENARIO_TEXT_LIMITS = {
+  id: { max: 100 },
+  title: { max: 255 },
+  category: { max: 50 },
+  categoryLabel: { max: 100 },
+  version: { max: 20, nullable: true },
+  author: { max: 255, nullable: true },
+  manifestUrl: { max: 300, nullable: true },
+};
+
+/** True when `text` has more than `max` characters, counted as Postgres counts them: code points, not UTF-16 units. */
+function exceedsWidth(text, max) {
+  if (text.length <= max) return false; // code points never outnumber UTF-16 units
+  return text.length > max * 2 || Array.from(text).length > max;
+}
+
+/**
+ * Why `body` carries a text field wider than its column (or of the wrong type), or null. Fields that are
+ * absent (undefined) are skipped, so one function serves the POST and the PUT. The message is Ukrainian.
+ */
+function scenarioTextProblem(body) {
+  for (const [name, { max, nullable }] of Object.entries(SCENARIO_TEXT_LIMITS)) {
+    const value = body?.[name];
+    if (value === undefined || (value === null && nullable)) continue;
+    if (typeof value !== 'string') return `${name} має бути рядком`;
+    if (exceedsWidth(value, max)) return `${name}: не більше ${max} символів`;
+  }
+  return null;
+}
+
 /** The catalog id a `from-archive` scenario takes from its manifest: a slug of 2-100 characters. */
 const SCENARIO_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,99}$/;
 
-module.exports = { SCENARIO_ID_PATTERN, CATEGORY_SLUG_PATTERN, validateCategory, imageUrlProblem, validateFeatures, forbiddenAuthorFields, AUTHOR_FORBIDDEN_FIELDS, MAX_FEATURES, MAX_FEATURE_TITLE, MAX_FEATURE_SUBTITLE };
+module.exports = { SCENARIO_TEXT_LIMITS, scenarioTextProblem, SCENARIO_ID_PATTERN, CATEGORY_SLUG_PATTERN, validateCategory, imageUrlProblem, validateFeatures, forbiddenAuthorFields, AUTHOR_FORBIDDEN_FIELDS, MAX_FEATURES, MAX_FEATURE_TITLE, MAX_FEATURE_SUBTITLE };

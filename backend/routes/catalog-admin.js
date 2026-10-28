@@ -9,7 +9,7 @@ const express = require('express');
 const { pool, inTransaction } = require('../db');
 const { authorize, canEditScenario } = require('../auth');
 const audit = require('../audit');
-const { validateFeatures, forbiddenAuthorFields, imageUrlProblem } = require('../catalog-input');
+const { validateFeatures, forbiddenAuthorFields, imageUrlProblem, scenarioTextProblem } = require('../catalog-input');
 const { ADMIN_COLUMNS } = require('../scenario-rows');
 const { applyTransition } = require('../workflow');
 const { httpError, sendError } = require('../http-error');
@@ -88,6 +88,8 @@ router.post('/api/catalog', authorize('author'), async (req, res) => {
     });
   }
 
+  const textProblem = scenarioTextProblem(req.body);
+  if (textProblem) return res.status(400).json({ error: textProblem });
   const checked = features === undefined ? { value: [] } : validateFeatures(features);
   if (checked.error) return res.status(400).json({ error: checked.error });
   // (An author's imageUrl was refused above.) A new row has no cover yet.
@@ -158,6 +160,8 @@ router.put('/api/catalog/:id', authorize('author'), async (req, res) => {
   } = req.body;
   const categoryLabel = byAuthor ? undefined : req.body.categoryLabel;
 
+  const textProblem = scenarioTextProblem({ ...req.body, id: undefined });
+  if (textProblem) return res.status(400).json({ error: textProblem });
   const checked = features === undefined ? null : validateFeatures(features);
   if (checked?.error) return res.status(400).json({ error: checked.error });
   if (category !== undefined && (typeof category !== 'string' || !category)) {
