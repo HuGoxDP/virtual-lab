@@ -4,7 +4,7 @@
 //
 // Release 1, phase 2 - DW-2.5: byte sizes, Kyiv dates with our own month names, Ukrainian plurals.
 
-import { formatBytes, formatDate, pluralUk } from './format';
+import { formatBytes, formatDate, formatDateTime, pluralUk } from './format';
 
 describe('formatBytes', () => {
   it('DW-2.5 formats 50537267 bytes as "48,2 МБ"', () => {
@@ -37,6 +37,22 @@ describe('formatBytes', () => {
 
   it('DW-2.5 renders nothing for a missing or nonsensical size', () => {
     for (const value of [null, undefined, NaN, Infinity, -1]) expect(formatBytes(value as number | null | undefined)).toBe('');
+  });
+});
+
+describe('formatDateTime', () => {
+  it('writes the Kyiv wall clock after the date (winter UTC+2, summer UTC+3)', () => {
+    expect(formatDateTime('2026-03-12T12:22:00Z')).toBe('12 бер 2026, 14:22');
+    expect(formatDateTime('2026-07-01T09:05:00Z')).toBe('1 лип 2026, 12:05');
+  });
+
+  it('shows midnight as 00:xx, not 24:xx', () => {
+    expect(formatDateTime('2026-03-12T22:07:00Z')).toBe('13 бер 2026, 00:07');
+  });
+
+  it('is empty for a missing or invalid date', () => {
+    expect(formatDateTime(null)).toBe('');
+    expect(formatDateTime('nope')).toBe('');
   });
 });
 

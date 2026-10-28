@@ -178,15 +178,32 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   way out, since a non-published scenario has no public page. `?diag=1` shows only the engine build stamp, read from the player with
   `PlayerHost.measure()` about a second after the run starts; the HUD has no diagnostics control. Whether
   the overlay belongs in a scenario is ScenarioCreator's question; the platform never shows it.
-- `src/app/pages/admin/` — `/admin`: list including unpublished rows, create/edit (including the
-  "Що всередині" editor, up to six entries), publish toggle, delete, archive upload with progress. The token lives in `sessionStorage`
-  (`AdminService`), so it dies with the tab.
+- `src/app/pages/admin/` — the new admin (release 2). `/admin/login` (one field, the access code, verified with
+  `/api/auth/me` before it is kept) sits outside `<vl-admin-shell>` (sidebar with role-aware items, a queue badge for
+  moderators, user card and sign-out; on a narrow screen a top bar and burger open the same sidebar as a drawer).
+  Its children: `/admin` (redirects to the list until the dashboard lands), `/admin/scenarios` (status chips with
+  counts, category filter, table; **client-side filters over the unpaged admin list**; moderators get row selection and
+  a bulk bar showing the server's answer per scenario), `/admin/scenarios/:id/:tab` (`meta` and `publish` built; `files`
+  and `checks` are placeholders until Phase 6) and the slots `upload`, `queue`, `categories`, `access` (last three
+  moderator-only). The **Метадані form** (`<vl-scenario-meta-form [scenario] [role] (saved)>`, reused by the wizard)
+  keeps edits apart from the row, so a refetch never wipes typing, and is hidden (not removed) on other tabs so a tab
+  switch keeps them; leaving with edits asks (`unsavedChangesGuard`, `beforeunload`). Its live card **is**
+  `<vl-scenario-card>`. `author` is a moderator's field (read-only for authors, never sent by them).
+  `<vl-scenario-publish>` draws what `transitionsFor(role, status, hasArchive)` offers (`scenario-rules.ts`, which also
+  holds the readiness list and journal wording) and shows the server's refusal as sent. **The old admin is at
+  `/admin/legacy`, moderators only (`moderatorGuard`)**: until the wizard exists it is the only archive-upload UI, so
+  do not release between Phase 5 and Phase 6. Author-supplied text is rendered with `{{ }}`, never `innerHTML`.
 - `src/app/services/scenario.service.ts` — catalog state as **signals**, paged fetching (a response for an
   older request is dropped, so the newest filter always wins), `fetchScenarioById` (with `related`), and
   the streamed ZIP download with progress and abort. `fetchScenarioById(id, version?)` with a `version` adds
   `?version=` and the session's bearer (from `AdminService`) — a draft preview; the plain lookup carries no credential. (`GET /api/config` stays on the backend; the
   frontend no longer reads it — the footer's archive-limit line went with the footer's main block.)
-- `src/app/services/admin.service.ts` — admin token + CRUD + upload with progress.
+- `src/app/services/admin.service.ts` — the access code (`sessionStorage` key `adminToken`; dies with the tab) and the
+  old CRUD/upload used by `/admin/legacy`; `endSession(reason)` clears it and keeps the reason for the sign-in screen.
+  `admin-api.service.ts` (`AdminApi`): one typed method per admin route with the bearer attached; it ends the session on
+  a rejected code (401, or 403 `Невірний токен`) before the error reaches the caller; any other 403 is a refused action.
+  `admin-session.service.ts` (`AdminSession`): who is signed in (`signIn` stores nothing unless the server accepts the
+  code, `restore`, `signOut`, `user`/`role`/`isModerator` derived from the token).
 - `src/app/services/telemetry.service.ts` — anonymous session log; failures are swallowed, since
   telemetry must never break playback.
 - `src/app/models/scenario.model.ts` — `ScenarioCatalogItem` / `ScenarioCatalogManifest`. This is
@@ -404,7 +421,7 @@ Consequences to respect:
 ```bash
 # Tests
 cd backend  && npm test           # 1090+ tests; needs docker-compose.test.yml up
-cd frontend && npx ng test --no-watch   # 309 tests
+cd frontend && npx ng test --no-watch   # 487 tests
 cd frontend && npm run test:scripts     # the CSP checker's own tests (node --test)
 cd frontend && npm run build && npm run check:csp   # built index.html: no import map, nonce or blob: script-src
 cd e2e      && npm test           # 104 Playwright tests (a few skip: by design, or editor-csp without its stack);

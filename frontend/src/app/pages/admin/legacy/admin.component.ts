@@ -1,11 +1,11 @@
-// path: src/app/pages/admin/admin.component.ts
+// path: src/app/pages/admin/legacy/admin.component.ts
 
 import { Component, ChangeDetectionStrategy, OnInit, inject, signal } from '@angular/core';
 import { RouterModule } from '@angular/router';
 
-import { AdminScenario, ScenarioFeature } from '../../models/scenario.model';
-import { AdminService, ScenarioDraft } from '../../services/admin.service';
-import { ICON_NAMES } from '../../ui/icon/icon.component';
+import { AdminScenario, ScenarioFeature } from '../../../models/scenario.model';
+import { AdminService, ScenarioDraft } from '../../../services/admin.service';
+import { ICON_NAMES } from '../../../ui/icon/icon.component';
 
 /** The server's own cap on "Що всередині" (backend/catalog-input.js); it still answers 400 above it. */
 export const MAX_FEATURES = 6;

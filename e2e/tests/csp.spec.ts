@@ -139,10 +139,8 @@ test.describe('content security policy', () => {
   test('the admin screen works with the policy on', async ({ page }) => {
     const violations = await watchViolations(page);
 
-    await page.goto('/admin');
-    await expect(page.locator('input[type="password"]').or(
-      page.getByRole('button', { name: 'Оновити' })
-    ).first()).toBeVisible();
+    await page.goto('/admin/login');
+    await expect(page.locator('input[type="password"]')).toBeVisible();
 
     expect(violations, `admin CSP violations:\n${violations.join('\n')}`).toEqual([]);
   });

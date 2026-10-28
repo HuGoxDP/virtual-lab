@@ -66,6 +66,18 @@ describe('AdminService', () => {
       expect(sessionStorage.getItem('adminToken')).toBeNull();
       expect(service.isAuthenticated()).toBe(false);
     });
+
+    it('DW-5.5 endSession clears the code and remembers why; the next sign-in forgets the reason', () => {
+      service.setToken('secret-token');
+      service.endSession('Код відкликано.');
+
+      expect(sessionStorage.getItem('adminToken')).toBeNull();
+      expect(service.isAuthenticated()).toBe(false);
+      expect(service.endedReason()).toBe('Код відкликано.');
+
+      service.setToken('another');
+      expect(service.endedReason()).toBeNull();
+    });
   });
 
   describe('authorisation header', () => {
@@ -140,9 +152,15 @@ describe('AdminService', () => {
       const at = (status: number) =>
         AdminService.describeError(new HttpErrorResponse({ status }));
 
-      expect(at(401)).toMatch(/токен/i);
+      expect(at(401)).toMatch(/код/i);
       expect(at(403)).toMatch(/Невірний/);
-      expect(at(503)).toMatch(/ADMIN_TOKEN/);
+      // The server no longer answers 503 (an unset ADMIN_TOKEN only switches the bootstrap off).
+      expect(at(503)).toBe('Помилка 503');
+    });
+
+    it('DW-5.5 the words the server sent win over the status text, so a refused action is not called a bad code', () => {
+      const forbidden = new HttpErrorResponse({ status: 403, error: { error: 'Це не ваш сценарій' } });
+      expect(AdminService.describeError(forbidden)).toBe('Це не ваш сценарій');
     });
 
     it('prefers the server-supplied message', () => {

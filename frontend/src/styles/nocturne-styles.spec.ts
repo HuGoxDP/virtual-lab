@@ -136,7 +136,7 @@ describe('Inter font faces (DW-2.2)', () => {
 
 describe('legacy-admin scope (DW-2.6)', () => {
   it('DW-2.6 the old admin root carries the scope class and the scope is :where() so it adds no specificity', () => {
-    expect(readFileSync('src/app/pages/admin/admin.component.html', 'utf8')).toContain('legacy-admin');
+    expect(readFileSync('src/app/pages/admin/legacy/admin.component.html', 'utf8')).toContain('legacy-admin');
     const legacy = read('_legacy.scss');
     expect(legacy).toContain(':where(.legacy-admin)');
     expect(legacy).not.toMatch(/^\s*\.legacy-admin/m);

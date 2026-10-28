@@ -634,6 +634,40 @@ independently of `auth.js`. Scenarios 17-23 above still hold for the bootstrap m
 206. [I] Route table rows for every Phase 4 route (179), `/api/config` preview limits (DW-4.6), `from-archive` manifest input.
 207. [U] Pure routines: `inspectPreview`, `validateTestRun`, `validateCategory`, `imageUrlProblem`, `describeError`, the store factory.
 
+#### Nocturne release 2, phase 5: admin UI - sign-in, shell, list, metadata and publication
+
+Specs: `frontend/src/app/services/{admin-api,admin-session,admin}.service.spec.ts`,
+`pages/admin/{admin-guards,admin-login.component,scenario-rules}.spec.ts`,
+`pages/admin/{admin-shell,scenario-list,scenario-meta-form,scenario-publish,scenario-edit}/*.spec.ts`,
+`ui/{icon-picker,status-pill}/*.spec.ts`; e2e `e2e/tests/admin-workflow.spec.ts` (keys are issued and revoked through
+`helpers/api.ts`, whose helpers take the code to act as). The old admin's specs moved to `pages/admin/legacy/`; its e2e
+(`admin-golden-path`, `nocturne-foundation`) now open `/admin/legacy` through the sign-in screen.
+
+208. [U] Session and API (DW-5.1, DW-5.5) `admin-api`, `admin-session`, `admin-guards`: author / moderator / revoked / empty
+     sign-in, nothing stored on a refusal; the code only in `sessionStorage`, cleared on sign-out; `AdminApi` routes and bodies;
+     401 and 403 `Невірний токен` end the session with a reason, any other 403, a 409 and a 500 do not; guards (anonymous ->
+     sign-in, author -> list for moderator pages and `/admin/legacy`); the unsaved-changes guard.
+209. [U] Sign-in screen and shell (DW-5.1, DW-5.5): plaque for a refused or empty code, the reason of an ended session, no demo
+     codes or "12 годин"; name and role in the user card, role-aware items, queue badge, sign-out, a session that ends under
+     the screen goes to sign-in; burger / Escape / scrim / navigation open and close the drawer.
+210. [U] List (DW-5.2): chip counts, status and category filters (combined, reset), pills, archive size, long author text;
+     authors get no selection or bulk bar; moderators: selection, select-all of visible rows, bulk publish / unpublish /
+     category / delete with per-id results, a whole-request refusal.
+211. [U] Метадані (DW-5.3): saves only changed fields; the 0 / 160 counter and the 161 block; six features and a blocked
+     seventh, the icon picker, clean entries; preview upload with warnings and removal; `author` read-only for authors and
+     never sent; the live card equals a catalog card; readiness (missing description / preview / archive, check findings).
+212. [U] Публікація (DW-5.4) `scenario-rules`: each transition per role and status (disabled without an archive, note for a
+     return, confirm for unpublishing), the server's refusal shown, the history from the journal as sentences, who and when.
+213. [U] Edit page (DW-5.5): unsaved edits survive Метадані -> Публікація -> Метадані; leaving asks (stay / go) and a clean
+     page does not; `beforeunload`; refetch after a save; not found, error and retry; a 300-character title.
+214. [E] Sign-in (DW-5.1): bootstrap shows name and role, the code never reaches `localStorage` or the URL, sign-out clears the
+     session; an author gets the author menu and `/admin/legacy` sends them to the list; a moderator reaches it; revoked and
+     empty codes. *Written and type-checked; run by the orchestrator at VERIFY.*
+215. [E] Author flow (DW-5.5): sign in as a key -> own row only -> edit Метадані (live card, counter) -> save -> Публікація ->
+     submit -> status and history; the archive is seeded through the key-parameterised helper. *Not run.*
+216. [E] Edge cases (DW-5.5): unsaved edits across a tab switch and the browser prompt; a key revoked mid-session and on reload
+     returns to sign-in with the reason; at 390 px the sidebar is a drawer; a 300-character title keeps the layout. *Not run.*
+
 
 ### 4.11 Golden paths (E2E)
 

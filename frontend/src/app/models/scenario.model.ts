@@ -170,6 +170,19 @@ export interface CategoryFilter {
   count: number;
 }
 
+/** The four workflow statuses (`backend/workflow.js`). */
+export type ScenarioStatus = 'draft' | 'review' | 'published' | 'rejected';
+
+/** `currentVersion` of an admin row: what the list and the readiness check need of the live archive. */
+export interface CurrentVersionSummary {
+  id: number;
+  sha256: string;
+  bytes: number;
+  /** False for a version that predates stored checks: its zero counts are not "clean". */
+  checked: boolean;
+  checks: { errors: number; warnings: number };
+}
+
 /**
  * A scenario as seen by the admin screen: everything the public catalog hides.
  *
@@ -178,7 +191,19 @@ export interface CategoryFilter {
  */
 export interface AdminScenario extends ScenarioCatalogItem {
   /** Workflow status; only `published` scenarios appear in the public catalog. */
-  status: 'draft' | 'review' | 'published' | 'rejected';
+  status: ScenarioStatus;
+
+  /** Id of the key that owns the row; null for rows that predate keys (moderators only). */
+  ownerKeyId?: number | null;
+
+  /** Label of the owning key; null when there is no owner. */
+  ownerLabel?: string | null;
+
+  /** Id of an author's archive waiting for a moderator on a published scenario, or null. */
+  pendingVersionId?: number | null;
+
+  /** The version students get, with its check counts; null before the first archive. */
+  currentVersion?: CurrentVersionSummary | null;
 
   /** Compatibility mirror of `status === 'published'` for readers that predate the workflow. */
   isPublished: boolean;

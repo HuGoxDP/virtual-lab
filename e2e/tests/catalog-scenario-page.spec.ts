@@ -45,8 +45,9 @@ test.describe('catalog (Nocturne)', () => {
     await expect(page.locator('.footer-inner')).toHaveCount(0);
     await expect(page.locator('footer a[href="/admin"]')).toHaveCount(0);
     await expect(page.locator('.footer-legal')).toContainText('©');
-    // /admin stays reachable by its URL; only the footer link went.
+    // /admin stays reachable by its URL; only the footer link went. Signed out it lands on the sign-in screen.
     await page.goto('/admin');
+    await expect(page).toHaveURL(/\/admin\/login$/);
     await expect(page.locator('input[type="password"]')).toBeVisible();
   });
 
@@ -54,7 +55,7 @@ test.describe('catalog (Nocturne)', () => {
     await page.goto('/admin');
     await page.locator('input[type="password"]').fill(ADMIN_TOKEN);
     await page.getByRole('button', { name: 'Увійти' }).click();
-    await expect(page.getByRole('button', { name: 'Оновити' })).toBeVisible();
+    await expect(page.locator('.sidebar')).toBeVisible();
 
     await page.goto('/catalog');
     await expect(page.locator('.account')).toHaveText('Панель');

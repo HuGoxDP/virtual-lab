@@ -4,6 +4,10 @@
 // publishing round trip driven through the UI — token, create, upload, publish, it appears for students and
 // plays, then delete.
 //
+// Release 2, phase 5 (DW-5.1): this is the OLD admin, which now lives at `/admin/legacy` (moderators only) and
+// stays the only upload UI until the wizard. The code enters through the new sign-in screen; the new screens
+// have their own spec, `admin-workflow.spec.ts` (#214-216).
+//
 // Every endpoint behind this screen is covered by the backend suite. The screen
 // itself was not covered by anything.
 
@@ -15,31 +19,16 @@ import {
   SMALL_ARCHIVE,
   uniqueScenarioId,
 } from '../helpers/api';
+import { signInThroughForm } from '../helpers/admin-ui';
 import { waitForFrames } from '../helpers/engine';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN!;
 
-/** Signs in through the form, which is where the token is supposed to enter. */
+/** Signs in through the sign-in screen, then opens the old admin (the bootstrap code is a moderator's). */
 async function signIn(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto('/admin');
-
-  const tokenField = page.locator('input[type="password"]');
-  const reloadButton = page.getByRole('button', { name: 'Оновити' });
-
-  // Wait for the app to render *something* before deciding which state it is in.
-  // Probing the field straight after goto() races Angular's first paint: the
-  // field is not visible yet, the sign-in is skipped, and the wait below then
-  // times out on a screen that is simply still asking for the token.
-  await expect(tokenField.or(reloadButton).first()).toBeVisible();
-
-  // The token lives in sessionStorage, so a fresh context always starts signed
-  // out — but a reused one does not, and re-entering it would be a no-op anyway.
-  if (await tokenField.isVisible()) {
-    await tokenField.fill(ADMIN_TOKEN);
-    await page.getByRole('button', { name: 'Увійти' }).click();
-  }
-
-  await expect(reloadButton).toBeVisible();
+  await signInThroughForm(page, ADMIN_TOKEN);
+  await page.goto('/admin/legacy');
+  await expect(page.getByRole('button', { name: 'Оновити' })).toBeVisible();
 }
 
 test.describe('admin golden path', () => {

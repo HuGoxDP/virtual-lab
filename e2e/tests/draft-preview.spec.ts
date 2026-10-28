@@ -57,14 +57,14 @@ test.describe('draft preview', () => {
     test.setTimeout(120_000);
     await signedIn(page);
 
-    await page.goto(`/play/${id}?draft=${sha}&returnTo=${encodeURIComponent('/admin?preview=1')}`);
+    await page.goto(`/play/${id}?draft=${sha}&returnTo=${encodeURIComponent('/admin/scenarios?preview=1')}`);
     await expect(page.locator('.viewer-controls')).toBeVisible({ timeout: 80_000 });
     const snapshot = await waitForFrames(page);
     expect(snapshot.drawCalls, 'the draft archive renders').toBeGreaterThan(0);
 
     await page.getByRole('button', { name: 'Вийти' }).click();
-    // `/admin` is the one admin route that exists until the new admin lands; the path is what is checked.
-    await expect(page).toHaveURL(/\/admin\?preview=1$/);
+    // The exit target is the validated `returnTo`; the path is what is checked.
+    await expect(page).toHaveURL(/\/admin\/scenarios\?preview=1$/);
   });
 
   test('DW-3.5 a returnTo that leaves /admin or the site is ignored: exit goes to the scenario page', async ({ page }) => {

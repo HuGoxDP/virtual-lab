@@ -93,8 +93,9 @@ because `fetch` cannot report upload progress.
 ## Error Handling
 
 - **Backend:** each route wraps its body in `try/catch`; `console.error('[AREA] …', err.message)`;
-  responds `{ error: '<Ukrainian message>' }` with 4xx/5xx. Auth middleware answers 503 (not
-  configured) / 401 (no header) / 403 (wrong token) — tests pin all three.
+  responds `{ error: '<Ukrainian message>' }` with 4xx/5xx. Auth middleware answers 401 (no
+  credential) / 403 (unknown or revoked code, or a role/ownership refusal) / 429 (too many failed
+  attempts). It no longer answers 503: an unset `ADMIN_TOKEN` only switches the bootstrap code off.
 - **Frontend:** services catch, set an `_error` signal, and keep state consistent on failure
   (`scenario.service.ts:122`); `AdminService.describeError()` maps `HttpErrorResponse` to the
   server's own message.

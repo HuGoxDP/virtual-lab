@@ -1,4 +1,4 @@
-// path: src/app/pages/admin/admin.component.spec.ts
+// path: src/app/pages/admin/legacy/admin.component.spec.ts
 //
 // Release 1, phase 3. Covers test-plan scenario 131 (DW-3.8): the old /admin edits up to six
 // "Що всередині" entries (icon from ICON_NAMES) and shows the server's own 400 message.
@@ -9,9 +9,9 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 
 import { AdminComponent, MAX_FEATURES } from './admin.component';
-import { AdminScenario } from '../../models/scenario.model';
-import { AdminService } from '../../services/admin.service';
-import { ICON_NAMES } from '../../ui/icon/icon.component';
+import { AdminScenario } from '../../../models/scenario.model';
+import { AdminService } from '../../../services/admin.service';
+import { ICON_NAMES } from '../../../ui/icon/icon.component';
 
 function row(id: string, overrides: Partial<AdminScenario> = {}): AdminScenario {
   return {

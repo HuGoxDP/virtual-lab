@@ -535,6 +535,15 @@ _Filled by /code-foundations:build — one row per decision an agent made or que
 | 25 | 4 | `GET /api/categories` adds a moderator-only `scenarioCount` | default | assumed |
 | 26 | 4 | A slug with no `categories` row stays public (no FK by design) | default | assumed |
 | 27 | 4 | A preview whose filename or declared MIME disagrees with its bytes (PNG named `.jpg`, JPEG sent as `image/png`) is stored as what its bytes are, not refused — the Test Plan line lists it under 400, but the edge case says "type by magic bytes"; flip is a one-line change | Phase 4 review | assumed |
+| 28 | 5 | Only a 401 or a 403 `Невірний токен` ends the admin session; other 403s (`Недостатньо прав`, `Це не ваш сценарій`) show as refusals | default | assumed |
+| 29 | 5 | `AdminApi.scenario(id)` is the admin list + find (no get-one admin route) | default | assumed |
+| 30 | 5 | The access-code field is not upper-cased (codes are case-sensitive base64url) | default | assumed |
+| 31 | 5 | Unsaved Метадані edits survive tab switches because the form is hidden, not destroyed | default | assumed |
+| 32 | 5 | `/admin/legacy` uses `moderatorGuard`; an author is redirected to `/admin/scenarios` | default | assumed |
+| 33 | 5 | The list's category filter options come from the rows (hidden categories not filtered out) | default | assumed |
+| 34 | 5 | `/admin` redirects to `/admin/scenarios` and the nav has no «Огляд» until Phase 7's dashboard | default | assumed |
+| 35 | 5 | A tab switch within the same scenario is not a departure — only real departures prompt about unsaved edits | Phase 5 review | assumed |
+| 36 | 5 | A moderator also gets the owner moves (submit, withdraw) as secondary buttons, mirroring the backend `TRANSITIONS` table | Phase 5 review | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_

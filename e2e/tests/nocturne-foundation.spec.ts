@@ -6,12 +6,13 @@
 // without disturbing what it must not touch.
 //
 //   DW-2.2  Inter is self-hosted: served from /assets/fonts/, no off-origin request.
-//   DW-2.6  The old /admin looks the same — characterised against values captured on
+//   DW-2.6  The old admin (now /admin/legacy) looks the same — characterised against values captured on
 //           the stack *before* the global component classes existed.
 //           (The viewer half was retired in release 1, phase 4: the viewer is Nocturne now.)
 
 import { expect, test, type Page } from '@playwright/test';
 import { BASE_URL } from '../helpers/api';
+import { signInThroughForm } from '../helpers/admin-ui';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN!;
 
@@ -24,10 +25,6 @@ const PROPS = [
   'borderRadius', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
   'marginTop', 'marginRight', 'marginBottom', 'marginLeft', 'height',
 ] as const;
-
-/** Elements of the token gate (signed out). */
-const GATE = ['h1', '.back-link', '.token-gate h2', '.token-gate p.hint', '.token-gate code',
-  '.token-gate input', '.token-gate .btn-primary'];
 
 /** Elements of the signed-in screen, with the editor open. */
 const LIST = ['.header-actions .btn:not(.btn-ghost)', '.header-actions .btn-ghost',
@@ -51,12 +48,10 @@ async function collect(page: Page, selectors: string[]): Promise<Record<string, 
 }
 
 async function snapshotAdmin(page: Page) {
-  await page.goto('/admin');
-  await expect(page.locator('input[type="password"]')).toBeVisible();
-  const gate = await collect(page, GATE);
-
-  await page.locator('input[type="password"]').fill(ADMIN_TOKEN);
-  await page.getByRole('button', { name: 'Увійти' }).click();
+  // Release 2, phase 5: the old admin is at /admin/legacy, moderators only, so it is only ever reached signed in
+  // (its own token gate can no longer be reached, and is no longer part of the characterisation).
+  await signInThroughForm(page, ADMIN_TOKEN);
+  await page.goto('/admin/legacy');
   await expect(page.getByRole('button', { name: 'Оновити' })).toBeVisible();
   await expect(page.locator('.scenario-table tbody tr').first()).toBeVisible();
   await page.locator('.toolbar .btn-primary').click();
@@ -66,8 +61,7 @@ async function snapshotAdmin(page: Page) {
   // transition finish, then measure.
   await page.mouse.move(0, 0);
   await page.waitForFunction(() => document.getAnimations().length === 0);
-  const list = await collect(page, LIST);
-  return { ...gate, ...list };
+  return collect(page, LIST);
 }
 
 /**
@@ -132,6 +126,6 @@ test.describe('Nocturne foundation', () => {
 
   test('DW-2.6 the old /admin keeps its computed look under the legacy-admin scope', async ({ page }) => {
     const now = await snapshotAdmin(page);
-    expect(now).toEqual(ADMIN_BASELINE);
+    expect(now).toEqual(Object.fromEntries(LIST.map(selector => [selector, ADMIN_BASELINE[selector]])));
   });
 });
