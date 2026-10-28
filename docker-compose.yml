@@ -79,6 +79,9 @@ services:
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT}:80"
+    environment:
+      # LMS origins allowed to frame /lti/pick (Moodle's "Select content" iframe); 'self' = nobody. See .env.example.
+      LTI_FRAME_ANCESTORS: ${LTI_FRAME_ANCESTORS:-'self'}
     volumes:
       # Read-only: nginx serves archives, Express never streams their bytes.
       - virtual_lab_archives:/srv/archives:ro

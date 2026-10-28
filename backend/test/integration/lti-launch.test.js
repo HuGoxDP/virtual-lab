@@ -153,6 +153,7 @@ test('DW_4_1 login redirects to the platform with state, nonce and the exact OID
   assert.match(cookie, /; HttpOnly/);
   assert.match(cookie, /; Secure/);
   assert.match(cookie, /; SameSite=None/);
+  assert.match(cookie, /; Partitioned$/);
   assert.match(cookie, /; Path=\/api\/lti/);
 });
 
@@ -288,6 +289,9 @@ test('DW_4_1 the launch clears the state cookie it used', async t => {
 
   const cleared = res.headers['set-cookie'].find(c => c.startsWith('lti_state_'));
   assert.match(cleared, /Max-Age=0/);
+  // A partitioned cookie is cleared only by a header that is itself Partitioned.
+  assert.match(cleared, /; Partitioned$/);
+  assert.match(cleared, /; Path=\/api\/lti/);
 });
 
 test('DW_4_1 an instructor role is recognised, a learner stays learner, no roles means learner', async t => {
@@ -549,6 +553,7 @@ test('DW_4_3 the session cookie is SameSite=None; Secure; HttpOnly and never hol
   assert.match(cookie, /; HttpOnly/);
   assert.match(cookie, /; Secure/);
   assert.match(cookie, /; SameSite=None/);
+  assert.match(cookie, /; Partitioned$/);
   assert.match(cookie, /; Path=\/(;|$)/);
   assert.match(cookie, /; Max-Age=14400/);
 

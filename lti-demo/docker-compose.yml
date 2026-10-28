@@ -169,6 +169,9 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: LtiDemoPlatformWeb
     restart: unless-stopped
+    environment:
+      # Moodle's "Select content" modal is an iframe on this origin; only /lti/pick may be framed by it.
+      LTI_FRAME_ANCESTORS: https://moodle.lti.test
     volumes:
       - lti_platform_archives:/srv/archives:ro
       - lti_platform_assets:/srv/assets:ro

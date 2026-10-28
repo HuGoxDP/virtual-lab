@@ -187,9 +187,12 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/snippets"
           tar -xzf frontend/WebEngineTS-0.1.0.tgz -C "$RUNNER_TEMP/snippets" --strip-components=3 package/dist/player/player.nginx.conf
+          # lti-pick.conf is rendered at container start in the real image (15-lti-frame-ancestors.sh); render it here.
+          LTI_FRAME_ANCESTORS="https://moodle.example.edu" LTI_PICK_CONF="$RUNNER_TEMP/lti-pick.conf" sh nginx/15-lti-frame-ancestors.sh
           docker run --rm --add-host backend:127.0.0.1 \
             -v "$PWD/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
             -v "$PWD/nginx/csp.conf:/etc/nginx/csp.conf:ro" \
+            -v "$RUNNER_TEMP/lti-pick.conf:/etc/nginx/lti-pick.conf:ro" \
             -v "$RUNNER_TEMP/snippets/player.nginx.conf:/etc/nginx/snippets/player.nginx.conf:ro" \
             nginx:alpine nginx -t
 

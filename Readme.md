@@ -167,7 +167,7 @@ cp .env.example .env
 | FRONTEND_PORT | Зовнішній порт сайту |
 | TELEMETRY_RATE_LIMIT | Необов'язково: скільки телеметричних запитів з однієї адреси за 15 хв (за замовчуванням 300) |
 | MAX_ARCHIVE_BYTES | Необов'язково: максимальний розмір архіву в байтах (за замовчуванням 209715200 = 200 MiB). Більший архів — відповідь 413. nginx приймає до 512 MiB (`client_max_body_size`), тож піднімаючи ліміт вище, змініть і nginx |
-| LTI_PUBLIC_URL / LTI_REGISTRATION_SECRET | Необов'язково, для роботи в Moodle: публічна `https`-адреса платформи й секрет (≥ 16 символів) у посиланні реєстрації. Поки `LTI_PUBLIC_URL` порожній, `/api/lti` відповідає 503. Решта (`LTI_SESSION_TTL_SECONDS`, `LTI_RATE_LIMIT`, ключ інструмента) — у `.env.example` |
+| LTI_PUBLIC_URL / LTI_REGISTRATION_SECRET | Необов'язково, для роботи в Moodle: публічна `https`-адреса платформи й секрет (≥ 16 символів) у посиланні реєстрації. Поки `LTI_PUBLIC_URL` порожній, `/api/lti` відповідає 503. `LTI_FRAME_ANCESTORS` — origin Moodle (`https://moodle.example.edu`), якому дозволено показувати сторінку вибору лабораторної `/lti/pick` в iframe (інакше «Select content» буде порожнім). Решта (`LTI_SESSION_TTL_SECONDS`, `LTI_RATE_LIMIT`, ключ інструмента) — у `.env.example` |
 
 ### Content Security Policy
 

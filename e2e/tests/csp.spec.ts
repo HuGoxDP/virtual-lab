@@ -104,6 +104,27 @@ test.describe('content security policy', () => {
     expect(player, 'the player must not inherit the platform policy').not.toContain(`frame-src`);
   });
 
+  test('DW-6F.1 only /lti/pick may be framed by an LMS: same platform CSP bar frame-ancestors, no X-Frame-Options', async ({ request }) => {
+    const withoutAncestors = (csp: string) => csp.replace(/;\s*frame-ancestors [^;]*/, '');
+    const home = (await request.get('/')).headers();
+    const pick = await request.get('/lti/pick');
+    const pickHeaders = pick.headers();
+
+    expect(await pick.text(), '/lti/pick is the SPA shell').toContain('<app-root');
+    // Configured Moodle origins, or 'self' when LTI_FRAME_ANCESTORS is unset: never `*`, never absent.
+    expect(pickHeaders['content-security-policy']).toMatch(/frame-ancestors (?!\*)[^;]+$/);
+    expect(withoutAncestors(pickHeaders['content-security-policy'])).toBe(withoutAncestors(home['content-security-policy']));
+    expect(pickHeaders['x-frame-options'], 'SAMEORIGIN would block the LMS frame').toBeUndefined();
+
+    // Everything else keeps both protections.
+    expect(home['content-security-policy']).toContain(`frame-ancestors 'self'`);
+    for (const path of ['/', '/play/solar-system', '/scenario/solar-system', '/admin', '/lti/pick/']) {
+      const headers = (await request.get(path)).headers();
+      expect(headers['x-frame-options'], `X-Frame-Options on ${path}`).toBe('SAMEORIGIN');
+      expect(headers['content-security-policy'], `frame-ancestors on ${path}`).toContain(`frame-ancestors 'self'`);
+    }
+  });
+
   test('the catalog renders without violations', async ({ page }) => {
     const violations = await watchViolations(page);
 

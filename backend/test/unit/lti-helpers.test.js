@@ -75,9 +75,9 @@ test('parseCookies handles several cookies, values with "=", junk and no header'
   assert.deepEqual(http.parseCookies(''), {});
 });
 
-test('serializeCookie always sets HttpOnly, Secure and SameSite=None', () => {
+test('serializeCookie always sets HttpOnly, Secure, SameSite=None and Partitioned', () => {
   const cookie = http.serializeCookie('n', 'v', { maxAgeSeconds: 0, path: '/api/lti' });
-  assert.equal(cookie, 'n=v; Path=/api/lti; Max-Age=0; HttpOnly; Secure; SameSite=None');
+  assert.equal(cookie, 'n=v; Path=/api/lti; Max-Age=0; HttpOnly; Secure; SameSite=None; Partitioned');
   assert.match(http.serializeCookie('n', 'v', { maxAgeSeconds: 5 }), /^n=v; Path=\/; Max-Age=5; /);
 });
 

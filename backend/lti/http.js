@@ -48,11 +48,14 @@ function parseCookies(header) {
 }
 
 /**
- * Every LTI cookie is `SameSite=None; Secure; HttpOnly`: the launch is a cross-site form POST from the
- * platform, which a Lax cookie would not accompany. `maxAgeSeconds = 0` clears it.
+ * Every LTI cookie is `SameSite=None; Secure; HttpOnly; Partitioned`: the launch is a cross-site form POST from
+ * the LMS, which a Lax cookie would not accompany, and Moodle's "Select content" runs the whole chain inside an
+ * iframe on the LMS origin, where these are third-party cookies. `Partitioned` (CHIPS) keeps them allowed there,
+ * keyed to the embedding site, so the framed session is separate from the same user's new-window session.
+ * `maxAgeSeconds = 0` clears it (the clearing header must carry the same attributes to hit the same cookie).
  */
 function serializeCookie(name, value, { maxAgeSeconds, path = '/' }) {
-  return `${name}=${value}; Path=${path}; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=None`;
+  return `${name}=${value}; Path=${path}; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=None; Partitioned`;
 }
 
 /** A query/body field as a bounded non-empty string, or '' for anything else (arrays, objects, absent). */

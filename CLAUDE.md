@@ -245,6 +245,8 @@ there executes). Two other policies sit beside it:
   platform origin. `editor.conf` stamps the CSP nonce on it with `sub_filter` (Chromium ignores CSP
   hashes for import maps) and includes `csp-editor.conf`, which keeps `blob:` and the nonce.
 
+**`/lti/pick` is the one page an LMS may frame** (Moodle 5's "Select content" modal): `location = /lti/pick` serves the SPA shell with `frame-ancestors $csp_ancestors` (the origins in `LTI_FRAME_ANCESTORS`, rendered into `/etc/nginx/lti-pick.conf` at container start by `nginx/15-lti-frame-ancestors.sh`, `'self'` when unset) and no `X-Frame-Options`. Everything else keeps `'self'` + `SAMEORIGIN`. `lti_session` / `lti_state_*` are `Partitioned` for the same iframe.
+
 `ACAO: *` is set on exactly what the opaque frame fetches (its `Origin` is `null`): the player files, the
 engine bundle, the basis transcoder and `/a/`. `add_header` does not inherit into a location that sets its
 own, so `csp.conf` is `include`d in each.

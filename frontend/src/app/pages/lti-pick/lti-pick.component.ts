@@ -18,8 +18,9 @@ type PickAccess = 'loading' | 'allowed' | 'denied';
 /**
  * `/lti/pick`: the teacher's catalog, reached from Moodle's Deep Linking launch. Choosing a scenario
  * is a native form POST to `/api/lti/deep-link`, so the browser navigates to the answer (an
- * auto-submit page with its own CSP that hands the choice back to Moodle) as a top-level document;
- * it is never fetched into the SPA. Shown only for a deep-linking session.
+ * auto-submit page with its own CSP that hands the choice back to Moodle) in the frame this page is in
+ * (Moodle 5 shows it in a modal iframe, so nginx lets the configured LMS origins frame this route); it is never
+ * fetched into the SPA. Shown only for a deep-linking session.
  */
 @Component({
   selector: 'app-lti-pick',

@@ -34,10 +34,10 @@ Names and Role Provisioning, тож списку групи не отримує.
 
 | Cookie | Вміст | Строк | Ознаки |
 |---|---|---|---|
-| `lti_session` | випадковий токен; у таблиці зберігається лише його sha256 | `LTI_SESSION_TTL_SECONDS` (4 години за замовчуванням) | `HttpOnly; Secure; SameSite=None` |
-| `lti_state_<state>` | одноразовий `state` входу | 10 хвилин; стирається під час запуску | `HttpOnly; Secure; SameSite=None; Path=/api/lti` |
+| `lti_session` | випадковий токен; у таблиці зберігається лише його sha256 | `LTI_SESSION_TTL_SECONDS` (4 години за замовчуванням) | `HttpOnly; Secure; SameSite=None; Partitioned` |
+| `lti_state_<state>` | одноразовий `state` входу | 10 хвилин; стирається під час запуску | `HttpOnly; Secure; SameSite=None; Partitioned; Path=/api/lti` |
 
-`SameSite=None` потрібен, бо запуск — міжсайтовий POST від LMS. Поза запуском із LMS (відкритий каталог) cookie немає.
+`SameSite=None` потрібен, бо запуск — міжсайтовий POST від LMS. `Partitioned` (CHIPS) потрібен, бо сторінку вибору лабораторної Moodle 5 показує у вікні-iframe: там ці cookie — сторонні, і з `Partitioned` їх не блокують браузери, що забороняють сторонні cookie; вони прив'язані до сайту LMS, що вставив iframe. Поза запуском із LMS (відкритий каталог) cookie немає.
 
 ## 3. Строки зберігання
 
@@ -74,7 +74,8 @@ Names and Role Provisioning, тож списку групи не отримує.
 - У налаштуваннях інструмента в LMS ім'я й пошту надсилати «Never», службу учасників (memberships) вимкнути.
   Dynamic Registration просить лише claims `iss`, `sub` і три області AGS (`lineitem`, `result.readonly`, `score`).
 - Резервні копії БД містять `lti_sessions` (псевдоніми); строк зберігання копій — не довший за політику установи.
-- Інструмент відкривається в новому вікні: так його cookie не залежать від блокування сторонніх cookie в iframe
-  (LTI Platform Storage не використовується).
+- Студент і викладач відкривають лабораторну в новому вікні, тож її сесія не залежить від блокування сторонніх cookie.
+  Лише вибір лабораторної (Deep Linking, `/lti/pick`) працює в iframe Moodle: сторінку дозволено вбудовувати лише origin-ам з
+  `LTI_FRAME_ANCESTORS` (origin Moodle, `wwwroot`), а cookie мають `Partitioned`. LTI Platform Storage не використовується.
 
 Рішення, які це відображають: `../../.claude-shared/PLAN.md` §2.10, `../../.claude-shared/tasks/E-growth.md` (P1).

@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts run inside Linux containers (nginx entrypoint): a CRLF checkout breaks the shebang.
+*.sh text eol=lf

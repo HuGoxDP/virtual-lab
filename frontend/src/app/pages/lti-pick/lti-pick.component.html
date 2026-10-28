@@ -11,7 +11,7 @@
       <p class="pick-denied" role="alert">{{ message() }}</p>
     }
     @case ('allowed') {
-      <!-- A native POST: the answer is a full page that posts on to Moodle, so it must be a top-level navigation. -->
+      <!-- A native POST: the answer is a full page that posts on to Moodle, so it must navigate the frame this page is in (Moodle's modal iframe, or the window itself), not be fetched. -->
       <!-- The radios sit outside the form so only `scenarioId` is posted; the hidden input and the button join it by id. -->
       <form id="pick-form" method="post" action="/api/lti/deep-link">
         <input type="hidden" name="scenarioId" [value]="selectedId() ?? ''" />
