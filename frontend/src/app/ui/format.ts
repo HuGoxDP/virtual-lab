@@ -53,6 +53,27 @@ export function formatDate(iso: string | null | undefined): string {
   return `${Number(parts['day'])} ${MONTHS_UK[Number(parts['month']) - 1]} ${parts['year']}`;
 }
 
+/** Calendar parts plus the wall clock in Kyiv, for the history lists. */
+const KYIV_CLOCK = (() => {
+  const options: Intl.DateTimeFormatOptions = {
+    day: 'numeric', month: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  };
+  try {
+    return new Intl.DateTimeFormat('en-GB', { ...options, timeZone: 'Europe/Kyiv' });
+  } catch {
+    return new Intl.DateTimeFormat('en-GB', { ...options, timeZone: 'Europe/Kiev' });
+  }
+})();
+
+/** `12 бер 2026, 14:22` in Europe/Kyiv, or `''` when the input is not a date. */
+export function formatDateTime(iso: string | null | undefined): string {
+  const date = new Date(iso ?? '');
+  if (!iso || Number.isNaN(date.getTime())) return '';
+
+  const parts = Object.fromEntries(KYIV_CLOCK.formatToParts(date).map(p => [p.type, p.value]));
+  return `${Number(parts['day'])} ${MONTHS_UK[Number(parts['month']) - 1]} ${parts['year']}, ${parts['hour']}:${parts['minute']}`;
+}
+
 // ==================== PLURALS ====================
 
 /**

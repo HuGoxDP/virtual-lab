@@ -1,0 +1,232 @@
+// path: src/app/pages/admin/scenario-rules.ts
+//
+// What the admin screens know about a scenario's workflow, in one place: how a status looks, which
+// transitions a role is offered, what "ready to publish" means, and how a journal row reads. The
+// server stays the authority (`backend/workflow.js` TRANSITIONS); these tables only decide which
+// buttons to draw, and a button the server refuses shows the server's own message.
+
+import { AuditRow, AdminRole, TestRun, TransitionAction } from '../../models/admin.model';
+import { CurrentVersionSummary, ScenarioStatus } from '../../models/scenario.model';
+import { formatBytes, pluralUk } from '../../ui/format';
+
+export { STATUS_META, STATUS_ORDER, statusMeta } from '../../ui/status-pill/status-meta';
+
+// ==================== TRANSITIONS ====================
+
+export interface TransitionSpec {
+  action: TransitionAction;
+  label: string;
+  /** The main button of the screen (accent outline). */
+  primary?: boolean;
+  /** A moderator's reason is collected before this action. */
+  needsNote?: boolean;
+  /** Asked before it runs. */
+  confirm?: string;
+  /** Why the button is drawn but not usable. */
+  disabledReason?: string;
+}
+
+const NO_ARCHIVE = 'Спершу завантажте архів сценарію.';
+
+/**
+ * The transitions to offer `role` on a scenario in `status`, mirroring the backend's table. Owner moves:
+ * submit (draft, returned) and withdraw (in review). Moderator moves: publish (in review, draft, returned),
+ * return with a note (in review) and unpublish (published). A moderator may also make the owner moves, so
+ * they get both, theirs first. Submit and publish need an archive and are drawn disabled, with the reason,
+ * without one.
+ */
+export function transitionsFor(role: AdminRole, status: ScenarioStatus, hasArchive: boolean): TransitionSpec[] {
+  const needsArchive = hasArchive ? {} : { disabledReason: NO_ARCHIVE };
+  const moderator = role === 'moderator';
+
+  const specs: TransitionSpec[] = [];
+  if (moderator && (status === 'review' || status === 'draft' || status === 'rejected')) {
+    specs.push({ action: 'approve', label: 'Опублікувати', primary: true, ...needsArchive });
+  }
+  if (moderator && status === 'review') {
+    specs.push({ action: 'reject', label: 'Повернути на доопрацювання', needsNote: true });
+  }
+  if (moderator && status === 'published') {
+    specs.push({
+      action: 'unpublish', label: 'Зняти з публікації',
+      confirm: 'Зняти сценарій з публікації? Він зникне з каталогу й стане чернеткою.',
+    });
+  }
+  if (status === 'draft' || status === 'rejected') {
+    specs.push({ action: 'submit', label: 'Подати на перевірку', primary: !moderator, ...needsArchive });
+  }
+  if (status === 'review') specs.push({ action: 'withdraw', label: 'Відкликати з перевірки' });
+  return specs;
+}
+
+// ==================== READINESS ====================
+
+export type ReadinessLevel = 'ok' | 'warn' | 'bad';
+
+export interface ReadinessItem {
+  key: 'archive' | 'description' | 'preview';
+  level: ReadinessLevel;
+  label: string;
+}
+
+export interface ReadinessInput {
+  description: string;
+  imageUrl: string;
+  currentVersion?: CurrentVersionSummary | null;
+  archiveSha256?: string | null;
+}
+
+/** «Готовність до публікації»: what the student would find missing, in the order the prototype lists it. */
+export function readiness(input: ReadinessInput): ReadinessItem[] {
+  return [archiveItem(input), descriptionItem(input), previewItem(input)];
+}
+
+/** Every item is fine. */
+export const isReady = (items: ReadinessItem[]): boolean => items.every(item => item.level === 'ok');
+
+/** Above this a student's first load is slow enough to be worth saying so (prototype 2h/2k «Великий архів»). */
+export const LARGE_ARCHIVE_BYTES = 50 * 1024 * 1024;
+
+export interface ReviewChip {
+  level: ReadinessLevel;
+  label: string;
+}
+
+/**
+ * The chips on a queue card (prototype 2k): the readiness items, plus a warning for a large archive.
+ * Everything is shown, passes included, so a reviewer sees what was looked at and not only what failed.
+ */
+export function reviewChips(input: ReadinessInput & { archiveBytes?: number | null }): ReviewChip[] {
+  const chips: ReviewChip[] = readiness(input).map(({ level, label }) => ({ level, label }));
+  if ((input.currentVersion?.bytes ?? input.archiveBytes ?? 0) > LARGE_ARCHIVE_BYTES) chips.push({ level: 'warn', label: 'Великий архів' });
+  return chips;
+}
+
+function archiveItem({ currentVersion, archiveSha256 }: ReadinessInput): ReadinessItem {
+  const item = (level: ReadinessLevel, label: string): ReadinessItem => ({ key: 'archive', level, label });
+  if (!currentVersion && !archiveSha256) return item('bad', 'Немає архіву');
+  if (!currentVersion?.checked) return item('warn', 'Архів ще не перевірено');
+
+  const { errors, warnings } = currentVersion.checks;
+  if (errors > 0) return item('bad', `Автоперевірка: ${errors} ${pluralUk(errors, ['помилка', 'помилки', 'помилок'])}`);
+  if (warnings > 0) return item('warn', `Архів перевірено: ${warnings} ${pluralUk(warnings, ['попередження', 'попередження', 'попереджень'])}`);
+  return item('ok', 'Архів перевірено');
+}
+
+function descriptionItem({ description }: ReadinessInput): ReadinessItem {
+  return description.trim()
+    ? { key: 'description', level: 'ok', label: 'Короткий опис заповнено' }
+    : { key: 'description', level: 'bad', label: 'Немає короткого опису' };
+}
+
+function previewItem({ imageUrl }: ReadinessInput): ReadinessItem {
+  return imageUrl
+    ? { key: 'preview', level: 'ok', label: 'Превʼю додано' }
+    : { key: 'preview', level: 'bad', label: 'Немає превʼю' };
+}
+
+// ==================== TEST RUN ====================
+
+const GIB = 1024 ** 3;
+
+/** The norms a stored test run is read against (prototype 2i): first frame, FPS, GPU memory, console errors. */
+export const TEST_NORMS = {
+  maxFirstFrameMs: 5000,
+  minFps: 30,
+  maxGpuBytes: GIB,
+  maxConsoleErrors: 0,
+} as const;
+
+export interface TestRunRow {
+  key: 'firstFrame' | 'fps' | 'gpu' | 'errors';
+  label: string;
+  /** What was measured, as text; `—` when the report lacks the figure. */
+  value: string;
+  norm: string;
+  /** Within the norm; null when the report lacks the figure. */
+  ok: boolean | null;
+}
+
+/** `3,8 с` for 3800 ms: one decimal, a comma, whole values without it. */
+const seconds = (ms: number): string => `${String(Math.round(ms / 100) / 10).replace('.', ',')} с`;
+
+const row = (key: TestRunRow['key'], label: string, norm: string, value: number | undefined,
+             show: (v: number) => string, within: (v: number) => boolean): TestRunRow =>
+  value === undefined || !Number.isFinite(value)
+    ? { key, label, value: '—', norm, ok: null }
+    : { key, label, value: show(value), norm, ok: within(value) };
+
+/**
+ * A stored test run as the four rows of «Тестовий запуск», each against its norm (limits inclusive).
+ * A run that failed (`error`) has no figures and no rows: the screen shows the error instead.
+ */
+export function evaluateTestRun(run: TestRun): TestRunRow[] {
+  if (run.error !== undefined) return [];
+  return [
+    row('firstFrame', 'Час до першого кадру', `до ${seconds(TEST_NORMS.maxFirstFrameMs)}`, run.timeToFirstFrameMs,
+      seconds, v => v <= TEST_NORMS.maxFirstFrameMs),
+    row('fps', 'Середній FPS', `від ${TEST_NORMS.minFps}`, run.avgFps,
+      v => String(Math.round(v * 10) / 10).replace('.', ','), v => v >= TEST_NORMS.minFps),
+    row('gpu', 'Памʼять GPU', `до ${formatBytes(TEST_NORMS.maxGpuBytes)}`, run.gpuMemoryBytes,
+      formatBytes, v => v <= TEST_NORMS.maxGpuBytes),
+    row('errors', 'Помилки в консолі', String(TEST_NORMS.maxConsoleErrors), run.consoleErrors,
+      String, v => v <= TEST_NORMS.maxConsoleErrors),
+  ];
+}
+
+// ==================== JOURNAL ====================
+
+export interface EventView {
+  icon: string;
+  /** What happened, without the actor. */
+  text: string;
+  /** A moderator's reason, when the row carries one. */
+  note?: string;
+}
+
+const FIELD_NAMES: Readonly<Record<string, string>> = {
+  title: 'назву', description: 'короткий опис', fullDescription: 'повний опис', category: 'категорію',
+  categoryLabel: 'підпис категорії', imageUrl: 'превʼю', scenarioUrl: 'архів', manifestUrl: 'маніфест',
+  version: 'версію', author: 'автора', features: '«Що всередині»',
+};
+
+const EVENTS: Readonly<Record<string, { icon: string; text: string }>> = {
+  'scenario.create': { icon: 'plus', text: 'Створено сценарій' },
+  'scenario.submit': { icon: 'paper-plane-tilt', text: 'Надіслано на модерацію' },
+  'scenario.withdraw': { icon: 'arrow-u-up-left', text: 'Відкликано з перевірки' },
+  'scenario.approve': { icon: 'seal-check', text: 'Опубліковано в каталозі' },
+  'scenario.reject': { icon: 'arrow-u-up-left', text: 'Повернуто на доопрацювання' },
+  'scenario.unpublish': { icon: 'eye-slash', text: 'Знято з публікації' },
+  'scenario.archive': { icon: 'upload-simple', text: 'Завантажено архів' },
+  'scenario.preview': { icon: 'file-image', text: 'Оновлено превʼю' },
+  'scenario.preview.remove': { icon: 'file-image', text: 'Прибрано превʼю' },
+  'scenario.delete': { icon: 'trash', text: 'Сценарій видалено' },
+  'version.accept': { icon: 'seal-check', text: 'Прийнято нову версію архіву' },
+  'version.reject': { icon: 'arrow-u-up-left', text: 'Відхилено нову версію архіву' },
+  'version.restore': { icon: 'arrow-counter-clockwise', text: 'Відновлено попередню версію архіву' },
+  'version.delete': { icon: 'trash', text: 'Видалено версію архіву' },
+  'version.checks': { icon: 'shield-check', text: 'Перезапущено перевірку архіву' },
+  'version.test-run': { icon: 'play-circle', text: 'Збережено результат тестового запуску' },
+  'category.create': { icon: 'folders', text: 'Додано категорію' },
+  'category.update': { icon: 'folders', text: 'Змінено категорію' },
+  'category.reorder': { icon: 'folders', text: 'Змінено порядок категорій' },
+  'category.delete': { icon: 'trash', text: 'Видалено категорію' },
+  'key.create': { icon: 'shield-check', text: 'Видано код доступу' },
+  'key.revoke': { icon: 'x', text: 'Відкликано код доступу' },
+};
+
+/** How a journal row reads in "Історія рішень"; an action this build has no sentence for shows its name. */
+export function describeEvent(row: Pick<AuditRow, 'action' | 'details'>): EventView {
+  const details = row.details ?? {};
+  const note = typeof details['note'] === 'string' && details['note'] ? details['note'] : undefined;
+
+  if (row.action === 'scenario.update') {
+    const fields = Array.isArray(details['fields'])
+      ? details['fields'].filter((f): f is string => typeof f === 'string').map(f => FIELD_NAMES[f] ?? f)
+      : [];
+    return { icon: 'pencil-simple', text: fields.length ? `Оновлено: ${fields.join(', ')}` : 'Оновлено сценарій' };
+  }
+
+  const known = Object.hasOwn(EVENTS, row.action) ? EVENTS[row.action] : undefined;
+  return { ...(known ?? { icon: 'info', text: row.action }), ...(note ? { note } : {}) };
+}

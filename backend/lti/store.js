@@ -2,6 +2,8 @@
 //
 // Every SQL statement of the LTI module. Handlers talk to this, never to `pg`.
 
+const { ITEM_FROM, PUBLIC_ROW } = require('../scenario-rows');
+
 /** @param {import('pg').Pool} pool */
 function createStore(pool) {
   const REGISTRATION_COLUMNS = `
@@ -71,10 +73,13 @@ function createStore(pool) {
       return rows[0] || null;
     },
 
-    /** The catalog facts LTI needs about a scenario, or null when the id is unknown. */
+    /**
+     * The catalog facts LTI needs about a scenario, or null when the id is unknown. `isPublished` is what
+     * students may see (`PUBLIC_ROW`: status published, category not hidden), not the admin's row state.
+     */
     async getScenario(id) {
       const { rows } = await pool.query(
-        'SELECT id, title, graded, is_published = true AS "isPublished" FROM scenarios WHERE id = $1', [id]);
+        `SELECT s.id, s.title, s.graded, (${PUBLIC_ROW}) AS "isPublished" ${ITEM_FROM} WHERE s.id = $1`, [id]);
       return rows[0] || null;
     },
 

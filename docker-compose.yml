@@ -50,6 +50,11 @@ services:
       LTI_PUBLIC_URL: ${LTI_PUBLIC_URL:-}
       LTI_REGISTRATION_SECRET: ${LTI_REGISTRATION_SECRET:-}
       LTI_TOOL_KEY_FILE: /srv/lti/tool-key.pem
+      # Optional limits; an empty value falls back to the backend default.
+      AUTHOR_UPLOADS_PER_HOUR: ${AUTHOR_UPLOADS_PER_HOUR:-}
+      AUTH_FAILURES_PER_WINDOW: ${AUTH_FAILURES_PER_WINDOW:-}
+      MAX_ENTRY_BYTES: ${MAX_ENTRY_BYTES:-}
+      MAX_ARCHIVE_ENTRIES: ${MAX_ARCHIVE_ENTRIES:-}
     volumes:
       # Content-addressed archives. Written here, served by nginx.
       - virtual_lab_archives:/srv/archives
@@ -57,6 +62,8 @@ services:
       - virtual_lab_lti:/srv/lti
       # Per-asset store for streamed scenarios — the same idea at a finer grain.
       - virtual_lab_assets:/srv/assets
+      # Cover images, content-addressed like the archives. Written here, served by nginx.
+      - virtual_lab_previews:/srv/previews
     depends_on:
       database:
         condition: service_healthy
@@ -88,6 +95,7 @@ services:
       # Read-only: nginx serves archives, Express never streams their bytes.
       - virtual_lab_archives:/srv/archives:ro
       - virtual_lab_assets:/srv/assets:ro
+      - virtual_lab_previews:/srv/previews:ro
     depends_on:
       backend:
         condition: service_healthy
@@ -106,3 +114,5 @@ volumes:
     name: virtual_lab_assets
   virtual_lab_lti:
     name: virtual_lab_lti
+  virtual_lab_previews:
+    name: virtual_lab_previews

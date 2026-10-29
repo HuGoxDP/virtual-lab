@@ -49,3 +49,9 @@ test('DW-5.3 csp.conf: blob: in img-src or worker-src is not a script-src findin
   const csp = CLEAN_CSP.replace(`frame-src`, `img-src 'self' data: blob:; worker-src 'self' blob:; frame-src`);
   assert.deepEqual(checkCsp(csp), []);
 });
+
+test('DW-4.2 csp.conf: https:, http: or * in img-src is reported; self, data: and blob: are not', () => {
+  const withImg = img => CLEAN_CSP.replace(`frame-src`, `img-src ${img}; frame-src`);
+  assert.deepEqual(checkCsp(withImg(`'self' data: blob:`)), []);
+  for (const bad of [`'self' data: blob: https:`, `'self' http:`, `*`]) assert.equal(checkCsp(withImg(bad)).length, 1, bad);
+});

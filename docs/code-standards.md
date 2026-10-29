@@ -41,6 +41,11 @@ let params = new HttpParams().set('limit', String(PAGE_SIZE)).set('offset', Stri
 if (category && category !== 'all') params = params.set('category', category);
 ```
 
+**Exception: the admin lists are filtered on the client.** `/admin/scenarios`, the moderation queue and the
+dashboard read the *unpaged* `GET /api/admin/scenarios` (the whole set the principal may see), so a client filter sees
+everything; the rule above exists for the *paged* public catalog. If the admin list ever becomes paged, its filters move
+to the server in the same change.
+
 **No imports from `three` or engine internals** — the app imports only `from 'WebEngineTS/player-host'`
 (never the bare `'WebEngineTS'`: `check-csp-assumptions` fails the build on it, since the page has no import
 map and the engine runs in the player frame); a second Three.js breaks the engine's `instanceof` checks. No engine workaround in this repo: write it up in
@@ -93,8 +98,9 @@ because `fetch` cannot report upload progress.
 ## Error Handling
 
 - **Backend:** each route wraps its body in `try/catch`; `console.error('[AREA] …', err.message)`;
-  responds `{ error: '<Ukrainian message>' }` with 4xx/5xx. Auth middleware answers 503 (not
-  configured) / 401 (no header) / 403 (wrong token) — tests pin all three.
+  responds `{ error: '<Ukrainian message>' }` with 4xx/5xx. Auth middleware answers 401 (no
+  credential) / 403 (unknown or revoked code, or a role/ownership refusal) / 429 (too many failed
+  attempts). It no longer answers 503: an unset `ADMIN_TOKEN` only switches the bootstrap code off.
 - **Frontend:** services catch, set an `_error` signal, and keep state consistent on failure
   (`scenario.service.ts:122`); `AdminService.describeError()` maps `HttpErrorResponse` to the
   server's own message.
@@ -180,8 +186,10 @@ frontend/src/app/
 └── app.routes.ts        # lazy loadComponent per route
 frontend/src/assets/     # engine standalone build is copied here by angular.json, basis/ committed
 backend/
-├── server.js            # all routes (sectioned)
-├── <concern>.js         # storage, migrations, archive-validation, player-formats
+├── server.js            # wiring: middleware, one router per concern from routes/, the /api/lti mount, startup
+├── routes/*.js          # one express router per concern (catalog-public, catalog-admin, archives, ...)
+├── lti/                 # the LTI 1.3 tool (own router, own store; knows nothing of routes/)
+├── <concern>.js         # storage, migrations, versions, archive-validation, player-formats, scenario-rows, trust-proxy
 ├── migrations/NNN_*.sql
 ├── scripts/*.mjs        # CLI: publish-release, import-release-assets, verify-ktx2
 └── test/{unit,integration,helpers}/

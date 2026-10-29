@@ -66,11 +66,15 @@ function configInChild(maxArchiveBytes) {
 
 test('106. [DW-1.5] GET /api/config', async t => {
   await t.test('defaults to 200 MiB', () => {
-    assert.deepEqual(configInChild(undefined), [200, { maxArchiveBytes: 209715200 }]);
+    const [status, body] = configInChild(undefined);
+    assert.equal(status, 200);
+    assert.equal(body.maxArchiveBytes, 209715200);
   });
 
   await t.test('honours MAX_ARCHIVE_BYTES', () => {
-    assert.deepEqual(configInChild('12345'), [200, { maxArchiveBytes: 12345 }]);
+    const [status, body] = configInChild('12345');
+    assert.equal(status, 200);
+    assert.equal(body.maxArchiveBytes, 12345);
   });
 
   await t.test('a junk value falls back to the default instead of disabling the cap', () => {
@@ -81,7 +85,7 @@ test('106. [DW-1.5] GET /api/config', async t => {
 
   await t.test('is public and reflects the limit this process loaded', async () => {
     const res = await request(app).get('/api/config').expect(200);
-    assert.deepEqual(res.body, { maxArchiveBytes: ARCHIVE.length });
+    assert.equal(res.body.maxArchiveBytes, ARCHIVE.length);
   });
 });
 

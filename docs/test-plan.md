@@ -148,12 +148,13 @@ Legend: **[U]** unit · **[I]** integration · **[C]** component · **[E]** E2E.
 
 17. [I] No `Authorization` header → 401 on `POST`, `PUT`, `DELETE`, `/api/admin/scenarios`,
     `/api/telemetry/summary`, both archive endpoints.
-18. [I] `Authorization: Bearer <wrong>` → 403.
+18. [I] `Authorization: Bearer <wrong>` → 403 (counted against the address; see 183).
 19. [I] Correct token → 2xx.
 20. [I] Header without the `Bearer ` prefix → 401.
 21. [I] Token of the correct value but different length → 403, no crash
     (`timingSafeEqual` throws on length mismatch; the length guard must catch it).
-22. [I] `ADMIN_TOKEN` unset → 503 on every admin route, while `GET`s stay 200.
+22. [I] **Superseded by 180 (release 2, phase 2):** with `ADMIN_TOKEN` unset the bootstrap is off — its value
+    is just an unknown token (403), personal keys still work, and nothing answers 503; `GET`s stay 200.
 23. [I] All `GET /api/catalog*` remain public with no header.
 
 ### 4.3 Download proxy — **deleted 2026-08-13, scenarios 24–35 retired**
@@ -536,12 +537,199 @@ engine from inside the player frame (`e2e/helpers/engine.ts`). `viewer-profiler.
      files were requested from `/assets/basis/`, the renderer reports a compressed GPU format (not RGBA8)
      and the scene drew.
 
+#### Nocturne release 2, phase 2: keys, roles and authorization
+
+Specs: `backend/test/integration/{keys,route-table,author-rules,audit,rate-limits,archive-caps,migration-009}.test.js`,
+`backend/test/unit/{archive-caps,auth-and-limits}.test.js`. Keys are inserted through `test/helpers/keys.js`, hashed
+independently of `auth.js`. Scenarios 17-23 above still hold for the bootstrap moderator.
+
+178. [I] Keys (DW-2.2): `POST /api/keys` returns `{id, label, role, token}` once (201, `no-store`); the row holds only a
+     64-hex SHA-256; `GET /api/keys` lists no token or hash; captured console output never contains a token;
+     `/api/auth/me` answers author, moderator key and bootstrap (`keyId` null) and 403 once revoked; revoking is
+     idempotent and 404 for an unknown id; `role: "admin"`, empty and 101-character labels are 400.
+179. [I] Route table (DW-2.3): {anonymous, unknown, revoked, author A, author B, moderator key, bootstrap} x every guarded
+     route -> 401 / 403 / success, one table; a denied call leaves state untouched; an author lists only their own
+     rows, a moderator all; public GETs stay public.
+180. [I] Dirty headers (DW-2.3): `Bearer ` empty, bare `Bearer`, Basic, lowercase `bearer` -> 401; two spaces and a 10 KB
+     token -> 403; a duplicated header never admits a bad credential; `ADMIN_TOKEN` unset -> keys work, no 503.
+181. [I] Author field rules (DW-2.4): each forbidden field (`scenarioUrl`, `manifestUrl`, `imageUrl`, `author`, `isPublished`,
+     `archive*`) -> 400 on POST and PUT; unknown `category` -> 400 and no category row; `categoryLabel` ignored; POST by
+     an author -> unpublished, owned, `author` = key label; another author's scenario -> 403; moderator POST keeps
+     create-on-unknown-slug; upload into one's own unpublished scenario 201, into a published one 403. Text widths
+     (found at VERIFY, `catalog-text-widths.test.js` + `catalog-input.test.js`): `id` 100, `title` 255, `category` 50,
+     `categoryLabel` 100, `version` 20, `author` 255, `manifestUrl` 300 - each stored at the width, 400 with a Ukrainian
+     message one over (never a 500), a non-string 400, widths counted in characters not UTF-16 units, on POST and PUT.
+182. [I] Audit (DW-2.5): one `audit_events` row per authenticated mutation (create, update, delete, archive, key create and
+     revoke, non-dry-run GC); none for reads, telemetry, dry runs or refused requests; the row rolls back with a failed
+     transaction; history survives deleting the scenario.
+183. [I] Rate limits (DW-2.6): failed authentication 29/30/31 -> 403/403/429 per address, successes never counted, a valid key
+     never limited, addresses independent; author uploads 20 -> 201 and the 21st 429 per key, a moderator's and the
+     bootstrap's 21st succeed; `last_used_at` moves on use.
+184. [U/I] Archive caps (DW-2.6): a manifest of `MAX_ENTRY_BYTES` + 1, an oversize scene or prefab, `MAX_ARCHIVE_ENTRIES` + 1
+     entries and a zip bomb that lies about its size -> 400 without reading past the cap; the entry count is read from
+     the end-of-central-directory record before the directory is parsed; a corrupt entry is still "unreadable"; a
+     rejected upload stores nothing and leaves no temp file.
+185. [I] Migration 009 (DW-2.7): applies twice without error; role check, unique `token_hash`, `owner_key_id` foreign key,
+     no foreign key on `audit_events.scenario_id`.
+186. [U] Pure routines: `requireRole` ranking, `canEditScenario` (unowned and key-less cases), `createWindowCounter` (window
+     expiry, `Retry-After`), `limitAuthorUploads` exemptions, `parsePositiveInt` fallbacks, `forbiddenAuthorFields`,
+     `sha256Hex` (DW-2.2, DW-2.3, DW-2.4, DW-2.6).
+187. [I] Migrations 010/011 (DW-3.1): applied twice (and 010 again after 011) on a rebuilt pre-010 schema; `is_published`
+     TRUE/FALSE/NULL -> published/draft/draft; one `current` version per archived row, none for streaming-only rows;
+     the catalog shows exactly the published ones; status check, one current / one pending per scenario, cascade.
+188. [I] Transition matrix (DW-3.2): every (status x action x {owner, other author, moderator, bootstrap, anonymous}) ->
+     200/401/403/409 with one audit event per success and none per refusal; no archive -> 409 for submit and approve;
+     reject note default / trimmed / 2000 ok / 2001 -> 400 / non-string -> 400; note and `submitted_at` lifecycle;
+     two concurrent approves -> one 409; submit racing withdraw; a PUT cannot set `status`.
+189. [I] Upload by status (DW-3.3): draft and rejected -> new current (old archived, pending row deleted, same bytes a
+     no-op); review -> 409 and nothing stored; published by moderator -> current, by author -> pending (a second
+     replaces it; the public catalog keeps the old URL until accept); stranger 403, unknown 404; the 51st version -> 409;
+     an author's upload racing an approve never becomes current on the published row.
+190. [I] Version routes (DW-3.4): list (owner/moderator), accept, reject (row deleted), restore, delete (archived by a
+     moderator, pending by its owner or a moderator, current -> 409), unpublish keeps a pending row, `:vid` of another
+     scenario or malformed -> 404, role table, racing accept/restore leave one current version.
+191. [I] Version preview (DW-3.5): `GET /api/catalog/:id?version=` - published versions public (pending included),
+     draft/review/rejected only for owner and moderators, everyone else 404; 63/65/non-hex/repeated -> 400; foreign hash
+     404; `Cache-Control: no-store` on every answer; a wrong credential counts against the address (429).
+192. [I] `from-archive` (DW-3.6): valid ZIP -> draft owned by the caller with manifest fields and `{scenario, version,
+     manifest, warnings}`; taken id -> 409 (also racing); manifest ids of 101 characters, with `/`, spaces, dots, uppercase
+     -> 400 with a hint; invalid ZIPs, unknown category -> 400 with no row, object or temp file; upload limit applies.
+193. [I] GC and versions (DW-3.7): current, pending and archived objects survive a sweep however old; a deleted or rejected
+     version's object (and a deleted scenario's) is collectible once older than `GC_MIN_AGE_MS`; a shared object lives
+     until the last reference; a dedup re-upload refreshes mtime (also [U] in `storage.test.js`).
+194. [U] Pure routines: the transition table's shape, `parseRejectNote`, `sendError`, `optionalAuthenticate` without a
+     lookup, `SCENARIO_ID_PATTERN` (DW-3.2, DW-3.5, DW-3.6).
+195. [U] `publish:release` (DW-3.8): a new row is created, uploaded, then approved; an existing draft is approved, a live
+     row is left, a bench scene is unpublished; a dry run writes nothing. Compatibility: `PUT {isPublished}` approves /
+     unpublishes (409 without an archive), a POST ignores it, every guarded route is in the route table (179).
+196. [F] Viewer draft preview (DW-3.5): `?draft=` is parsed (64 hex, lowercased, malformed -> error screen), the service sends
+     `?version=` with the session bearer only for a preview, `returnTo` is honoured only for a draft and only as a relative
+     `/admin...` path (`https://evil.example`, `//evil`, backslash, `..` ignored), `goBack` follows it too; a preview
+     never streams.
+197. [E2E] `e2e/tests/draft-preview.spec.ts` (DW-3.5): a draft's version is a 404 anonymously and plays for the signed-in
+     owner/moderator, Вийти goes to the validated `returnTo`, a hostile one is ignored; `admin-golden-path.spec.ts` now
+     creates, uploads, then publishes through the toggle (a new row is a draft).
+
+198. [I] Categories (DW-4.1) `categories.test.js`: create/edit/delete/reorder for moderators (bootstrap too), slug 1/2/50/51
+     characters and uppercase/space/underscore, bad label/icon/isVisible -> 400; used category -> 409; reorder with a partial,
+     unknown or duplicate list changes nothing; authors 403; hiding a category removes its scenarios from list, summary,
+     chips, related, `/:id` and `?version=` for the public (owner and moderators still reach them); a slug with no row stays public.
+199. [I][U] Preview accepting (DW-4.2) `previews.test.js`, `preview-image.test.js`: PNG and JPEG at 800 px, 16:10, 5 MiB exactly
+     stored as `/previews/<sha>.<ext>`; 16:9 stored with a warning; the 5 % tolerance; remove is idempotent; role cases.
+200. [I][U] Preview dirty and storage (DW-4.2) `previews.test.js`, `preview-store.test.js`: SVG, GIF, text, ZIP, a file shorter
+     than its header, 5 MiB + 1, 799 px -> 400 with nothing stored; type by bytes (PNG named .jpg, JPEG as image/png);
+     GC and `/api/admin/storage` cover both stores; the second store lists only its own names.
+201. [I][U] `imageUrl` rule and CSP (DW-4.2, DW-4.6) `previews.test.js`, `category-input.test.js`, `csp-conf.test.js`,
+     frontend `test:scripts`: author PUT/POST with any imageUrl -> 400; moderator with an external URL -> 400, with
+     ''/current/`/previews/...` -> 200; migration 012 clears external URLs (listed in the log), keeps same-origin, twice;
+     `img-src` is exactly `'self' data: blob:`; `/previews/` carries the CSP include.
+202. [I][U] Checks and contents (DW-4.3) `version-tools.test.js`, `archive-checks.test.js`: every new version (upload,
+     from-archive, pending) stores its checks; re-run refreshes them (a vanished object is an error item); contents of a nested
+     archive with sizes; the entry cap; manifest field limits (id 255, version 50, engineVersion 100) and non-string name/version -> 400.
+203. [I][U] Test-run (DW-4.4) `version-tools.test.js`, `test-run-input.test.js`: numeric result stored with who/when; an error
+     result `{error, engineBuild?, userAgent?}` stored without numbers; negative, NaN, 10^12 ms, 101-char build, missing
+     field, numbers beside an error -> 400 and the stored run untouched.
+204. [I] Bulk (DW-4.5) `version-tools.test.js`: mixed ids -> per-id results, each in its own transaction, repeated ids once;
+     malformed requests -> 400; unknown category reported per id; authors 403; audit rows flagged `bulk`.
+205. [I] Dashboard, history and admin rows (DW-4.5) `version-tools.test.js`: counts by status with zeros, queue size, activity,
+     scoped to an author's scenarios; history newest first, owner or moderator, survives deletion; `ownerLabel`,
+     `pendingVersionId`, `currentVersion` with check counts.
+206. [I] Route table rows for every Phase 4 route (179), `/api/config` preview limits (DW-4.6), `from-archive` manifest input.
+207. [U] Pure routines: `inspectPreview`, `validateTestRun`, `validateCategory`, `imageUrlProblem`, `describeError`, the store factory.
+
+#### Nocturne release 2, phase 5: admin UI - sign-in, shell, list, metadata and publication
+
+Specs: `frontend/src/app/services/{admin-api,admin-session,admin}.service.spec.ts`,
+`pages/admin/{admin-guards,admin-login.component,scenario-rules}.spec.ts`,
+`pages/admin/{admin-shell,scenario-list,scenario-meta-form,scenario-publish,scenario-edit}/*.spec.ts`,
+`ui/{icon-picker,status-pill}/*.spec.ts`; e2e `e2e/tests/admin-workflow.spec.ts` (keys are issued and revoked through
+`helpers/api.ts`, whose helpers take the code to act as). (The old admin lived at `/admin/legacy` until phase 6 deleted it.)
+
+208. [U] Session and API (DW-5.1, DW-5.5) `admin-api`, `admin-session`, `admin-guards`: author / moderator / revoked / empty
+     sign-in, nothing stored on a refusal; the code only in `sessionStorage`, cleared on sign-out; `AdminApi` routes and bodies;
+     401 and 403 `Невірний токен` end the session with a reason, any other 403, a 409 and a 500 do not; guards (anonymous ->
+     sign-in, author -> list for moderator pages); the unsaved-changes guard.
+209. [U] Sign-in screen and shell (DW-5.1, DW-5.5): plaque for a refused or empty code, the reason of an ended session, no demo
+     codes or "12 годин"; name and role in the user card, role-aware items, queue badge, sign-out, a session that ends under
+     the screen goes to sign-in; burger / Escape / scrim / navigation open and close the drawer.
+210. [U] List (DW-5.2): chip counts, status and category filters (combined, reset), pills, archive size, long author text;
+     authors get no selection or bulk bar; moderators: selection, select-all of visible rows, bulk publish / unpublish /
+     category / delete with per-id results, a whole-request refusal.
+211. [U] Метадані (DW-5.3): saves only changed fields; the 0 / 160 counter and the 161 block; six features and a blocked
+     seventh, the icon picker, clean entries; preview upload with warnings and removal; `author` read-only for authors and
+     never sent; the live card equals a catalog card; readiness (missing description / preview / archive, check findings).
+212. [U] Публікація (DW-5.4) `scenario-rules`: each transition per role and status (disabled without an archive, note for a
+     return, confirm for unpublishing), the server's refusal shown, the history from the journal as sentences, who and when.
+213. [U] Edit page (DW-5.5): unsaved edits survive Метадані -> Публікація -> Метадані; leaving asks (stay / go) and a clean
+     page does not; `beforeunload`; refetch after a save; not found, error and retry; a 300-character title.
+214. [E] Sign-in (DW-5.1): bootstrap shows name and role, the code never reaches `localStorage` or the URL, sign-out clears the
+     session; an author gets the author menu and a moderator-only section sends them to the dashboard (`/admin`, decision #47); revoked and
+     empty codes. *Written and type-checked; run by the orchestrator at VERIFY.*
+215. [E] Author flow (DW-5.5): sign in as a key -> own row only -> edit Метадані (live card, counter) -> save -> Публікація ->
+     submit -> status and history; the archive is seeded through the key-parameterised helper. *Not run.*
+216. [E] Edge cases (DW-5.5): unsaved edits across a tab switch and the browser prompt; a key revoked mid-session and on reload
+     returns to sign-in with the reason; at 390 px the sidebar is a drawer; a 255-character (the `title` column maximum; a 300-character one is now a 400, scenario 181) unbroken title keeps the layout. *Not run.*
+
+#### Nocturne release 2, phase 6: admin UI - files, checks and the upload wizard
+
+Specs: `frontend/src/app/pages/admin/{archive-upload,check-list,scenario-files,scenario-checks,upload-wizard}/*.spec.ts`,
+`pages/admin/scenario-rules.spec.ts` (`evaluateTestRun`), `app.routes.spec.ts`, `services/admin-{api,session}.service.spec.ts`
+(abortable upload, a transient restore failure keeps the code); e2e `e2e/tests/admin-upload-wizard.spec.ts`,
+`admin-files-tab.spec.ts`, and the rewritten `admin-golden-path.spec.ts` (all written and type-checked, **not run**: they need a
+stack built from the branch). The old admin, its `/admin/legacy` route, its styles and its characterisation tests (#119) are deleted.
+
+217. [U] Test-run norms (DW-6.2) `evaluateTestRun`: <= 5 s, >= 30 FPS, <= 1 GB, 0 errors, limits inclusive; a failed run has no
+     rows; a missing figure is a dash, not a pass.
+218. [U] Файл (DW-6.1, DW-6.3) `scenario-files`, `archive-upload`: current archive, contents tree (directory counts, hostile paths
+     as text), history with restore / delete for moderators only, the pending banner with the preview link
+     (`/play/:id?draft=<sha>&returnTo=/admin/scenarios/:id/files`) and accept / reject (moderator) or retract (author); replace
+     by drag-and-drop or chooser with progress and cancel (the request is aborted), the over-50 MB warning, a file over the
+     platform cap or not a ZIP refused before any request, a scenario in review disabled with the withdraw hint and a late
+     409 explained; a response for a scenario the user left is ignored.
+219. [U] Перевірка (DW-6.2) `scenario-checks`, `check-list`: the stored checks as a verdict and rows with the level in words
+     (archive text only as text), re-run, a version without stored checks, the stored test run against the norms, `(runTest)`
+     raised only for a moderator and only when enabled, the current / pending choice, a stale response ignored.
+220. [U] Wizard (DW-6.3) `upload-wizard`: ZIP -> draft with the manifest prefilled (a `<script>` name is text), edits kept across
+     steps and reported as unsaved, checks on step 3, submit / publish / save draft, unsaved metadata blocks them, a 409 / 400
+     shown, a cancel leaves no draft, leaving after step 1 deletes nothing, a replacement refreshes the row.
+221. [U] Routes (DW-6.4) `app.routes.spec`: no `admin/legacy` route (an unknown admin path redirects to the list); `/admin/upload`
+     is the wizard with the unsaved-changes guard; `nocturne-styles.spec`: no legacy stylesheet or component remains.
+222. [E] Wizard (DW-6.3, DW-6.4): author key -> ZIP in a real file chooser -> draft with the manifest prefilled -> edit and save
+     Метадані -> checks -> submit -> in review; leaving after step 1 keeps the draft in the list; a cancelled upload leaves no
+     row; a duplicate manifest id is refused; a hostile manifest name runs nothing; a non-ZIP is refused before a request. *Not run.*
+223. [E] Файл (DW-6.1, DW-6.4): an author's new archive for a published scenario is pending (retract works); a moderator accepts
+     the pending version from the Файл tab and it becomes current; restore for a moderator, none for an author. *Not run.*
+224. [E] Перевірка and the old admin (DW-6.2, DW-6.4): stored checks, re-run, a test run against the norms, the run button inert
+     and absent for authors; `/admin/legacy` lands on the list with no old screen. *Not run.*
+225. [U] Restore after a reload (DW-6.3, review note of phase 5) `admin-session`, `admin-login`: a 5xx or a network failure keeps
+     the code and reports the problem on the sign-in screen; a credential rejection still drops it; the next restore asks again.
+
+226. [U] Queue (DW-7.1) `queue.component.spec`, `reviewChips`: Очікують (reviews and proposals, oldest first) / Повернуті / Опрацьовані with
+     counts; a check summary on every card (passes, gaps, «Великий архів»); publish, return with a trimmed note, accept or reject a
+     proposal through the version routes, each followed by a re-read; a refusal shown on its card; one decision at a time; recent
+     decisions from the journal; author text only as text.
+227. [U] Dashboard (DW-7.2) `dashboard.component.spec`, routes: counts of every status as the server scoped them, the queue block for a
+     moderator only, activity as sentences (category and key rows included) linking to the scenario, quick actions by role;
+     `/admin` is the dashboard and login lands there.
+228. [U] Test run (DW-7.5) `scenario-checks` run block, `test-run-report.spec`, `player-config.spec`: archive -> player (fake host) ->
+     measure(10) -> report saved and shown; a failing load, measure or download stores the error, not numbers; a 500-character engine
+     build is posted as 100, user agent 300, figures clamped, a non-number turns the run into an error; cancel and leaving dispose the host.
+229. [U] Напрями (DW-7.3) `categories.component.spec`: add (validation, duplicate refused, form cleared), move up/down sends the whole
+     order, a 409 re-reads the list, hide/show, rename, icon, delete disabled while used, confirm, delete when empty.
+230. [U] Доступ (DW-7.4) `access.component.spec`: issue -> one-time dialog (not dismissible by Escape or scrim), copy and its fallback,
+     closed means gone from the DOM and the page, last use shown, revoke with confirm, revoking one's own key signs out.
+231. [E] Moderation path (DW-7.6, DW-7.1-7.4) `admin-moderation.spec`: moderator issues an author code (shown once) -> author uploads and
+     submits -> moderator publishes from the queue -> catalog has it -> author uploads a new archive -> students still get the old one
+     until the moderator accepts -> revoked code is rejected; dashboard; Напрями add/hide/delete. *Written against a stack built from
+     this branch; see the build report for what was run.*
+
+
 ### 4.11 Golden paths (E2E)
 
 97. **Student**: open `/` → filter by category → search → open the scenario page (`/scenario/:id`) →
     launch → progress ring advances from 0 to 100 → scene renders → back to catalog. Assert a telemetry row was created and closed.
-98. **Teacher/admin**: `/admin` → enter token → create scenario → upload archive → publish →
-    it appears in the public catalog and plays → delete.
+98. **Teacher/admin**: `/admin/login` → enter code → create scenario → upload archive on the Файл tab → publish →
+    it appears in the public catalog and plays (release 2, phase 6: the old admin's per-row delete is gone; teardown is the API).
 
 ---
 
@@ -642,6 +830,21 @@ and restarts between them. The test asserts monotonicity within each phase (told
 label: "Отримання даних із сервера" vs "Ініціалізація сцени"). Release 1 phase 4: the HUD no longer
 has a diagnostics button, so the old "button toggles the overlay" test became "no button, and with
 `?diag=1` the scenario's own overlay is left open".
+
+### 7.1 Release 2 merged with the LTI work
+
+Tests added when `feature/nocturne-release-2-admin` was merged into `main` (LTI 1.3), where the two models had to meet:
+
+- `backend/test/integration/lti-grades.test.js` (extended): the LTI "published" rule is release 2's - a draft, a scenario in
+  review and a published scenario in a **hidden category** are all 404 «Лабораторну знято» on Deep Linking and on submit.
+- `backend/test/integration/scenario-graded.test.js` (extended): `graded` follows the **current** version - a pending author
+  upload leaves it unchanged, accept switches it, restore of the older version switches it back (and forward again); a pending
+  upload without the key leaves a graded scenario graded; a moderator's upload to a published scenario switches it at once.
+- `backend/test/integration/migration-over-main.test.js`: a database left by `main` (001-008, with rows and LTI data) takes
+  009-013 on a throwaway database, keeps its data, derives status and versions from `is_published`, copies `graded` onto the
+  current version, and a second run (and a raw re-run of every renumbered file) changes nothing; 013's backfill is checked alone.
+- `frontend/src/app/pages/viewer/viewer-lti.spec.ts` (extended): `?lti=1` ignores `?draft=` / `?returnTo=`.
+- `frontend/src/app/app.routes.spec.ts` (extended): `lti/pick` is a public top-level route ahead of the root `**`, not under the admin.
 
 ---
 

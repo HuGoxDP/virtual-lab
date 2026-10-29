@@ -11,7 +11,7 @@ const path = require('node:path');
 const request = require('supertest');
 
 const { app, pool } = require('../../server');
-const { isAvailable, prepareSchema, truncateAll } = require('../helpers/db');
+const { isAvailable, prepareSchema, truncateAll, setStatus } = require('../helpers/db');
 
 const AUTH = { Authorization: `Bearer ${process.env.ADMIN_TOKEN}` };
 
@@ -46,9 +46,9 @@ async function addScenario(over = {}) {
     published: true, createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString(), ...over,
   };
   await pool.query(`
-    INSERT INTO scenarios (id, title, description, category, category_label, is_published, created_at)
+    INSERT INTO scenarios (id, title, description, category, category_label, status, created_at)
     VALUES ($1, $2, $3, $4, $5, $6, $7)
-  `, [row.id, row.title, row.description, row.category, row.categoryLabel, row.published, row.createdAt]);
+  `, [row.id, row.title, row.description, row.category, row.categoryLabel, row.published ? 'published' : 'draft', row.createdAt]);
   return row;
 }
 
@@ -201,12 +201,12 @@ test('101. [DW-1.2] summary and category counts ignore category/q; hidden and em
     const slugs = plain.body.categories.map(c => c.category);
     assert.ok(!slugs.includes('secret'));
     assert.ok(!slugs.includes('drafts'));
-    // 4 published scenarios (the hidden category's one still counts), 2 visible categories.
-    assert.deepEqual(plain.body.summary, { scenarios: 4, categories: 2 });
+    // 3 public scenarios (a hidden category's one is treated as unpublished: Phase 4), 2 visible categories.
+    assert.deepEqual(plain.body.summary, { scenarios: 3, categories: 2 });
   });
 
-  await t.test('a scenario in a hidden category is still listed', () => {
-    assert.ok(ids(plain).includes('x1'));
+  await t.test('a scenario in a hidden category is not listed', () => {
+    assert.ok(!ids(plain).includes('x1'));
   });
 });
 
@@ -382,10 +382,21 @@ test('105. [DW-1.4] by-id dirty input -> 404', async t => {
 
 const goodFeature = (over = {}) => ({ icon: 'atom', title: 'Заголовок', subtitle: 'Підзаголовок', ...over });
 
+/**
+ * POSTs as the bootstrap moderator. A created row starts as a draft, so on a 201 it is published
+ * in SQL: these tests read what the public catalog shows of what the admin wrote.
+ */
 function postScenario(id, extra = {}) {
-  return request(app).post('/api/catalog').set(AUTH).send({
+  const sent = request(app).post('/api/catalog').set(AUTH).send({
     id, title: 'Т', category: 'physics', categoryLabel: 'Фізика', ...extra,
   });
+  return {
+    async expect(status) {
+      const res = await sent.expect(status);
+      if (status === 201) await setStatus(pool, id, 'published');
+      return res;
+    },
+  };
 }
 
 test('108. [DW-1.6] features: accepting boundaries (POST and PUT)', async t => {
@@ -547,7 +558,7 @@ test('110. [DW-1.6] category upsert, canonical label, stored features, slug with
 
   await t.test('a slug with no category row still lists its scenarios, with the scenario label and no chip', async () => {
     await pool.query(
-      `INSERT INTO scenarios (id, title, category, category_label) VALUES ('orphan', 'Без рядка', 'norow', 'Без категорії')`);
+      `INSERT INTO scenarios (id, title, category, category_label, status) VALUES ('orphan', 'Без рядка', 'norow', 'Без категорії', 'published')`);
     const list = await request(app).get('/api/catalog?category=norow').expect(200);
     assert.deepEqual(ids(list), ['orphan']);
     assert.equal(list.body.scenarios[0].categoryLabel, 'Без категорії');

@@ -131,16 +131,18 @@ try {
             category = $s.category; categoryLabel = $s.categoryLabel; version = $s.version
         }
         if ($have -contains $s.id) {
-            $r = Invoke-Api 'PUT' "/api/catalog/$($s.id)" (($fields + @{ isPublished = $true }) | ConvertTo-Json) $null
+            $r = Invoke-Api 'PUT' "/api/catalog/$($s.id)" ($fields | ConvertTo-Json) $null
             Require-Ok $r "PUT $($s.id)"
         } else {
             $r = Invoke-Api 'POST' '/api/catalog' (([ordered]@{ id = $s.id } + $fields) | ConvertTo-Json) $null
             Require-Ok $r "POST $($s.id)"
-            $r = Invoke-Api 'PUT' "/api/catalog/$($s.id)" '{"isPublished":true}' $null
-            Require-Ok $r "publish $($s.id)"
         }
         $r = Invoke-Api 'POST' "/api/scenarios/$($s.id)/archive" $null $zip.Path
         Require-Ok $r "archive $($s.id)"
+        # Release 2: a new row is a draft and approving needs an archive, so publish AFTER the upload
+        # (PUT isPublished is approve; on a row that is already published it changes nothing).
+        $r = Invoke-Api 'PUT' "/api/catalog/$($s.id)" '{"isPublished":true}' $null
+        Require-Ok $r "publish $($s.id)"
         # The API keeps a stored category label as is (ON CONFLICT DO NOTHING), so repair it in SQL.
         # The text travels as hex of its UTF-8 bytes: no console code page can mangle it.
         $hex = ([Text.Encoding]::UTF8.GetBytes($s.categoryLabel) | ForEach-Object { $_.ToString('x2') }) -join ''

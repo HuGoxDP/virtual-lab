@@ -1,6 +1,10 @@
 # Plan: Release 2 — admin, roles and scenario isolation on Nocturne
 **Created:** 2026-10-23
-**Status:** ready
+**Status:** complete
+**Started:** 2026-10-27 12:37
+**Current Phase:** 7
+**Completed:** 2026-10-29 00:30
+**Duration:** ~36 h wall clock (2026-10-27 12:37 → 2026-10-29), much of it waiting on API session limits
 **Superseded in part (Phase 1):** by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) — completed 2026-10-27. Phases 2–7 are unchanged; a build resumes at Phase 2.
 **Complexity:** complex
 **Review cadence:** 2
@@ -44,7 +48,7 @@ access code nor call the API as the user; all suites green.
   author while pending); at most 50 versions per scenario.
 - Existing rows: `published`/`draft` from `is_published`, no owner; `author` stays the display name, defaults to
   the creating key's label, and only moderators edit it.
-- Migrations `007`–`010` (`010`: Phase 4's clearing of external `imageUrl`s); idempotent; `docs/code-standards.md` applies throughout.
+- Migrations `011`–`012` (`012`: Phase 4's clearing of external `imageUrl`s); idempotent; `docs/code-standards.md` applies throughout.
 - CSP: the platform pages already gained `frame-src 'self'` and lost `blob:` from `script-src` (player-isolation plan);
   this plan may still drop `https:` from `img-src` (Phase 4); nothing else loosens.
 - Author-supplied text is rendered as text only — no `innerHTML`, no `bypassSecurityTrust*`.
@@ -98,7 +102,7 @@ field permissions below on every write; harden uploads now that authors are untr
 **Scope:**
 - IN: a behaviour-preserving split of `server.js` into actor modules (own commit; `server.js` stays the entry
   point and keeps its exports `{app, pool, escapeLikePattern, tokensMatch, parseLimit, parseOffset}`);
-  migration `007` (`publish_keys`, `scenarios.owner_key_id`, `audit_events`); principal middleware; keys API;
+  migration `011` (`publish_keys`, `scenarios.owner_key_id`, `audit_events`); principal middleware; keys API;
   `GET /api/auth/me`; rate limits; archive-validation caps; tests; `CLAUDE.md` auth section.
 - OUT: statuses and versions (Phase 3); any UI.
 
@@ -126,7 +130,7 @@ actor_key_id NULL, actor_label, action, details JSONB, created_at)` + `audit.rec
 scenarioId?, details?)` (joins the caller's transaction); `GET/POST /api/keys`, `POST /api/keys/:id/revoke`
 (POST returns `{id, label, role, token}` once); `GET /api/auth/me` → `{role, label, keyId}`.
 **Security-sensitive:** yes
-**Rollback:** migration `007` is additive; redeploying the previous build ignores the new tables and restores `ADMIN_TOKEN`-only access.
+**Rollback:** migration `011` is additive; redeploying the previous build ignores the new tables and restores `ADMIN_TOKEN`-only access.
 
 **File hints:** `backend/server.js:57-82` (auth), `backend/test/integration/auth-and-crud.test.js:40` (`GUARDED`),
 `backend/test/helpers/db.js:48` (`truncateAll`), `backend/archive-validation.js` (uncapped `entryData`),
@@ -139,7 +143,7 @@ scenarioId?, details?)` (joins the caller's transaction); `GET/POST /api/keys`, 
 - [ ] DW-2.4: The author field rules hold: forbidden fields and unknown category slugs → 400; author-created rows are unpublished and owned; upload into a published scenario → 403.
 - [ ] DW-2.5: Every authenticated admin mutation writes one `audit_events` row inside the request's own transaction (rolled back with it); reads and telemetry write none.
 - [ ] DW-2.6: Both rate limits and the validation caps behave as stated; `last_used_at` updates on use.
-- [ ] DW-2.7: Migration `007` applies twice without error.
+- [ ] DW-2.7: Migration `011` applies twice without error.
 
 **Difficulty:** HIGH
 **Uncertainty:** None.
@@ -153,7 +157,7 @@ scenarioId?, details?)` (joins the caller's transaction); `GET/POST /api/keys`, 
 published scenarios, a draft preview the viewer can play, and GC aware of all of it.
 
 **Scope:**
-- IN: migration `008` (`status`, `moderator_note`, `submitted_at`, `scenario_versions`; backfill) and `009` (drop
+- IN: migration `012` (`status`, `moderator_note`, `submitted_at`, `scenario_versions`; backfill) and `011` (drop
   `is_published`, its own file); transition, version, from-archive and preview-by-version endpoints; an
   `isPublished` compatibility field until Phase 6 deletes the old admin; `publish-release.mjs` on the new
   endpoints; the viewer/service reading `/play/:id?draft=<sha256>`; GC references; tests.
@@ -171,11 +175,11 @@ pending). Version routes — `GET …/versions`: owner or moderator; `accept`, `
 version: moderator; `reject` of a pending version (moderator) and `DELETE` of one's own pending version (owner)
 **delete the row** — its object is left to GC; `from-archive`: author (owner = self, counts toward the author
 upload limit) or moderator. Compatibility: responses carry `isPublished = status === 'published'`; a
-moderator's PUT `{isPublished}` maps to approve/unpublish (so `true` on a row without an archive is now 409); `isPublished` in a POST is ignored. Published rows that are streaming-only (a `manifest_url`, no archive) get no version and keep `published`; re-approving one after an unpublish needs an archive first. The test helper `backend/test/helpers/db.js` (`CREATE TABLE`/`INSERT … is_published`, lines 39, 62) is rewritten to `status` — `009` breaks it otherwise.
+moderator's PUT `{isPublished}` maps to approve/unpublish (so `true` on a row without an archive is now 409); `isPublished` in a POST is ignored. Published rows that are streaming-only (a `manifest_url`, no archive) get no version and keep `published`; re-approving one after an unpublish needs an archive first. The test helper `backend/test/helpers/db.js` (`CREATE TABLE`/`INSERT … is_published`, lines 39, 62) is rewritten to `status` — `011` breaks it otherwise.
 **Edge cases:** `:vid` not of `:id` → 404; current version cannot be deleted; >50 versions → 409; two concurrent
 approves → one 409; accept/restore are single transactions; `?version=` not 64-hex → 400; dedup re-upload refreshes
 the object's mtime so GC cannot race it; the backfill reads `is_published IS TRUE` (the column is nullable);
-`from-archive` takes the id from untrusted manifest data — it must match `^[a-z0-9][a-z0-9-]{1,99}$` (400 with a
+the upload route reads the scenario's owner and status under a row lock (`SELECT … FOR UPDATE`) inside its transaction, so a concurrent approve cannot let an author's upload land as current on a just-published row; `from-archive` takes the id from untrusted manifest data — it must match `^[a-z0-9][a-z0-9-]{1,99}$` (400 with a
 hint to rebuild with ScenarioCreator otherwise, never a 500); a draft preview's exit goes back to the admin
 `Файл` tab via a `returnTo` that must be a relative `/admin/…` path (a non-published scenario has no public page).
 **Depends on:** Phase 2 | **Unlocks:** Phase 4
@@ -191,7 +195,7 @@ bytes, manifest_id, manifest_version, engine_version, uploaded_by_key_id, upload
 (draft, id = manifest id, 409 if taken); `GET /api/catalog/:id?version=<sha256>` → public projection,
 `Cache-Control: no-store`; a non-published scenario needs its owner or a moderator (the viewer sends the session's bearer).
 **Security-sensitive:** yes
-**Rollback:** `008` is additive. `009` is the point of no return — take a `pg_dump` before deploying it; the
+**Rollback:** `010` is additive. `011` is the point of no return — take a `pg_dump` before deploying it; the
 down-migration in its header is `ALTER TABLE scenarios ADD COLUMN is_published BOOLEAN DEFAULT true;
 UPDATE scenarios SET is_published = (status = 'published');` (versions and pending state are not recoverable by it).
 
@@ -201,7 +205,7 @@ UPDATE scenarios SET is_published = (status = 'published');` (versions and pendi
 `archives-and-telemetry.test.js:434`, `catalog.test.js:241`.
 
 **Done when:**
-- [ ] DW-3.1: `008` and `009` apply twice without error; existing rows become `published`/`draft` with one `current` version; the catalog shows exactly the published ones.
+- [ ] DW-3.1: `010` and `011` apply twice without error; existing rows become `published`/`draft` with one `current` version; the catalog shows exactly the published ones.
 - [ ] DW-3.2: The transition table holds for every (status × action × role), each success writing an audit event.
 - [ ] DW-3.3: The upload-by-status rules hold; a pending archive leaves students on the old one until accept.
 - [ ] DW-3.4: Accept, reject and author retract of a pending version; restore of an archived one; delete rules and `:vid` ownership.
@@ -231,12 +235,12 @@ test-run results, bulk actions, the dashboard, and the admin row data the queue 
 **Constraints:** `imageUrl` changes through preview upload/remove (owner or moderator); in a PUT/POST only a
 moderator may send it, and only as `''`, its current value, or a `/previews/…` path (the old admin form and
 `publish-release.mjs:175` send it on every save); `backend/scripts/catalog-metadata.mjs:49`'s external Unsplash
-URL is removed and migration `010` clears any stored external `imageUrl` (listing the rows in its log) before `img-src` drops `https:`. A hidden
+URL is removed and migration `012` clears any stored external `imageUrl` (listing the rows in its log) before `img-src` drops `https:`. A hidden
 category makes its scenarios unpublished to every public endpoint (list, summary, related, `/:id`, play); a
 category in use cannot be deleted (409). Roles — `GET /api/categories`: any principal (authors pick from it,
 hidden ones flagged); category mutations, bulk, test-run: moderator; preview upload/remove, contents, check
 re-run: owner or moderator; dashboard and admin rows: any principal, scoped.
-**Edge cases:** preview type by magic bytes (PNG/JPEG only; SVG, GIF, disguised files → 400), ≤5 MB, width
+**Edge cases:** `scenario_versions.manifest_id` and `scenarios.manifest_id` share one length limit, so accepting a pending version can never fail with a 500 on a long manifest id (Phase 3 review: VARCHAR(255) vs 200); a non-string manifest `name`/`version` in `from-archive` → 400, not "[object Object]"; preview type by magic bytes (PNG/JPEG only; SVG, GIF, disguised files → 400), ≤5 MB, width
 ≥800 px, 16:10 ±5% else a warning; a file shorter than its header → 400; slug `^[a-z0-9-]{2,50}$`; test-run
 numbers range-checked (TTFF 0–600 000 ms, FPS 0–1000, GPU 0–64 GiB, errors 0–100 000) and strings capped
 (`engineBuild` 100, `userAgent` 300); bulk returns per-id results, each id in its own transaction; checks and
@@ -332,7 +336,7 @@ reused by Phase 6's wizard.
   `/admin/legacy`; unit + e2e.
 - OUT: running a test (Phase 7).
 
-**Edge cases:** cancelling an upload aborts it and leaves no half-created scenario; leaving the wizard after
+**Edge cases:** `AdminSession.restore()` keeps the code on a transient failure (5xx, network) and drops it only on a credential rejection; the Публікація history and the new tabs ignore a stale response after the scenario id changes (Phase 5 review notes); cancelling an upload aborts it and leaves no half-created scenario; leaving the wizard after
 step 1 keeps the draft (listed); a 409 for an upload in review explains withdrawal; an archive over
 `maxArchiveBytes` is refused before upload.
 **Depends on:** Phase 5 | **Unlocks:** Phase 7
@@ -414,10 +418,10 @@ New scenarios get numbers in `docs/test-plan.md` and are cited in each spec head
 - [ ] One audit row per authenticated mutation, rolled back with a failed transaction; none for reads/telemetry (DW-2.5)
 - [ ] Boundary: 29/30/31 failed auths → 403/403/429; successes don't count; author 20/21 uploads per hour → 200/429 (a `from-archive` upload counts), a moderator's 21st → 200; `last_used_at` moves (DW-2.6)
 - [ ] Dirty archives: manifest entry of 10 MiB + 1 byte, 20 001 entries, zip bomb ratio → 400 without memory growth beyond the cap (DW-2.6)
-- [ ] `POST /api/keys {role: 'admin'}`, label empty / 101 chars → 400; migration `007` twice (DW-2.2, DW-2.7)
+- [ ] `POST /api/keys {role: 'admin'}`, label empty / 101 chars → 400; migration `011` twice (DW-2.2, DW-2.7)
 
 **Phase 3**
-- [ ] `008`/`009` twice; seeded DB → statuses + one current version per archived row; catalog count unchanged (DW-3.1)
+- [ ] `010`/`011` twice; seeded DB → statuses + one current version per archived row; catalog count unchanged (DW-3.1)
 - [ ] Transition matrix: every (from-status × action × {owner author, other author, moderator, anonymous}) → 200/403/409 with audit rows; new rows start as `draft` (DW-3.2, DW-3.8)
 - [ ] Dirty: two concurrent approves → one 409; reject note 2000/2001 chars; reject without note → default text (DW-3.2)
 - [ ] Upload by status: draft, rejected, review (409), published by moderator (current) and by author (pending; a second replaces it); `/api/catalog/:id` keeps the old URL until accept (DW-3.3)
@@ -430,7 +434,7 @@ New scenarios get numbers in `docs/test-plan.md` and are cited in each spec head
 **Phase 4**
 - [ ] Categories: CRUD, reorder, hide → scenarios gone from list/summary/related/`:id`; delete used → 409; slug 1/2/50/51 chars and uppercase (DW-4.1)
 - [ ] Preview accepting: PNG and JPEG at 800 px, 16:10, 5 MB exactly; 16:9 → stored with a warning (DW-4.2)
-- [ ] Preview dirty: PNG named `.jpg`, JPEG claiming `image/png`, SVG, GIF, file shorter than its header, 5 MB + 1 byte, 799 px → 400; author PUT with any `imageUrl` → 400; moderator PUT with an external URL → 400, with `''`/current/`/previews/…` → 200; stored external URLs cleared by migration `010` (run twice); CSP header lacks `https:` in `img-src` (DW-4.2, DW-4.6)
+- [ ] Preview dirty: PNG named `.jpg`, JPEG claiming `image/png`, SVG, GIF, file shorter than its header, 5 MB + 1 byte, 799 px → 400; author PUT with any `imageUrl` → 400; moderator PUT with an external URL → 400, with `''`/current/`/previews/…` → 200; stored external URLs cleared by migration `012` (run twice); CSP header lacks `https:` in `img-src` (DW-4.2, DW-4.6)
 - [ ] Phase 4 route × role table (categories, preview, contents, checks, test-run, bulk, dashboard, history) (DW-4.1–4.5)
 - [ ] Checks on upload, re-run refresh; contents of a nested archive; caps respected (DW-4.3)
 - [ ] Test-run accepting and dirty bodies (negative, NaN, 10^12 ms, 101-char build, missing field) (DW-4.4)
@@ -482,7 +486,7 @@ at 1440 px and 390 px. (The hostile-archive check in Firefox and Safari belongs 
 | Author-only upload limit | Limit every key | `publish:release` uploads ~13 archives per run under the bootstrap key | 2 |
 | Old admin kept at `/admin/legacy` until Phase 6 | Delete it in Phase 5 | It is the only upload UI until Phase 6's Файл tab and wizard exist | 5–6 |
 | `scenario_versions` with a `pending` state | `pending_archive_sha256` column (§7 wording) | One mechanism for draft, history and rollback | 3 |
-| Drop `is_published` in its own migration `009` | Keep both columns in sync | Two sources of truth drift; only one step is irreversible | 3 |
+| Drop `is_published` in its own migration `011` | Keep both columns in sync | Two sources of truth drift; only one step is irreversible | 3 |
 | Draft preview: owner/moderator for non-published, public for a published scenario's versions | Public by hash for everything (§7) | Dedup can make a draft's hash public | 3 |
 | `from-archive` creates the draft (id = manifest id) | Client-side ZIP reading; inspect endpoint + second upload | ScenarioCreator emits slugs as manifest ids; one upload | 3 |
 | Hidden category hides its scenarios everywhere | Hide only the chip | Otherwise it is the "unlisted" status the owner ruled out | 4 |
@@ -493,10 +497,11 @@ at 1440 px and 390 px. (The hostile-archive check in Firefox and Safari belongs 
 ---
 ## Notes
 - Do not issue author keys in production until the player-isolation plan (its Phase 5) is deployed; bootstrap `ADMIN_TOKEN` keeps working throughout.
+- Phase 2 removed the 503 "ADMIN_TOKEN unset" answer: Phase 5 drops the now-dead 503 branch in `frontend/src/app/services/admin.service.ts` and corrects `docs/code-standards.md:96` (auth middleware no longer answers 503).
 - **Do not release between Phase 5 and Phase 6:** `/admin/legacy` is moderators-only, so authors would have no upload UI in that window.
 - **Residual risk:** `/editor/` shares the platform origin (`nginx/editor.conf`); an editor preview of an imported
   archive still runs there. Moving the editor's preview onto the player is the editor's task — add it to `PLAN.md` §3.
-- The editor plan's "migration 006" for `publish_keys` lands here as `007`; update `WebEngineTSEditor/docs/unity-editor-plan.md` §7 when this ships.
+- The editor plan's "migration 006" for `publish_keys` lands here as `009`; update `WebEngineTSEditor/docs/unity-editor-plan.md` §7 when this ships.
 - `PLAN.md` §2.6 (publish keys) is closed by this plan — move it to `CHANGELOG.md` after release. §2.9 (isolation) was closed by the player-isolation plan.
 - The `isPublished` compatibility field can be removed once nothing reads it (after Phase 6); not scheduled here.
 - Safari's sandboxed-iframe behaviour is the least predictable; the manual check covers it.
@@ -504,9 +509,116 @@ at 1440 px and 390 px. (The hostile-archive check in Firefox and Safari belongs 
 ## Decided During Build
 _Filled by /code-foundations:build — one row per decision an agent made or question it raised:_
 | # | Phase | Decision or question | Source | Status |
+|---|---|---|---|---|
+| 1 | 2 | Lowercase `bearer` and a missing scheme answer 401 (treated as no credential) | existing behaviour, test 180 | assumed |
+| 2 | 2 | Failed-auth and author-upload limiters are in-memory fixed windows (one backend process); a shared store would go behind `createWindowCounter` | plan + default | assumed |
+| 3 | 2 | `ADMIN_TOKEN` is read per request, not at load | default | assumed |
+| 4 | 2 | A moderator-created row gets `owner_key_id` = the moderator's key (NULL for bootstrap), `author` defaulting to the key label | default | assumed |
+| 5 | 2 | `MAX_ENTRY_BYTES` 10 MiB / `MAX_ARCHIVE_ENTRIES` 20 000 kept — measured real maxima are 3 059 bytes and 31 entries | assumption verification | assumed |
+| 6 | 2 | `AUTH_FAILURES_PER_WINDOW` is env-configurable too (default 30 per 15 min) | default | assumed |
+| 7 | 3 | `from-archive` takes an optional multipart `category` (existing slug); default = first category by `sort_order`; 400 if none exist or slug unknown | default | assumed |
+| 8 | 3 | Uploading bytes identical to the current (or, for an author on a published row, the pending) version creates no version row and still returns 201 | default | assumed |
+| 9 | 3 | A moderator's upload to a published scenario leaves an author's pending proposal in place | default | assumed |
+| 10 | 3 | `moderator_note` is cleared on submit and approve, kept on withdraw and unpublish; `updated_at` bumps on every transition | default | assumed |
+| 11 | 3 | DELETE of a pending version: owner or any moderator; a stranger gets 403 before the version lookup; a foreign `:vid` is 404 | default | assumed |
+| 12 | 3 | `?version=` accepts uppercase hex (lowercased); a wrong bearer on the public by-id route counts toward the failed-auth limiter, then falls back to anonymous | default | assumed |
+| 13 | 3 | A refusal raised after the object is stored can leave an orphan object; GC collects it after `GC_MIN_AGE_MS` | default | assumed |
+| 14 | 3 | The viewer shows an error screen for a malformed `?draft=` rather than a normal run | default | assumed |
+| 15 | 3 | `status` in a PUT/POST body is ignored, not 400 | default | assumed |
+| 16 | 3 | Row-locking routines (`applyTransition`, `installUpload`, …) are covered by real-Postgres integration tests, not mocked-DB unit tests (project convention) | default | assumed |
+| 17 | 4 | Test-run error shape `{error (≤1000 chars), engineBuild?, userAgent?}`, numbers absent (numbers beside `error` → 400); Phase 7 stores failed runs through it | default | assumed |
+| 18 | 4 | A stored test run adds `ranAt` and `ranBy` (key label); a second run replaces the first | default | assumed |
+| 19 | 4 | Preview max side 8192 px (decoded-bitmap guard); oversize (>5 MiB) → 400, not 413 | default | assumed |
+| 20 | 4 | Previews use their own `tmp/` on the previews volume (rename across volumes fails) | default | assumed |
+| 21 | 4 | Bulk capped at 100 ids per request, duplicates processed once; an unknown category in `set-category` is a per-id failure | default | assumed |
+| 22 | 4 | Migration 012 also widens `scenarios.manifest_id` to 255; the validator caps manifest `id` 255 / `version` 50 / `engineVersion` 100 and requires string `id`/`name`/`version` on every upload path | default | assumed |
+| 23 | 4 | Queue size counts scenarios in `review` or with a pending version, once each | default | assumed |
+| 24 | 4 | `currentVersion` carries an extra `checked` boolean so an unchecked version is not shown as clean | default | assumed |
+| 25 | 4 | `GET /api/categories` adds a moderator-only `scenarioCount` | default | assumed |
+| 26 | 4 | A slug with no `categories` row stays public (no FK by design) | default | assumed |
+| 27 | 4 | A preview whose filename or declared MIME disagrees with its bytes (PNG named `.jpg`, JPEG sent as `image/png`) is stored as what its bytes are, not refused — the Test Plan line lists it under 400, but the edge case says "type by magic bytes"; flip is a one-line change | Phase 4 review | assumed |
+| 28 | 5 | Only a 401 or a 403 `Невірний токен` ends the admin session; other 403s (`Недостатньо прав`, `Це не ваш сценарій`) show as refusals | default | assumed |
+| 29 | 5 | `AdminApi.scenario(id)` is the admin list + find (no get-one admin route) | default | assumed |
+| 30 | 5 | The access-code field is not upper-cased (codes are case-sensitive base64url) | default | assumed |
+| 31 | 5 | Unsaved Метадані edits survive tab switches because the form is hidden, not destroyed | default | assumed |
+| 32 | 5 | `/admin/legacy` uses `moderatorGuard`; an author is redirected to `/admin/scenarios` | default | assumed |
+| 33 | 5 | The list's category filter options come from the rows (hidden categories not filtered out) | default | assumed |
+| 34 | 5 | `/admin` redirects to `/admin/scenarios` and the nav has no «Огляд» until Phase 7's dashboard | default | assumed |
+| 35 | 5 | A tab switch within the same scenario is not a departure — only real departures prompt about unsaved edits | Phase 5 review | assumed |
+| 36 | 5 | A moderator also gets the owner moves (submit, withdraw) as secondary buttons, mirroring the backend `TRANSITIONS` table | Phase 5 review | assumed |
+| 37 | 6 | `/admin/legacy` falls through to the admin catch-all and lands on `/admin/scenarios` ("not found" = no legacy screen, not a 404 page) | default | assumed |
+| 38 | 6 | `frontend/src/styles/_legacy.scss` and its `@use` deleted with the old admin; `CLAUDE.md` legacy lines updated (both outside the phase's stated file scope — dead code only) | default | assumed |
+| 39 | 6 | One shared `<vl-archive-upload>` serves the Файл tab and the wizard; cancel and component destroy abort the request | default | assumed |
+| 40 | 6 | Перевірка's `(runTest)` output is paired with a `testEnabled` input (default false) that Phase 7 flips | default | assumed |
+| 41 | 6 | Wizard step 1 posts `from-archive`; a later replace in the wizard uses `POST /api/scenarios/:id/archive`; the manifest extras show only for the first upload | default | assumed |
+| 42 | 6 | Перевірка shows the current version with a current/pending switch; pending actions live in the Файл tab | default | assumed |
+| 43 | 6 | Перевірка shows no "last checked at" (stored checks carry no timestamp); the test run shows `ranAt`/`ranBy` | default | assumed |
+| 44 | 6 | Wizard submit and save-draft are blocked while Метадані has unsaved edits (no auto-save) | default | assumed |
+| 45 | 6 | A moderator in the wizard also gets «Опублікувати» (approve) | default | assumed |
+| 46 | 6 | "Latest request wins" in admin tabs is a per-component request counter plus the scenario-id check | Phase 6 review | assumed |
+| 47 | 7 | `/admin` is the dashboard; login and guard fallbacks land on `/admin` | default | assumed |
+| 48 | 7 | Test run: 10 s measurement of the version's `/scenarios/<sha>.zip` in `PlayerHost`, host disposed on every exit, any failure stored as `{error}`; figures clamped and strings truncated (100/300/1000) at `test-run-report.ts` | default | assumed |
+| 49 | 7 | Category reorder uses move up/down buttons sending the full list; a 409 re-reads | default | assumed |
+| 50 | 7 | The one-time token dialog is not dismissible by Escape or the scrim — only «Готово» closes it | default | assumed |
+| 51 | 7 | `testEnabled` defaults to true; `(runTest)` still emitted as a notification | default | assumed |
+| 52 | 7 | A pending proposal card in the queue links to the Файл tab (the admin row carries no pending sha) | default | assumed |
+| 53 | 7 | Publishing a queue card with a failing check or readiness chip asks `confirm()` first | default | assumed |
 ---
 ## Execution Log
 _To be filled during /code-foundations:build_
 
 ### Phase 1: Player isolation (Gate: Standard)
 - [x] SKIPPED — completed by `../../../.code-foundations/plans/2026-10-24-player-isolation.md` (workspace root, not this repo) (virtual-lab 9b0ae09, 2bf3a12; WebEngineTS 02fdc1f)
+
+### Phase 2: Keys, roles and authorization (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (first attempt interrupted by a session end after its two refactor commits; a resumed agent audited and finished it)
+- [x] REVIEW: Verification passed
+- [x] Committed
+Commit: 6bc48e7 (route split), 6ee54c4 (transactions), e8b526e (keys, roles, journal)
+Summary: Backend routes now live in actor modules under `backend/routes/`, each mutation in one transaction; personal SHA-256 keys with `author`/`moderator` roles (ADMIN_TOKEN = bootstrap moderator) gate every admin route via `authenticate`/`requireRole`/`canEditScenario`, authors are limited to content fields of their own unpublished rows, every mutation writes an `audit_events` row via `audit.record(client, …)`, failed auth and author uploads are rate-limited (`limitAuthorUploads` is reusable), and archive validation caps entry bytes/count; backend suite 610/610.
+
+### Phase 3: Publishing workflow and versions (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (interrupted once by an API session limit; the same agent resumed)
+- [x] REVIEW: Verification passed
+- [x] Committed
+Commit: ca83ba7
+Summary: Scenarios carry `status` (draft/review/published/rejected) driven by `applyTransition` (`backend/workflow.js`, five POST routes) and every archive is a `scenario_versions` row managed by `backend/versions.js` (`installUpload` under a row lock, pending for author uploads to published rows, accept/reject/restore/delete routes, 50-version cap); `is_published` is gone (migration 011) but `isPublished` remains a compat field; `from-archive` creates a draft from a ZIP; `/api/catalog/:id?version=` + the viewer's `?draft=`/`returnTo` preview unpublished versions for owner/moderator; GC counts all versions; backend 1072/1072, frontend 309/309; e2e specs `draft-preview`, `admin-golden-path`, `hostile-archive`, `ktx2-render` changed but not yet run (need a stack on this branch).
+
+### Phase 4: Catalog management API (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (interrupted once by an API session limit; the same agent resumed)
+- [x] REVIEW: Verification passed (the reviewer wrote its PASS file, then hit the API limit before handing back; verdict read from the file)
+- [x] Committed
+Commit: e687272
+Summary: The moderator's backend is complete — category CRUD/reorder/visibility (`backend/routes/categories.js`; hidden categories unpublish everywhere via `PUBLIC_ROW`), a second content-addressed preview store (`createStore` in `backend/storage.js`, `/previews/` in nginx, `inspectPreview` by magic bytes, `img-src` without `https:`, migration 012), per-version checks/contents/test-run (`backend/routes/version-tools.js`; test runs accept numbers or `{error}`), bulk per-id actions, scoped dashboard/history, extended admin rows (`ownerLabel`, `pendingVersionId`, `currentVersion` + `checked`) and `/api/config.preview`; `backend/Dockerfile` now copies `routes/`; backend 1237/1237, frontend 309/309, CSP script tests 8/8; `csp.spec.ts` changed but not yet run.
+
+### Phase 5: Admin UI — sign-in, shell, list, metadata and publication (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (interrupted once by an API session limit; the same agent resumed)
+- [x] REVIEW: Verification passed (attempt 2 — attempt 1 failed: the unsaved-changes guard fired on same-scenario tab switches, masked by jsdom's unimplemented `confirm`; eight `AdminApi` methods and `AdminSlotComponent` lacked tests)
+- [x] Committed
+Commit: d5c9674
+Summary: The new admin frame is live — `/admin/login` by personal code (`AdminSession`, sessionStorage only), `<vl-admin-shell>` with role-aware nav and a 390 px drawer, `/admin/scenarios` list with status/category filters and a moderator bulk bar, `/admin/scenarios/:id/:tab` with the reusable `<vl-scenario-meta-form>` (live catalog card, readiness, preview upload) and the Публікація tab (`transitionsFor` mirrors the backend table, audit history); `AdminApi` covers every Phase 2–4 route; Файл/Перевірка tabs and upload/queue/categories/access are slots; the old admin lives at `/admin/legacy` (moderators); e2e helpers take a key; frontend 500/500, build + check:csp green; e2e `admin-workflow` and five changed specs not yet run.
+
+### Phase 6: Admin UI — files, checks and upload wizard (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (interrupted once by an API session limit; the same agent resumed)
+- [x] REVIEW: Verification passed (attempt 2 — attempt 1 failed: the Публікація history had no stale-response guard, an edge case this phase carried)
+- [x] Committed
+Commit: 8889615
+Summary: Authors can now upload end to end in the new admin — the Файл tab (`scenario-files`: shared `<vl-archive-upload>` with abortable progress, versions by role, contents, pending banner with `?draft=` link and decisions), the Перевірка tab (`scenario-checks`: stored checks + re-run, test run vs `TEST_NORMS`, an inert «Тестовий запуск» behind `testEnabled` with a `(runTest)` output for Phase 7) and the `/admin/upload` wizard over `from-archive`; tabs guard against stale responses; `AdminSession.restore()` survives transient failures; the legacy admin, `/admin/legacy` and `_legacy.scss` are deleted; frontend 598/598, build + check:csp green; e2e `admin-upload-wizard`, `admin-files-tab`, rewritten `admin-golden-path` not yet run.
+
+### Phase 7: Admin UI — moderation (Gate: Standard, security-sensitive)
+- [x] BUILD: Discovery + design + implementation (stub → implement → validate) complete (interrupted twice by API session limits; the same agent resumed)
+- [x] REVIEW: Verification passed (attempt 2 — attempt 1 failed: the DW-7.6 e2e did not accept the queue's publish-anyway `confirm`, so the path never ran; spec fixed, now green against a stack built from this branch)
+- [x] Committed
+Commit: a62d4a4
+Summary: The moderator workflow is complete — `/admin` dashboard, queue with inline decisions, Напрями, Доступ (one-time token dialog), and the «Тестовий запуск» on Перевірка via `PlayerHost` with `test-run-report.ts` as the trust boundary; the viewer shares `player/player-config.ts`; frontend 712/712, build + check:csp green; `admin-moderation` e2e 3/3 on the `vl-r2` stack (:8047).
+
+### VERIFY (2026-10-28/29)
+- Verification stack: compose project `vl-r2` (`C:/Users/HuGox/vl-r2/override.yml`, own containers/volumes, :8047) built from the worktree; catalog filled by `publish:release` (upload → approve).
+- Full e2e on HEAD `6146547`: 106 passed, 19 skipped, 8 failed → one fix agent, committed per phase:
+- [x] fix(phase-2) 50ceb76 — width-limited text fields validated (400, not 500)
+- [x] fix(phase-3) 35ad0c8 — scenario-page e2e publishes its rows; 390 px catalog fix reapplied from main d8a3222
+- [x] fix(phase-5) 40fd8c0 — `.table-wrap` position: relative (390 px overflow); e2e follows the dashboard landing, 255-char title
+- [x] fix(phase-6) feaf3cf — wizard step numbers aria-hidden; Перевірка e2e expects the enabled test run
+- [x] fix(phase-7) 2d06b67 — the same table fix on Доступ and Напрями
+- [x] Blocking re-review of the fixes: PASS (`…-phase-verify-review.md`)
+- Suite on HEAD `2d06b67`: backend 1269/1269; frontend 715/715; build + check:csp green; e2e 114 passed, 19 skipped, 0 failed (cited from the verify review's run).

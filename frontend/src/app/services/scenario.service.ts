@@ -1,7 +1,7 @@
 // path: src/app/services/scenario.service.ts
 
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpHeaders, HttpParams } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import {
   CatalogSummary,
@@ -12,6 +12,7 @@ import {
 } from '../models/scenario.model';
 import { environment } from '../../environments/environment';
 import { CatalogFilter, DEFAULT_CATALOG_FILTER } from './catalog-query';
+import { AdminService } from './admin.service';
 
 /**
  * Download progress event emitted while fetching a scenario ZIP.
@@ -38,6 +39,7 @@ const ALL_CATEGORIES = { id: 'all', label: 'Усі напрями', icon: 'list-
 export class ScenarioService {
 
   private readonly http = inject(HttpClient);
+  private readonly admin = inject(AdminService);
 
   private readonly _scenarios = signal<ScenarioCatalogItem[]>([]);
   private readonly _apiCategories = signal<CategoryFilter[]>([]);
@@ -152,10 +154,20 @@ export class ScenarioService {
    * of /play/:id or /scenario/:id — where the catalog was never loaded — still resolves, and so
    * that the archive URL comes from the server rather than from the query string.
    * Rejects with the `HttpErrorResponse`, so a caller can tell a 404 from a server error.
+   *
+   * With `version` (a sha256) it asks for that archive version - a draft preview. A scenario that is
+   * not published answers only its owner or a moderator, so the session's bearer is sent along (when
+   * there is one: a published scenario's versions need none). Only a preview sends it: the plain
+   * lookup is public and carries no credential.
    */
-  async fetchScenarioById(id: string): Promise<ScenarioDetail> {
+  async fetchScenarioById(id: string, version?: string): Promise<ScenarioDetail> {
+    const token = this.admin.token();
+    const options = version === undefined ? {} : {
+      params: new HttpParams().set('version', version),
+      headers: token ? new HttpHeaders({ Authorization: `Bearer ${token}` }) : undefined,
+    };
     const detail = await firstValueFrom(
-      this.http.get<ScenarioDetail>(`${environment.catalogUrl}/${encodeURIComponent(id)}`)
+      this.http.get<ScenarioDetail>(`${environment.catalogUrl}/${encodeURIComponent(id)}`, options)
     );
     // Both lists may be missing from an older answer; the page can rely on arrays.
     return { ...detail, features: detail.features ?? [], related: detail.related ?? [] };

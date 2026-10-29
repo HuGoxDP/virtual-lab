@@ -61,7 +61,7 @@ describe('readFlag', () => {
 
 // ── player isolation, phase 5: error mapping, URL absolutising, the pause shortcut ──
 
-import { absoluteUrl, isPauseShortcut, mapPlayerError } from './viewer-format';
+import { absoluteUrl, isPauseShortcut, mapPlayerError, parseDraftHash, validReturnTo } from './viewer-format';
 
 describe('mapPlayerError', () => {
   it('DW-5.2 handshake: a Ukrainian "no response" text, not the engine wording', () => {
@@ -117,5 +117,36 @@ describe('isPauseShortcut', () => {
   });
   it('is not the shortcut when the event was already handled', () => {
     expect(decide({ code: 'Space' }, document.body, true)).toBe(false);
+  });
+});
+
+// Test-plan scenario 196 (DW-3.5): the draft preview's two URL parameters.
+describe('parseDraftHash', () => {
+  const HASH = 'a1'.repeat(32);
+  it('DW-3.5 accepts exactly 64 hex characters and lowercases them', () => {
+    expect(parseDraftHash(HASH)).toBe(HASH);
+    expect(parseDraftHash(HASH.toUpperCase())).toBe(HASH);
+  });
+  it('is null when absent or malformed', () => {
+    for (const raw of [null, '', HASH.slice(1), `${HASH}0`, `${HASH.slice(1)}g`, ` ${HASH.slice(1)}`, `${HASH}\n`, '../x']) {
+      expect(parseDraftHash(raw), String(raw)).toBeNull();
+    }
+  });
+});
+
+describe('validReturnTo', () => {
+  it('DW-3.5 accepts a relative path into /admin, with query and fragment', () => {
+    for (const ok of ['/admin', '/admin/', '/admin/scenarios/x', '/admin/scenarios/x?tab=file', '/admin?x=1', '/admin#top', '/admin/a%20b']) {
+      expect(validReturnTo(ok), ok).toBe(ok);
+    }
+  });
+  it('DW-3.5 rejects anything that leaves /admin or the site', () => {
+    for (const bad of [
+      null, '', '/', '/catalog', '/administrator', '/admin2', 'admin/x', 'https://evil.example', 'http://evil.example/admin',
+      '//evil.example', '//admin', '/\\evil.example', '/admin\\..\\x','/admin/../catalog', '/admin/./x', 'javascript:alert(1)',
+      '/admin/x y', '/admin/x\ny', '/admin/x\u0000', ' /admin', '/admin\t',
+    ]) {
+      expect(validReturnTo(bad), JSON.stringify(bad)).toBeNull();
+    }
   });
 });

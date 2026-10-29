@@ -44,11 +44,9 @@ const SUBJECT = {
 
 export const CATALOG_METADATA = {
   // ── Astronomy ──────────────────────────────────────
-  'solar-system': {
-    ...SUBJECT.astronomy,
-    imageUrl:
-      'https://images.unsplash.com/photo-1614730341194-75c607ae82b3?q=80&w=800&auto=format&fit=crop',
-  },
+  // No `imageUrl`: a cover is uploaded to the platform (`POST /api/scenarios/:id/preview`), and the
+  // CSP no longer allows an off-origin image.
+  'solar-system': { ...SUBJECT.astronomy },
   'orbital-mechanics': { ...SUBJECT.astronomy },
 
   // ── Physics ────────────────────────────────────────

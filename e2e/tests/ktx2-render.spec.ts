@@ -84,8 +84,9 @@ test.describe('a KTX2 scenario renders through the player (DW-5.5)', () => {
     }));
     await createScenario({
       id, title: 'E2E ktx2', description: 'e2e', fullDescription: '',
-      category: 'test', categoryLabel: 'Test', isPublished: true,
+      category: 'test', categoryLabel: 'Test',
     });
+    // A new row is a draft; approving needs an archive, so upload first (PUT isPublished maps to approve).
     await uploadArchive(id, file);
     await updateScenario(id, { isPublished: true });
   });

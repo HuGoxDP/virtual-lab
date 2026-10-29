@@ -108,6 +108,18 @@ describe('ViewerComponent in LTI mode', () => {
     expect(submitButton(fixture)!.textContent!.trim()).toBe('Здати');
   });
 
+  it('an LTI launch is never a draft preview: ?draft= and ?returnTo= are ignored, the public lookup is used', async () => {
+    const draft = 'a'.repeat(64);
+    const { fixture, lti } = setup({ query: { lti: '1', draft, returnTo: '/admin/scenarios' } });
+    await running(fixture);
+
+    const service = TestBed.inject(ScenarioService) as unknown as { fetchScenarioById: ReturnType<typeof vi.fn> };
+    expect(service.fetchScenarioById).toHaveBeenCalledWith(ITEM.id, undefined); // no version, so no bearer
+    expect(fixture.componentInstance.state()).toBe('running'); // a malformed ?draft= would not even be an error here
+    expect(lti.getSession).toHaveBeenCalledTimes(1);
+    expect(submitButton(fixture)!.textContent!.trim()).toBe('Здати');
+  });
+
   it('the controls are not shown while the scenario is still loading', async () => {
     const { fixture, host } = setup({ query: { lti: '1' } });
     host.load.mockReturnValue(new Promise(() => undefined));

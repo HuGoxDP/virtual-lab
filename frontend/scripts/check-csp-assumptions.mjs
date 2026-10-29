@@ -87,6 +87,8 @@ export function checkCsp(cspConf) {
   if (!policy) problems.push('csp.conf declares no Content-Security-Policy header');
   if (/(^|\s)blob:/.test(scriptSrc)) problems.push(`script-src allows blob: (${scriptSrc}); the page no longer executes scenario scripts`);
   if (/'nonce-/.test(scriptSrc)) problems.push(`script-src carries a nonce (${scriptSrc}); the import map it served is gone`);
+  const imgSrc = policy.split(';').map(d => d.trim()).find(d => d.startsWith('img-src ')) ?? '';
+  if (/(^|\s)(https?:|\*)(\s|$)/.test(imgSrc)) problems.push(`img-src allows off-origin images (${imgSrc}); covers are uploaded to /previews/ (Nocturne release 2)`);
   if (!/(^|;)\s*frame-src 'self'(\s|;|$)/.test(policy)) problems.push(`frame-src 'self' is missing; the viewer frames /player/player.html`);
   return problems;
 }

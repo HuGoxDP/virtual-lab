@@ -85,3 +85,72 @@ test('a manifest whose graded is not a boolean is rejected (400) and the row kee
   }
   assert.equal(await gradedOf('tie-b'), true);
 });
+
+// ── graded follows the CURRENT version (release 2: uploads are versions) ─────────────────────────
+// `scenarios.graded` mirrors the version students get, like `archive_*` does. An author's upload to a
+// published scenario is only pending, so it must not change grading for students on the old version.
+
+const { createKey } = require('../helpers/keys');
+
+/** A published scenario owned by `ownerId` whose current version (graded `initial`) a moderator uploaded. */
+async function publishedWithCurrent(id, ownerId, initial) {
+  await pool.query(`
+    INSERT INTO scenarios (id, title, category, category_label, status, owner_key_id)
+    VALUES ($1, 'Graded versions', 'physics', 'Фізика', 'published', $2)`, [id, ownerId]);
+  await upload(id, validArchive({ graded: initial })).expect(201);
+  assert.equal(await gradedOf(id), initial);
+}
+
+const versionRows = async id => (await pool.query(
+  'SELECT id, state, graded FROM scenario_versions WHERE scenario_id = $1 ORDER BY id', [id])).rows;
+const versionAction = (id, vid, action) => request(app).post(`/api/scenarios/${id}/versions/${vid}/${action}`).set(AUTH);
+
+test('a pending author upload leaves graded unchanged; accepting it switches graded; restoring the old version switches it back', async t => {
+  if (!available) return t.skip('no database reachable');
+  const author = await createKey(pool, 'author', 'Graded author');
+  await publishedWithCurrent('g-versions', author.id, false);
+
+  const res = await request(app).post('/api/scenarios/g-versions/archive').set(author.auth)
+    .attach('archive', validArchive({ graded: true }), 'scenario.zip').expect(201);
+  assert.equal(res.body.version.state, 'pending', JSON.stringify(res.body));
+
+  // Pending: recorded on the version, invisible to students and to the grade passback.
+  assert.equal(await gradedOf('g-versions'), false);
+  const [first, pending] = await versionRows('g-versions');
+  assert.deepEqual([first.state, first.graded, pending.state, pending.graded], ['current', false, 'pending', true]);
+
+  await versionAction('g-versions', pending.id, 'accept').expect(200);
+  assert.equal(await gradedOf('g-versions'), true);
+
+  await versionAction('g-versions', first.id, 'restore').expect(200);
+  assert.equal(await gradedOf('g-versions'), false);
+  assert.deepEqual((await versionRows('g-versions')).map(v => [v.state, v.graded]), [['current', false], ['archived', true]]);
+
+  // And forward again: restoring the graded one grades again.
+  await versionAction('g-versions', pending.id, 'restore').expect(200);
+  assert.equal(await gradedOf('g-versions'), true);
+});
+
+test('a pending upload WITHOUT graded leaves a graded scenario graded until accepted', async t => {
+  if (!available) return t.skip('no database reachable');
+  const author = await createKey(pool, 'author', 'Ungrading author');
+  await publishedWithCurrent('g-ungrade', author.id, true);
+
+  await request(app).post('/api/scenarios/g-ungrade/archive').set(author.auth)
+    .attach('archive', validArchive(), 'scenario.zip').expect(201);
+  assert.equal(await gradedOf('g-ungrade'), true);
+
+  const pending = (await versionRows('g-ungrade')).find(v => v.state === 'pending');
+  await versionAction('g-ungrade', pending.id, 'accept').expect(200);
+  assert.equal(await gradedOf('g-ungrade'), false);
+});
+
+test('a moderator upload to a published scenario is current at once, so graded follows it immediately', async t => {
+  if (!available) return t.skip('no database reachable');
+  await publishedWithCurrent('g-moderator', null, false);
+
+  await upload('g-moderator', validArchive({ graded: true })).expect(201);
+
+  assert.equal(await gradedOf('g-moderator'), true);
+  assert.deepEqual((await versionRows('g-moderator')).map(v => [v.state, v.graded]), [['archived', false], ['current', true]]);
+});

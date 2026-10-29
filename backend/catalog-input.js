@@ -3,6 +3,8 @@
 // Validation of admin-supplied catalog JSON. Kept apart from the routes so the
 // rules ("Що всередині" limits) live in one place and can be tested without HTTP.
 
+const { PREVIEW_URL } = require('./storage');
+
 const MAX_FEATURES = 6;
 const MAX_FEATURE_TITLE = 60;
 const MAX_FEATURE_SUBTITLE = 90;
@@ -46,4 +48,117 @@ function validateFeatures(input) {
   return { value };
 }
 
-module.exports = { validateFeatures, MAX_FEATURES, MAX_FEATURE_TITLE, MAX_FEATURE_SUBTITLE };
+const CATEGORY_SLUG_PATTERN = /^[a-z0-9-]{2,50}$/;
+const MAX_CATEGORY_LABEL = 100;
+
+/**
+ * Checks a category body. `create` requires `slug` and `label` (icon defaults to `folder`);
+ * an update takes any of `label`, `icon`, `isVisible` (the slug never changes) and needs at
+ * least one. Unknown keys are dropped.
+ *
+ * Result is `{ value }` (only the fields present, cleaned) or `{ error }` (Ukrainian).
+ */
+function validateCategory(body, { create }) {
+  const input = isPlainObject(body) ? body : {};
+  const value = {};
+
+  if (create) {
+    if (typeof input.slug !== 'string' || !CATEGORY_SLUG_PATTERN.test(input.slug)) {
+      return { error: 'slug: 2–50 символів a-z, 0-9 та "-"' };
+    }
+    value.slug = input.slug;
+  }
+
+  if (input.label !== undefined || create) {
+    const label = typeof input.label === 'string' ? input.label.trim() : '';
+    if (label.length < 1 || label.length > MAX_CATEGORY_LABEL) {
+      return { error: `label: від 1 до ${MAX_CATEGORY_LABEL} символів` };
+    }
+    value.label = label;
+  }
+
+  if (input.icon !== undefined) {
+    if (typeof input.icon !== 'string' || !FEATURE_ICON_PATTERN.test(input.icon)) {
+      return { error: 'icon: 1–40 символів a-z, 0-9 та "-"' };
+    }
+    value.icon = input.icon;
+  } else if (create) {
+    value.icon = 'folder';
+  }
+
+  if (input.isVisible !== undefined) {
+    if (typeof input.isVisible !== 'boolean') return { error: 'isVisible має бути булевим' };
+    value.isVisible = input.isVisible;
+  }
+
+  if (!create && Object.keys(value).length === 0) return { error: 'Не вказано жодного поля для оновлення' };
+  return { value };
+}
+
+/**
+ * Fields an author key may never send. Everything that points at storage or
+ * decides visibility or attribution is a moderator's: `scenarioUrl`,
+ * `manifestUrl`, `imageUrl`, any `archive*`, `author`, `isPublished`.
+ * (`categoryLabel` is not here: it is ignored, not refused.)
+ */
+const AUTHOR_FORBIDDEN_FIELDS = ['scenarioUrl', 'manifestUrl', 'imageUrl', 'author', 'isPublished'];
+
+/** The names in `body` an author may not send, in the order found; empty when the body is clean. */
+function forbiddenAuthorFields(body) {
+  return Object.keys(body ?? {}).filter(
+    key => AUTHOR_FORBIDDEN_FIELDS.includes(key) || key.startsWith('archive')
+  );
+}
+
+/**
+ * Why a moderator may not set a row's `imageUrl` to `value` (`current` is what it holds now), or null.
+ *
+ * A cover changes through the preview upload and remove routes; a PUT/POST may only clear it,
+ * restate it (the old admin form sends it on every save) or point at a stored preview. Anything
+ * else is a way to reintroduce an off-origin image the CSP no longer allows.
+ */
+function imageUrlProblem(value, current) {
+  if (typeof value !== 'string') return 'imageUrl має бути рядком';
+  if (value === '' || value === current || PREVIEW_URL.test(value)) return null;
+  return 'imageUrl змінюється завантаженням зображення; дозволено лише порожнє значення, поточне або шлях /previews/…';
+}
+
+/**
+ * The widest text each `scenarios` column holds (`db/init.sql`, migrations 002, 005). A longer value
+ * is a 400 here instead of a database error that surfaces as a 500. Columns with no width (TEXT) are not listed.
+ * `nullable` fields may be sent as null (a PUT clears them); the others, when sent, must be strings.
+ */
+const SCENARIO_TEXT_LIMITS = {
+  id: { max: 100 },
+  title: { max: 255 },
+  category: { max: 50 },
+  categoryLabel: { max: 100 },
+  version: { max: 20, nullable: true },
+  author: { max: 255, nullable: true },
+  manifestUrl: { max: 300, nullable: true },
+};
+
+/** True when `text` has more than `max` characters, counted as Postgres counts them: code points, not UTF-16 units. */
+function exceedsWidth(text, max) {
+  if (text.length <= max) return false; // code points never outnumber UTF-16 units
+  return text.length > max * 2 || Array.from(text).length > max;
+}
+
+/**
+ * Why `body` carries a text field wider than its column (or of the wrong type), or null. Fields that are
+ * absent (undefined) are skipped, so one function serves the POST and the PUT. The message is Ukrainian.
+ */
+function scenarioTextProblem(body) {
+  for (const [name, { max, nullable }] of Object.entries(SCENARIO_TEXT_LIMITS)) {
+    const value = body?.[name];
+    if (value === undefined || (value === null && nullable)) continue;
+    if (typeof value !== 'string') return `${name} має бути рядком`;
+    if (exceedsWidth(value, max)) return `${name}: не більше ${max} символів`;
+  }
+  return null;
+}
+
+/** The catalog id a `from-archive` scenario takes from its manifest: a slug of 2-100 characters. */
+const SCENARIO_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,99}$/;
+
+module.exports = { SCENARIO_TEXT_LIMITS, scenarioTextProblem, SCENARIO_ID_PATTERN, CATEGORY_SLUG_PATTERN, validateCategory, imageUrlProblem, validateFeatures, forbiddenAuthorFields, AUTHOR_FORBIDDEN_FIELDS, MAX_FEATURES, MAX_FEATURE_TITLE, MAX_FEATURE_SUBTITLE };

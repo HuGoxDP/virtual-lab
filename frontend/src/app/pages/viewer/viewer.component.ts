@@ -19,6 +19,8 @@ import { Subject, takeUntil } from 'rxjs';
 import { PlayerHost } from 'WebEngineTS/player-host';
 import type { PlayerError, PlayerHostOptions, PlayerLoadSource, PlayerProgress } from 'WebEngineTS/player-host';
 
+import { ENGINE_URL, PLAYER_URL, TRANSCODER_PATH } from '../../player/player-config';
+import type { PlayerHostLike } from '../../player/player-config';
 import { IconComponent } from '../../ui/icon/icon.component';
 import { ScenarioService, DownloadProgress } from '../../services/scenario.service';
 import { TelemetryService } from '../../services/telemetry.service';
@@ -29,20 +31,13 @@ import {
   absoluteUrl,
   isPauseShortcut,
   mapPlayerError,
+  parseDraftHash,
   readFlag,
+  validReturnTo,
 } from './viewer-format';
 import { ViewerHudComponent } from './viewer-hud.component';
 import { ViewerLoadingComponent } from './viewer-loading.component';
 import { LtiResult, LtiSubmitComponent } from './lti-submit.component';
-
-/** Where the sandboxed player, the engine bundle it imports and the KTX2 transcoder are served. */
-const PLAYER_URL = '/player/player.html';
-const ENGINE_URL = '/assets/WebEngineTS.standalone.js';
-/** The engine's default is `/basis/`, which 404s here: Angular publishes `src/assets` under `/assets`. */
-const TRANSCODER_PATH = '/assets/basis/';
-
-/** The slice of `PlayerHost` the viewer drives; a spec substitutes a fake with the same surface. */
-export type PlayerHostLike = Pick<PlayerHost, 'load' | 'restart' | 'pause' | 'resume' | 'measure' | 'dispose'>;
 
 /**
  * Viewer states for the loading UI.
@@ -146,6 +141,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   /**
    * Whether the page was opened from an LMS launch (`?lti=1`): only then does it show the submit
    * controls (and only then does anything ask `/api/lti/session`). The public viewer is untouched.
+   * An LTI launch is never a draft preview: `?draft=` / `?returnTo=` are ignored when it is set.
    */
   readonly ltiMode = signal(false);
 
@@ -154,6 +150,17 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    * report that arrives before the LMS session has loaded is not lost. Cleared on every (re)start.
    */
   readonly ltiResult = signal<LtiResult | null>(null);
+
+  /**
+   * The version hash of a draft preview (`?draft=<sha256>`), or `null` for a normal run. The viewer then
+   * asks the API for that version (with the session's bearer, since a non-published scenario answers only
+   * its owner or a moderator) and never takes the streaming path: a preview is that one ZIP.
+   */
+  private draftHash: string | null = null;
+  /** `?draft=` was present but is not a sha256: an error screen rather than a silent normal run. */
+  private draftMalformed = false;
+  /** Where a draft preview's exit goes (a validated `/admin/...` path); `null` = the scenario's page. */
+  private returnTo: string | null = null;
 
   readonly isLoading = computed(
     () => this.state() === 'downloading' || this.state() === 'loading-engine'
@@ -175,6 +182,12 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
     this.buildStampVisible.set(readFlag(query.get('diag')));
     this.streamingRequested.set(readFlag(query.get('stream')));
     this.ltiMode.set(readFlag(query.get('lti')));
+    // A student's LMS launch is never a draft preview, whatever the URL carries.
+    const rawDraft = this.ltiMode() ? null : query.get('draft');
+    this.draftHash = parseDraftHash(rawDraft);
+    this.draftMalformed = rawDraft !== null && this.draftHash === null;
+    // Honoured only for a draft preview: that is the one run whose scenario has no public page to exit to.
+    this.returnTo = this.draftHash ? validReturnTo(query.get('returnTo')) : null;
 
     // Probe before starting: a machine without WebGL2 should see the explanation, not a frame that
     // fails inside the sandbox.
@@ -284,11 +297,15 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
   private async openScenario(id: string): Promise<void> {
     const token = ++this.loadToken;
     this.setState('downloading', 0, 'Отримання даних сценарію');
+    if (this.draftMalformed) {
+      this.showError('Посилання на чернетку некоректне.');
+      return;
+    }
 
     let scenario: ScenarioCatalogItem;
 
     try {
-      scenario = await this.scenarioService.fetchScenarioById(id);
+      scenario = await this.scenarioService.fetchScenarioById(id, this.draftHash ?? undefined);
       if (token !== this.loadToken) return;
 
       this.scenarioId = scenario.id;
@@ -315,7 +332,7 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
    * 3. The player's engine unpacks it, validates the manifest and executes the entry point
    */
   private async startLoading(scenario: ScenarioCatalogItem, token: number): Promise<void> {
-    if (this.streamingRequested() && scenario.manifestUrl) {
+    if (this.streamingRequested() && scenario.manifestUrl && !this.draftHash) {
       // No download step: the engine in the frame fetches scripts and assets itself, in priority order.
       const source: PlayerLoadSource = { kind: 'manifest', url: absoluteUrl(scenario.manifestUrl, location.href) };
       this.loadedSource.set(source);
@@ -488,11 +505,19 @@ export class ViewerComponent implements AfterViewInit, OnDestroy {
 
   /** HUD "Вийти" and the loader's "Скасувати": back to the scenario's own page. */
   exit(): void {
+    if (this.returnTo) {
+      void this.router.navigateByUrl(this.returnTo);
+      return;
+    }
     void this.router.navigate(this.routeId ? ['/scenario', this.routeId] : ['/catalog']);
   }
 
   /** The error, unsupported and context-lost screens keep their way out: the catalog. */
   goBack(): void {
+    if (this.returnTo) {
+      void this.router.navigateByUrl(this.returnTo);
+      return;
+    }
     void this.router.navigate(['/catalog']);
   }
 }

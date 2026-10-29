@@ -210,8 +210,12 @@ its own (`default-src 'none'`; the registration page adds a nonce and the platfo
 
 Rules, all enforced server-side and pinned by `backend/test/integration/lti-grades.test.js`:
 
-- `scenarios.graded` (migration 008) is set at archive upload from the manifest: only `graded: true` makes it true; a
-  manifest without the key sets false (also over an earlier graded upload); a non-boolean value is a 400.
+- `scenarios.graded` (migration 008) comes from the manifest of the scenario's **current** version (release 2: every upload is a
+  `scenario_versions` row, stored there by migration 013, and the catalog row mirrors the current one, as `archive_*` does): only
+  `graded: true` makes it true; a manifest without the key sets false (also over an earlier graded upload); a non-boolean value
+  is a 400. An author's pending upload changes nothing until a moderator accepts it; restoring an older version restores its flag.
+  A scenario is launchable and gradable only while it is published for students (`status = 'published'` and a category that is
+  not hidden: the `PUBLIC_ROW` rule of the public catalog); anything else is 404 «Лабораторну знято».
 - `POST /api/lti/deep-link` (instructor, deep-link session only) answers `text/html`: a form that posts the signed
   `LtiDeepLinkingResponse` JWT to the platform's return URL. One `ltiResourceLink` item: `url` = the tool launch URL,
   `custom.scenario_id` = the catalog id, `lineItem.scoreMaximum` = 100. The response has its own CSP
@@ -232,6 +236,7 @@ host names mapped to 127.0.0.1, the stand CA); there is no pick page yet, so the
 
 ```text
 1. publish Circuits: POST /api/catalog {id: electric-circuits, ...}, then POST /api/scenarios/electric-circuits/archive
+   (recorded on the pre-release-2 platform; now a new row is a draft, so approve after the upload: `lti-demo/reset-demo.ps1` does)
    (admin token, ScenarioCreator/ReleaseScenarios/Circuits.zip)           -> 201; scenarios.graded = true (manifest graded: true)
 2. teacher login; GET /mod/lti/contentitem.php?id=1&course=2 (the Deep Linking launch), follow login -> auth -> launch
                                                                             -> 303 /lti/pick, session role=instructor message_type=deep-link

@@ -242,8 +242,8 @@ test('ids needing URL encoding resolve correctly', async t => {
   if (skipUnlessDb(t)) return;
 
   await pool.query(`
-    INSERT INTO scenarios (id, title, category, category_label, is_published)
-    VALUES ('with space & pct%', 'Awkward id', 'test', 'Test', true)
+    INSERT INTO scenarios (id, title, category, category_label, status)
+    VALUES ('with space & pct%', 'Awkward id', 'test', 'Test', 'published')
   `);
 
   try {

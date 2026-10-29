@@ -1,5 +1,7 @@
 // path: src/app/models/scenario.model.ts
 
+import type { ScenarioVersion } from './admin.model';
+
 /**
  * A single scenario entry as described by the remote catalog manifest.
  *
@@ -170,6 +172,19 @@ export interface CategoryFilter {
   count: number;
 }
 
+/** The four workflow statuses (`backend/workflow.js`). */
+export type ScenarioStatus = 'draft' | 'review' | 'published' | 'rejected';
+
+/** `currentVersion` of an admin row: what the list and the readiness check need of the live archive. */
+export interface CurrentVersionSummary {
+  id: number;
+  sha256: string;
+  bytes: number;
+  /** False for a version that predates stored checks: its zero counts are not "clean". */
+  checked: boolean;
+  checks: { errors: number; warnings: number };
+}
+
 /**
  * A scenario as seen by the admin screen: everything the public catalog hides.
  *
@@ -177,8 +192,29 @@ export interface CategoryFilter {
  * (`GET /api/admin/scenarios`).
  */
 export interface AdminScenario extends ScenarioCatalogItem {
-  /** Whether the scenario appears in the public catalog. */
+  /** Workflow status; only `published` scenarios appear in the public catalog. */
+  status: ScenarioStatus;
+
+  /** Id of the key that owns the row; null for rows that predate keys (moderators only). */
+  ownerKeyId?: number | null;
+
+  /** Label of the owning key; null when there is no owner. */
+  ownerLabel?: string | null;
+
+  /** Id of an author's archive waiting for a moderator on a published scenario, or null. */
+  pendingVersionId?: number | null;
+
+  /** The version students get, with its check counts; null before the first archive. */
+  currentVersion?: CurrentVersionSummary | null;
+
+  /** Compatibility mirror of `status === 'published'` for readers that predate the workflow. */
   isPublished: boolean;
+
+  /** A moderator's reason for the last rejection, or null. */
+  moderatorNote: string | null;
+
+  /** When the scenario last entered review, or null. */
+  submittedAt: string | null;
 
   /** `local` = archive in our storage, `drive` = legacy external link. */
   storageKind: 'local' | 'drive';
@@ -221,4 +257,6 @@ export interface ArchiveUploadResult {
   deduplicated: boolean;
   manifestId: string;
   warnings: string[];
+  /** The version row the upload created (or, for identical bytes, matched); absent in answers older than release 2. */
+  version?: ScenarioVersion;
 }

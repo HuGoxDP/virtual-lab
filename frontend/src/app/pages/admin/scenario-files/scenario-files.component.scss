@@ -1,0 +1,49 @@
+// path: src/app/pages/admin/scenario-files/scenario-files.component.scss
+
+@use '../shared' as admin;
+
+@include admin.banner;
+@include admin.utilities;
+
+:host { display: block; min-width: 0; }
+
+.files-grid {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-6); align-items: start;
+  margin-bottom: var(--space-6);
+  @media (max-width: 1000px) { grid-template-columns: minmax(0, 1fr); }
+}
+.sub-h { margin-top: var(--space-6) !important; }
+
+.banner-pending {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4);
+  margin-bottom: var(--space-6); padding: var(--space-4) var(--space-6); border-radius: var(--radius-md);
+  background: rgba(224, 192, 112, 0.12);
+  h2 { margin: 0 0 4px; font-size: 15px; color: #e5c887; }
+  p { margin: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+  .pending-text { min-width: 0; flex: 1 1 280px; }
+  .pending-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+}
+
+.archive-line {
+  display: flex; align-items: center; gap: var(--space-4); margin: 0 0 var(--space-4); flex-wrap: wrap;
+  color: var(--color-accent);
+  .archive-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 200px; color: var(--color-text); }
+  .archive-name { font-size: 14px; overflow-wrap: anywhere; }
+}
+
+.tree, .all-files ul {
+  margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px;
+  li { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 13.5px; }
+  vl-icon { color: var(--color-accent); align-self: center; }
+}
+.path { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+.all-files { margin-top: var(--space-4); summary { cursor: pointer; font-size: 13px; margin-bottom: var(--space-3); } }
+
+.history { .table-wrap { position: relative; overflow-x: auto; } .hash { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; } }
+.row-actions { white-space: nowrap; text-align: right; }
+.state {
+  font-size: 12px; padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
+  &[data-state='current'] { color: #8fdcb4; background: rgba(126, 214, 166, 0.12); }
+  &[data-state='pending'] { color: #e5c887; background: rgba(224, 192, 112, 0.12); }
+}

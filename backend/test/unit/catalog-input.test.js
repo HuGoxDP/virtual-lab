@@ -55,3 +55,32 @@ test('111. parseMaxArchiveBytes', async t => {
     }
   });
 });
+
+test('181. scenarioTextProblem: widths of the text fields (DW-2.4)', async t => {
+  const { scenarioTextProblem, SCENARIO_TEXT_LIMITS } = require('../../catalog-input');
+
+  await t.test('a body with nothing to check, or every field at its width, is fine', () => {
+    assert.equal(scenarioTextProblem(undefined), null);
+    assert.equal(scenarioTextProblem({}), null);
+    const full = Object.fromEntries(Object.entries(SCENARIO_TEXT_LIMITS).map(([name, { max }]) => [name, 'я'.repeat(max)]));
+    assert.equal(scenarioTextProblem(full), null);
+  });
+
+  await t.test('each field one character over is named, with its width', () => {
+    for (const [name, { max }] of Object.entries(SCENARIO_TEXT_LIMITS)) {
+      assert.equal(scenarioTextProblem({ [name]: 'я'.repeat(max + 1) }), `${name}: не більше ${max} символів`);
+    }
+  });
+
+  await t.test('widths count code points: 255 emoji fit a VARCHAR(255), 256 do not', () => {
+    assert.equal(scenarioTextProblem({ title: '😀'.repeat(255) }), null);
+    assert.match(scenarioTextProblem({ title: '😀'.repeat(256) }), /^title: не більше 255/);
+  });
+
+  await t.test('only the nullable fields take null; any non-string is refused', () => {
+    assert.equal(scenarioTextProblem({ author: null, version: null, manifestUrl: null }), null);
+    assert.equal(scenarioTextProblem({ title: null }), 'title має бути рядком');
+    assert.equal(scenarioTextProblem({ title: 5 }), 'title має бути рядком');
+    assert.equal(scenarioTextProblem({ author: { a: 1 } }), 'author має бути рядком');
+  });
+});

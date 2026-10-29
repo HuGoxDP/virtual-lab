@@ -431,8 +431,8 @@ test('telemetry survives scenario deletion', async t => {
   if (skipUnlessDb(t)) return;
 
   await pool.query(`
-    INSERT INTO scenarios (id, title, category, category_label, is_published)
-    VALUES ('doomed', 'Doomed', 'test', 'Test', true)
+    INSERT INTO scenarios (id, title, category, category_label, status)
+    VALUES ('doomed', 'Doomed', 'test', 'Test', 'published')
   `);
 
   await request(app).post('/api/telemetry/session')

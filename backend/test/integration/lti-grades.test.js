@@ -63,11 +63,19 @@ test.beforeEach(async () => {
     VALUES ($1, $2, $3, $4, $5, $6)`,
   [REGISTRATION.issuer, REGISTRATION.clientId, REGISTRATION.deploymentIds, REGISTRATION.authLoginUrl,
     REGISTRATION.authTokenUrl, REGISTRATION.jwksUri]);
+  // "Published" is release 2's rule (`PUBLIC_ROW`): status published AND a category that is not hidden.
   await pool.query(`
-    INSERT INTO scenarios (id, title, category, category_label, scenario_url, is_published, graded) VALUES
-      ('circuits', 'Електричні кола', 'physics', 'Фізика', '/scenarios/a.zip', true, true),
-      ('solar-system', 'Сонячна система & <планети>', 'astronomy', 'Астрономія', '/scenarios/b.zip', true, false),
-      ('hidden-lab', 'Прихована', 'physics', 'Фізика', '/scenarios/c.zip', false, true)`);
+    INSERT INTO categories (slug, label, icon, sort_order, is_visible) VALUES
+      ('physics', 'Фізика', 'lightning', 10, true),
+      ('astronomy', 'Астрономія', 'planet', 20, true),
+      ('secret', 'Прихований напрям', 'dna', 30, false)`);
+  await pool.query(`
+    INSERT INTO scenarios (id, title, category, category_label, scenario_url, status, graded) VALUES
+      ('circuits', 'Електричні кола', 'physics', 'Фізика', '/scenarios/a.zip', 'published', true),
+      ('solar-system', 'Сонячна система & <планети>', 'astronomy', 'Астрономія', '/scenarios/b.zip', 'published', false),
+      ('hidden-lab', 'Прихована', 'physics', 'Фізика', '/scenarios/c.zip', 'draft', true),
+      ('review-lab', 'На перевірці', 'physics', 'Фізика', '/scenarios/d.zip', 'review', true),
+      ('hidden-category-lab', 'У прихованому напрямі', 'secret', 'Прихований напрям', '/scenarios/e.zip', 'published', true)`);
   const { ags } = platform;
   ags.token = { status: 200, body: { access_token: 'ags-token-1', token_type: 'Bearer', expires_in: 3600 } };
   ags.results = { status: 200, body: [] };
@@ -218,7 +226,8 @@ test('deep-link edge: unknown or unpublished scenario is 404 «Лаборато�
   if (skipUnlessDb(t)) return;
   const cookie = await teacherSession();
 
-  for (const scenarioId of ['no-such-lab', 'hidden-lab']) {
+  // draft, in review, and published but in a hidden category: none is public in release 2
+  for (const scenarioId of ['no-such-lab', 'hidden-lab', 'review-lab', 'hidden-category-lab']) {
     const res = await pick(cookie, { scenarioId });
     assertError(res, 404);
     assert.equal(res.body.error, 'Лабораторну знято');
@@ -508,7 +517,7 @@ test('submit edge: an instructor, or a deep-link session, is refused with 403 an
 test('submit edge: an unknown or unpublished scenario is 404 «Лабораторну знято»', async t => {
   if (skipUnlessDb(t)) return;
 
-  for (const scenarioId of ['deleted-lab', 'hidden-lab']) {
+  for (const scenarioId of ['deleted-lab', 'hidden-lab', 'review-lab', 'hidden-category-lab']) {
     const res = await submit(await makeSession({ scenarioId }));
     assertError(res, 404);
     assert.equal(res.body.error, 'Лабораторну знято');

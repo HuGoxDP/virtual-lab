@@ -96,7 +96,7 @@ describe('Nocturne stylesheet source (DW-2.1)', () => {
   it('DW-2.1 styles.scss pulls in every partial', () => {
     const entry = readFileSync('src/styles.scss', 'utf8');
     const partials = readdirSync(STYLES_DIR).filter(f => f.startsWith('_')).map(f => f.slice(1, -'.scss'.length));
-    expect(partials.length).toBeGreaterThanOrEqual(6);
+    expect(partials.length).toBeGreaterThanOrEqual(5);
     for (const partial of partials) expect(entry, partial).toContain(`@use 'styles/${partial}'`);
   });
 });
@@ -134,11 +134,9 @@ describe('Inter font faces (DW-2.2)', () => {
   });
 });
 
-describe('legacy-admin scope (DW-2.6)', () => {
-  it('DW-2.6 the old admin root carries the scope class and the scope is :where() so it adds no specificity', () => {
-    expect(readFileSync('src/app/pages/admin/admin.component.html', 'utf8')).toContain('legacy-admin');
-    const legacy = read('_legacy.scss');
-    expect(legacy).toContain(':where(.legacy-admin)');
-    expect(legacy).not.toMatch(/^\s*\.legacy-admin/m);
+describe('the old admin is gone (release 2, phase 6)', () => {
+  it('DW-6.4 no legacy stylesheet or legacy admin component is left to maintain', () => {
+    expect(existsSync(join('src/styles', '_legacy.scss'))).toBe(false);
+    expect(existsSync('src/app/pages/admin/legacy')).toBe(false);
   });
 });

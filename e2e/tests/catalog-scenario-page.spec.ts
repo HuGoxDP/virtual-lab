@@ -6,7 +6,7 @@
 // scenario page's real data (DW-3.4, DW-3.5).
 
 import { expect, test, type Page } from '@playwright/test';
-import { BASE_URL, createScenario, deleteScenario, uniqueScenarioId } from '../helpers/api';
+import { BASE_URL, createScenario, deleteScenario, uniqueScenarioId, updateScenario, uploadArchive } from '../helpers/api';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN!;
 
@@ -45,8 +45,9 @@ test.describe('catalog (Nocturne)', () => {
     await expect(page.locator('.footer-inner')).toHaveCount(0);
     await expect(page.locator('footer a[href="/admin"]')).toHaveCount(0);
     await expect(page.locator('.footer-legal')).toContainText('©');
-    // /admin stays reachable by its URL; only the footer link went.
+    // /admin stays reachable by its URL; only the footer link went. Signed out it lands on the sign-in screen.
     await page.goto('/admin');
+    await expect(page).toHaveURL(/\/admin\/login$/);
     await expect(page.locator('input[type="password"]')).toBeVisible();
   });
 
@@ -54,7 +55,7 @@ test.describe('catalog (Nocturne)', () => {
     await page.goto('/admin');
     await page.locator('input[type="password"]').fill(ADMIN_TOKEN);
     await page.getByRole('button', { name: 'Увійти' }).click();
-    await expect(page.getByRole('button', { name: 'Оновити' })).toBeVisible();
+    await expect(page.locator('.sidebar')).toBeVisible();
 
     await page.goto('/catalog');
     await expect(page.locator('.account')).toHaveText('Панель');
@@ -195,16 +196,29 @@ test.describe('scenario page', () => {
         features: [{ icon: 'atom', title: 'Атоми', subtitle: 'Будова' }, { icon: 'flask', title: 'Колби' }],
       });
       await createScenario({ ...base, id: bare });
+      // A new row is a draft and the public page serves only published ones; approving needs an archive,
+      // so upload first (PUT isPublished maps to approve).
+      for (const id of [withFeatures, bare]) {
+        await uploadArchive(id);
+        await updateScenario(id, { isPublished: true });
+      }
 
       await page.goto(`/scenario/${withFeatures}`);
       await expect(page.locator('.feature')).toHaveCount(2);
       await expect(page.locator('.feature').first()).toContainText('Атоми');
       await expect(page.locator('.feature').first()).toContainText('Будова');
 
+      // A published row always has an archive now, so "no archive" is staged by stripping what the API
+      // reports of it: the page decides from `scenarioUrl` alone.
+      await page.route(`**/api/catalog/${bare}`, async route => {
+        const response = await route.fetch();
+        const body = await response.json();
+        await route.fulfill({ response, json: { ...body, scenarioUrl: '', archiveBytes: null } });
+      });
       await page.goto(`/scenario/${bare}`);
       await expect(page.locator('h1.title')).toBeVisible();
       await expect(page.getByText('Що всередині')).toHaveCount(0);
-      // The rows have no archive: nothing to launch or download, and no placeholder in their place.
+      // The row reports no archive: nothing to launch or download, and no placeholder in their place.
       await expect(page.locator('.launch, .launch-bar, .download')).toHaveCount(0);
       await expect(page.locator('.meta-row', { hasText: 'Розмір архіву' })).toHaveCount(0);
     } finally {

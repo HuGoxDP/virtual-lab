@@ -120,6 +120,14 @@ describe('CatalogComponent', () => {
       expect(q('main.catalog-main')).not.toBeNull();
     });
 
+    it('DW-3.7 the main column is as wide as its parent, not as wide as the chip row (390 px must not scroll sideways)', () => {
+      // With `margin: 0 auto` in a column flex host the item loses its stretch and shrink-wraps to the chip row.
+      const style = getComputedStyle(q('main.catalog-main')!);
+      expect(style.width).toBe('100%');
+      expect(style.marginLeft).toBe('auto');
+      expect(getComputedStyle(q('.chips')!).overflowX).toBe('auto');
+    });
+
     it('DW-3.1 chips: icon, label and count in API order, "Усі напрями" first with the whole count', () => {
       const chips = qa('.chip').map(c => c.textContent!.replace(/\s+/g, ' ').trim());
       expect(chips).toEqual(['Усі напрями6', 'Фізика4', 'Астрономія2']);

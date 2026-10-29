@@ -1,46 +1,29 @@
 // e2e/tests/admin-golden-path.spec.ts
 //
 // test-plan.md §4.11 #98 and §7 (F12), and #136 (release 1, phase 3: DW-3.8, DW-3.10): the whole
-// publishing round trip driven through the UI — token, create, upload, publish, it appears for students and
-// plays, then delete.
+// publishing round trip driven through the UI - sign in, create, upload, publish, it appears for students and
+// plays.
 //
-// Every endpoint behind this screen is covered by the backend suite. The screen
-// itself was not covered by anything.
+// Release 2, phase 6 (DW-6.4): the old admin this spec used to drive is deleted. The round trip now runs on the new
+// screens as the bootstrap moderator: the row is created through the API (the wizard, which creates rows from an
+// archive's own manifest, has its own spec: admin-upload-wizard.spec.ts #222), the archive goes in through the
+// Файл tab with a real file chooser, and the scenario is published from Публікація. "Delete" has no per-row button
+// any more (it is a bulk action of the list), so the test ends with the API teardown.
+//
+// Every endpoint behind these screens is covered by the backend suite. The screens themselves were not.
 
 import { expect, test } from '@playwright/test';
 import {
+  ADMIN_TOKEN,
   BASE_URL,
   cleanupE2EScenarios,
+  createScenario,
   deleteScenario,
   SMALL_ARCHIVE,
   uniqueScenarioId,
 } from '../helpers/api';
+import { signInThroughForm } from '../helpers/admin-ui';
 import { waitForFrames } from '../helpers/engine';
-
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN!;
-
-/** Signs in through the form, which is where the token is supposed to enter. */
-async function signIn(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto('/admin');
-
-  const tokenField = page.locator('input[type="password"]');
-  const reloadButton = page.getByRole('button', { name: 'Оновити' });
-
-  // Wait for the app to render *something* before deciding which state it is in.
-  // Probing the field straight after goto() races Angular's first paint: the
-  // field is not visible yet, the sign-in is skipped, and the wait below then
-  // times out on a screen that is simply still asking for the token.
-  await expect(tokenField.or(reloadButton).first()).toBeVisible();
-
-  // The token lives in sessionStorage, so a fresh context always starts signed
-  // out — but a reused one does not, and re-entering it would be a no-op anyway.
-  if (await tokenField.isVisible()) {
-    await tokenField.fill(ADMIN_TOKEN);
-    await page.getByRole('button', { name: 'Увійти' }).click();
-  }
-
-  await expect(reloadButton).toBeVisible();
-}
 
 test.describe('admin golden path', () => {
   test.beforeAll(async () => {
@@ -48,52 +31,32 @@ test.describe('admin golden path', () => {
     if (removed > 0) console.log(`cleaned up ${removed} leftover e2e scenario(s)`);
   });
 
-  test('create, upload, publish, play, delete', async ({ page }) => {
+  test('create, upload, publish, play', async ({ page }) => {
     const id = uniqueScenarioId('golden');
     const title = 'E2E перевірка публікації';
 
-    // Registered before the assertions so an early failure still cleans up.
-    let created = false;
-
     try {
-      await signIn(page);
+      await createScenario({
+        id, title, category: 'test', categoryLabel: 'Test',
+        description: 'Створено автотестом.', fullDescription: 'Рядок каталогу, створений e2e-тестом.',
+        features: [{ icon: 'atom', title: 'Е2Е-пункт', subtitle: 'Додано з форми' }],
+      });
 
-      // ── create ────────────────────────────────────
-      await page.getByRole('button', { name: '+ Новий сценарій' }).click();
+      await signInThroughForm(page, ADMIN_TOKEN);
+      await page.goto(`/admin/scenarios/${id}/files`);
 
-      const editor = page.locator('.editor');
-      await expect(editor).toBeVisible();
-
-      await editor.locator('input').nth(0).fill(id);          // id
-      await editor.locator('input').nth(1).fill(title);       // Назва
-      await editor.locator('input').nth(2).fill('test');      // Категорія
-      await editor.locator('input').nth(3).fill('Test');      // Підпис категорії
-      await editor.locator('textarea').nth(0).fill('Створено автотестом.');
-      await editor.locator('textarea').nth(1).fill('Рядок каталогу, створений e2e-тестом.');
-
-      // "Що всередині": one entry, with an icon picked from the hosted set.
-      await editor.getByRole('button', { name: '+ Додати пункт' }).click();
-      await editor.getByLabel('Іконка пункту 1').selectOption('atom');
-      await editor.getByLabel('Заголовок пункту 1').fill('Е2Е-пункт');
-      await editor.getByLabel('Підпис пункту 1').fill('Додано з форми');
-
-      await page.getByRole('button', { name: 'Зберегти' }).click();
-      created = true;
-
-      const row = page.locator('tr', { hasText: id });
-      await expect(row).toBeVisible();
-
-      // ── upload an archive ─────────────────────────
-      await row.locator('input[type="file"]').setInputFiles(SMALL_ARCHIVE);
-
-      // The row shows a content hash once the object is stored.
-      await expect(row.locator('.hash')).toBeVisible({ timeout: 60_000 });
-      await expect(row).toContainText('local');
+      // ── upload an archive through the Файл tab ────
+      await page.locator('[data-role="archive-input"]').setInputFiles(SMALL_ARCHIVE);
+      await expect(page.locator('[data-role="current-archive"]')).toBeVisible({ timeout: 60_000 });
+      await expect(page.locator('[data-role="versions"] tbody tr')).toHaveCount(1);
 
       // ── publish ───────────────────────────────────
-      // A new row is published by default; make the state explicit rather than
-      // assuming it, then drive the toggle if it is not.
       const publicUrl = `${BASE_URL}/api/catalog/${encodeURIComponent(id)}`;
+      expect((await fetch(publicUrl)).status, 'a draft is not in the public catalog').toBe(404);
+
+      await page.getByRole('link', { name: 'Публікація' }).click();
+      await page.getByRole('button', { name: 'Опублікувати' }).click();
+      await expect(page.locator('.edit-head vl-status-pill')).toContainText('Опубліковано');
 
       await expect
         .poll(async () => (await fetch(publicUrl)).status,
@@ -112,62 +75,35 @@ test.describe('admin golden path', () => {
 
       const snapshot = await waitForFrames(page);
       expect(snapshot.drawCalls, 'the uploaded scenario should render').toBeGreaterThan(0);
-
-      // ── delete ────────────────────────────────────
-      await signIn(page);
-
-      page.once('dialog', dialog => void dialog.accept());
-      await page.locator('tr', { hasText: id }).getByRole('button', { name: 'Видалити' }).click();
-
-      await expect(page.locator('tr', { hasText: id })).toHaveCount(0);
-      created = false;
-
-      await expect
-        .poll(async () => (await fetch(publicUrl)).status,
-          { message: 'a deleted scenario must leave the public catalog' })
-        .toBe(404);
     } finally {
-      if (created) await deleteScenario(id);
+      await deleteScenario(id);
     }
+
+    await expect
+      .poll(async () => (await fetch(`${BASE_URL}/api/catalog/${encodeURIComponent(id)}`)).status,
+        { message: 'a deleted scenario must leave the public catalog' })
+      .toBe(404);
   });
 
   test('DW-3.8 up to six "Що всередині" entries; a seventh is blocked', async ({ page }) => {
-    await signIn(page);
-    await page.getByRole('button', { name: '+ Новий сценарій' }).click();
-
-    const add = page.getByRole('button', { name: '+ Додати пункт' });
-    for (let i = 0; i < 6; i++) await add.click();
-
-    await expect(page.locator('.feature-row')).toHaveCount(6);
-    await expect(add).toBeDisabled();
-  });
-
-  test('DW-3.8 a server 400 on the entries is shown with the server\'s own message', async ({ page }) => {
-    const id = uniqueScenarioId('badfeat');
+    const id = uniqueScenarioId('feat');
     try {
-      await signIn(page);
-      await page.getByRole('button', { name: '+ Новий сценарій' }).click();
+      await createScenario({ id, title: 'Пункти', category: 'test', categoryLabel: 'Test' });
+      await signInThroughForm(page, ADMIN_TOKEN);
+      await page.goto(`/admin/scenarios/${id}/meta`);
 
-      const editor = page.locator('.editor');
-      await editor.locator('input').nth(0).fill(id);
-      await editor.locator('input').nth(1).fill('Погані пункти');
-      await editor.locator('input').nth(2).fill('test');
-      await editor.locator('input').nth(3).fill('Test');
-      await editor.getByRole('button', { name: '+ Додати пункт' }).click(); // left with an empty title
+      const add = page.getByRole('button', { name: 'Додати пункт' });
+      for (let i = 0; i < 6; i++) await add.click();
 
-      await page.getByRole('button', { name: 'Зберегти' }).click();
-
-      await expect(page.locator('.banner-error')).toContainText('features[0].title');
-      // Nothing was created, and the editor stays open so the input is not lost.
-      await expect(page.locator('.editor')).toBeVisible();
-      expect((await fetch(`${BASE_URL}/api/catalog/${encodeURIComponent(id)}`)).status).toBe(404);
+      await expect(page.locator('.feature-row')).toHaveCount(6);
+      await expect(add).toBeDisabled();
     } finally {
       await deleteScenario(id);
     }
   });
 
   test('the token never reaches localStorage or the URL', async ({ page }) => {
-    await signIn(page);
+    await signInThroughForm(page, ADMIN_TOKEN);
 
     const leaked = await page.evaluate(() => ({
       local: Object.entries(localStorage).map(([k, v]) => `${k}=${v}`).join('|'),
@@ -175,18 +111,19 @@ test.describe('admin golden path', () => {
       url: location.href,
     }));
 
-    // sessionStorage is where it is supposed to live — it dies with the tab.
+    // sessionStorage is where it is supposed to live - it dies with the tab.
     expect(leaked.local, 'the admin token must not be in localStorage').not.toContain(ADMIN_TOKEN);
     expect(leaked.url, 'the admin token must not be in the URL').not.toContain(ADMIN_TOKEN);
     expect(leaked.session.length, 'the token should be held in sessionStorage').toBeGreaterThan(0);
   });
 
   test('unpublished scenarios are visible to admin and nobody else', async ({ page }) => {
-    await signIn(page);
+    await signInThroughForm(page, ADMIN_TOKEN);
+    await page.goto('/admin/scenarios');
 
-    // Bench scenes are unpublished by policy — the admin table must still list
+    // Bench scenes are unpublished by policy - the admin list must still show
     // them, and the public catalog must not.
-    const benchRow = page.locator('tr', { hasText: 'benchscene3-solarsystem' });
+    const benchRow = page.locator('tr.row', { hasText: 'benchscene3-solarsystem' });
     await expect(benchRow).toBeVisible();
 
     expect((await fetch(`${BASE_URL}/api/catalog/benchscene3-solarsystem`)).status).toBe(404);

@@ -10,16 +10,16 @@ RUN npm install --omit=dev
 # All backend modules, not a hand-maintained list — node_modules is excluded
 # by backend/.dockerignore, so this stays small.
 COPY *.js ./
+COPY routes ./routes
 COPY migrations ./migrations
 COPY lti ./lti
 
-# Archive volume mountpoint. Creating it here with the right owner means the
-# named volume inherits that ownership on first use, so the unprivileged
-# process can write uploads.
-RUN mkdir -p /srv/archives/objects /srv/archives/tmp /srv/lti \
- && chown -R node:node /srv/archives /srv/lti
+# Volume mountpoints (archives, cover images, the LTI tool key). Creating them here with the right owner means
+# the named volumes inherit that ownership on first use, so the unprivileged process can write.
+RUN mkdir -p /srv/archives/objects /srv/archives/tmp /srv/previews/objects /srv/previews/tmp /srv/lti \
+ && chown -R node:node /srv/archives /srv/previews /srv/lti
 
-# Drop root: the process reads its own files and writes only to /srv/archives.
+# Drop root: the process reads its own files and writes only to /srv/archives, /srv/previews and /srv/lti.
 USER node
 
 EXPOSE 3000

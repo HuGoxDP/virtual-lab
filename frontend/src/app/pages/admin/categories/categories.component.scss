@@ -1,0 +1,29 @@
+// path: src/app/pages/admin/categories/categories.component.scss
+
+@use '../shared' as admin;
+
+@include admin.page-head;
+@include admin.banner;
+@include admin.utilities;
+
+:host { display: block; min-width: 0; }
+
+.table-wrap { position: relative; overflow-x: auto; margin-bottom: var(--space-6); }
+.categories-table { min-width: 760px; td, th { vertical-align: middle; padding: 10px var(--space-3); } }
+.order { white-space: nowrap; }
+.rot-up { display: inline-block; transform: rotate(90deg); }
+.rot-down { display: inline-block; transform: rotate(90deg); }
+.label-input { min-width: 160px; }
+.slug { font-family: ui-monospace, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.num { font-variant-numeric: tabular-nums; }
+.hidden-row { opacity: 0.6; }
+.danger { color: #f0b4b4; }
+.actions { text-align: right; white-space: nowrap; }
+
+.add {
+  max-width: 640px;
+  form { display: flex; flex-direction: column; gap: var(--space-4); align-items: flex-start; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr auto; gap: var(--space-4); width: 100%; @media (max-width: 700px) { grid-template-columns: 1fr; } }
+  .check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+  .banner { margin: 0; width: 100%; }
+}

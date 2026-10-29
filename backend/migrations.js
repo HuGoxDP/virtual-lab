@@ -30,6 +30,10 @@ async function runMigrations(pool) {
   }
 
   const client = await pool.connect();
+  // A migration can RAISE NOTICE to say what it changed (012 lists the cover URLs it clears);
+  // `pg` drops notices unless something listens.
+  const logNotice = notice => console.log(`[MIGRATE] ${notice.message}`);
+  client.on('notice', logNotice);
 
   try {
     await client.query('SELECT pg_advisory_lock($1)', [ADVISORY_LOCK_KEY]);
@@ -70,6 +74,7 @@ async function runMigrations(pool) {
       : `[MIGRATE] Applied ${count} migration(s)`);
   } finally {
     await client.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY]).catch(() => {});
+    client.off('notice', logNotice);
     client.release();
   }
 }

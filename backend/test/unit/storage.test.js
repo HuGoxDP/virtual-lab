@@ -63,6 +63,19 @@ test('commitArchive stores content under its own hash', async t => {
     assert.deepEqual(await listTemp(), []);
   });
 
+  await t.test('a dedup commit refreshes the object mtime, so the GC age rule sees it as new (DW-3.7)', async () => {
+    const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    await fsp.utimes(storage.objectPath(expected), old, old);
+
+    const result = await storage.commitArchive(await stageTemp(buffer));
+    assert.equal(result.deduplicated, true);
+
+    const { mtimeMs } = await fsp.stat(storage.objectPath(expected));
+    assert.ok(Date.now() - mtimeMs < 60_000, 'the object is young again');
+    const { tooNew, orphans } = await storage.classifyObjects(new Set(), 60 * 60 * 1000);
+    assert.ok(tooNew.some(o => o.sha256 === expected) && !orphans.some(o => o.sha256 === expected));
+  });
+
   await t.test('identical content deduplicates instead of storing twice', async () => {
     const before = (await listObjects()).length;
 

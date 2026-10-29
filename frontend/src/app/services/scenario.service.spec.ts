@@ -9,6 +9,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 
 import { ScenarioService } from './scenario.service';
+import { AdminService } from './admin.service';
 import { CatalogCategory, ScenarioCatalogItem, ScenarioCatalogManifest } from '../models/scenario.model';
 import { CatalogFilter, DEFAULT_CATALOG_FILTER } from './catalog-query';
 
@@ -368,6 +369,41 @@ describe('ScenarioService', () => {
       const related = [{ id: 'y', title: 'Y', category: 'physics', categoryLabel: 'Фізика', imageUrl: '' }];
       http.expectOne('/api/catalog/x').flush({ ...scenario('x'), related });
       expect((await pending).related).toEqual(related);
+    });
+
+    describe('a draft preview (version) - DW-3.5', () => {
+      const HASH = 'cd'.repeat(32);
+      afterEach(() => sessionStorage.removeItem('adminToken'));
+
+      it('adds ?version= and sends the session bearer', async () => {
+        TestBed.inject(AdminService).setToken('session-key');
+        const pending = service.fetchScenarioById('x', HASH);
+        const req = http.expectOne(r => r.url === '/api/catalog/x');
+        expect(req.request.params.get('version')).toBe(HASH);
+        expect(req.request.headers.get('Authorization')).toBe('Bearer session-key');
+        req.flush(scenario('x'));
+        await pending;
+      });
+
+      it('sends no Authorization when nobody is signed in (a published scenario versions are public)', async () => {
+        TestBed.inject(AdminService).clearToken();
+        const pending = service.fetchScenarioById('x', HASH);
+        const req = http.expectOne(r => r.url === '/api/catalog/x');
+        expect(req.request.params.get('version')).toBe(HASH);
+        expect(req.request.headers.has('Authorization')).toBe(false);
+        req.flush(scenario('x'));
+        await pending;
+      });
+
+      it('the plain lookup stays public: no version, no credential, even when signed in', async () => {
+        TestBed.inject(AdminService).setToken('session-key');
+        const pending = service.fetchScenarioById('x');
+        const req = http.expectOne('/api/catalog/x');
+        expect(req.request.params.has('version')).toBe(false);
+        expect(req.request.headers.has('Authorization')).toBe(false);
+        req.flush(scenario('x'));
+        await pending;
+      });
     });
 
     it('rejects with the HTTP error so a caller can tell 404 from 500', async () => {

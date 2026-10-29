@@ -10,7 +10,11 @@
 // What the student player can read (manifest and scene/prefab format versions)
 // is stated once, in `player-formats.js`; this file only applies it.
 
+const fsp = require('node:fs/promises');
+
 const StreamZip = require('node-stream-zip');
+
+const { MAX_ENTRY_BYTES, MAX_ARCHIVE_ENTRIES } = require('./config');
 
 const { isSceneFile, sceneFileProblem, manifestVersionProblem } = require('./player-formats');
 
@@ -20,10 +24,135 @@ const SCRIPTS_DIR = 'scripts/';
 /** Fields the engine's `IScenarioManifest` requires. */
 const REQUIRED_FIELDS = ['manifestVersion', 'id', 'name', 'version', 'entryPoint'];
 
+/**
+ * Longest value each manifest field may have: the width of the column it is copied into
+ * (`scenarios` and `scenario_versions` share them since migration 012), so an accepted
+ * archive can never make an INSERT or an accept fail with a 500.
+ */
+const MANIFEST_FIELD_LIMITS = { id: 255, version: 50, engineVersion: 100 };
+
+const REBUILD_HINT = 'Зберіть архів за допомогою ScenarioCreator.';
+
+/** A message when `id`, `name` or `version` is not text, or a field outruns its column; else null. */
+function manifestFieldProblem(manifest) {
+  for (const field of ['id', 'name', 'version']) {
+    if (typeof manifest[field] !== 'string') return `Поле "${field}" у ${MANIFEST_NAME} має бути рядком. ${REBUILD_HINT}`;
+  }
+  if (manifest.engineVersion != null && typeof manifest.engineVersion !== 'string') {
+    return `Поле "engineVersion" у ${MANIFEST_NAME} має бути рядком. ${REBUILD_HINT}`;
+  }
+  for (const [field, max] of Object.entries(MANIFEST_FIELD_LIMITS)) {
+    if (manifest[field] != null && manifest[field].length > max) {
+      return `Поле "${field}" у ${MANIFEST_NAME} задовге: максимум ${max} символів`;
+    }
+  }
+  return null;
+}
+
 class ArchiveInvalid extends Error {
   constructor(message) {
     super(message);
     this.status = 400;
+  }
+}
+
+const EOCD_SIGNATURE = 0x06054b50;
+/** The end-of-central-directory record is 22 bytes plus a comment of at most 65535. */
+const EOCD_SEARCH_BYTES = 22 + 0xffff;
+/**
+ * The entry count a ZIP declares, read from its end-of-central-directory record
+ * without parsing the directory — so a hostile count is refused before the
+ * parser allocates a record per entry. 0xFFFF means "zip64, at least this many", which
+ * still exceeds any sane cap; the real parser re-checks the exact count. Null when
+ * no record is found (the real parser will then say so).
+ */
+async function declaredEntryCount(filePath) {
+  const handle = await fsp.open(filePath, 'r');
+  try {
+    const { size } = await handle.stat();
+    const length = Math.min(size, EOCD_SEARCH_BYTES);
+    const tail = Buffer.alloc(length);
+    await handle.read(tail, 0, length, size - length);
+
+    for (let at = length - 22; at >= 0; at--) {
+      if (tail.readUInt32LE(at) !== EOCD_SIGNATURE) continue;
+      return tail.readUInt16LE(at + 10);
+    }
+    return null;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Reads one entry, never holding more than `maxBytes` of it. The declared size
+ * is checked first, but it comes from the archive and can lie, so the stream is
+ * also counted and cut off the moment it passes the cap — a zip bomb ends here.
+ */
+async function readEntryCapped(zip, entry, maxBytes) {
+  const tooLarge = () => new ArchiveInvalid(
+    `Файл "${entry.name}" завеликий: максимум ${maxBytes} байт після розпакування`
+  );
+  if (entry.size > maxBytes) throw tooLarge();
+
+  const stream = await zip.stream(entry.name);
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    total += chunk.length;
+    if (total > maxBytes) {
+      stream.destroy();
+      throw tooLarge();
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * Opens `filePath` as a ZIP after refusing a hostile entry count, and returns `{ zip, entryMap }`
+ * (the caller closes `zip`). Throws `ArchiveInvalid` for an unreadable file or too many entries.
+ * Shared by validation and the contents listing, so both honour the same caps.
+ */
+async function openArchive(filePath, maxEntries) {
+  const tooManyEntries = () => new ArchiveInvalid(`В архіві забагато файлів: максимум ${maxEntries}`);
+
+  // Refuse a hostile entry count before the parser builds a record for each one.
+  if (await declaredEntryCount(filePath).catch(() => null) > maxEntries) throw tooManyEntries();
+
+  let zip;
+
+  try {
+    zip = new StreamZip.async({ file: filePath });
+    await zip.entriesCount;
+  } catch {
+    throw new ArchiveInvalid('Файл не читається як ZIP-архів');
+  }
+
+  try {
+    if (await zip.entriesCount > maxEntries) throw tooManyEntries();
+    return { zip, entryMap: await zip.entries() };
+  } catch (err) {
+    await zip.close().catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Every file and directory of an archive on disk as `{ path, bytes, dir }`, sorted by path;
+ * `bytes` is the unpacked size (0 for a directory). Nothing is unpacked, only the central
+ * directory is read, and the entry-count cap applies as it does to validation.
+ *
+ * @param {{maxEntries?: number}} [limits]  override the env cap (tests)
+ */
+async function listArchiveEntries(filePath, limits = {}) {
+  const { zip, entryMap } = await openArchive(filePath, limits.maxEntries ?? MAX_ARCHIVE_ENTRIES);
+  try {
+    return Object.values(entryMap)
+      .map(entry => ({ path: entry.name, bytes: entry.isDirectory ? 0 : entry.size, dir: entry.isDirectory }))
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  } finally {
+    await zip.close().catch(() => {});
   }
 }
 
@@ -36,19 +165,13 @@ class ArchiveInvalid extends Error {
  *
  * @param {string} filePath  archive on disk
  * @param {string} catalogId id of the catalog row it is being attached to
+ * @param {{maxEntryBytes?: number, maxEntries?: number}} [limits]  override the env caps (tests)
  */
-async function validateScenarioArchive(filePath, catalogId) {
-  let zip;
+async function validateScenarioArchive(filePath, catalogId, limits = {}) {
+  const { maxEntryBytes = MAX_ENTRY_BYTES, maxEntries = MAX_ARCHIVE_ENTRIES } = limits;
+  const { zip, entryMap } = await openArchive(filePath, maxEntries);
 
   try {
-    zip = new StreamZip.async({ file: filePath });
-    await zip.entriesCount;
-  } catch {
-    throw new ArchiveInvalid('Файл не читається як ZIP-архів');
-  }
-
-  try {
-    const entryMap = await zip.entries();
     const entries = Object.keys(entryMap);
 
     if (!entries.includes(MANIFEST_NAME)) {
@@ -57,8 +180,9 @@ async function validateScenarioArchive(filePath, catalogId) {
 
     let manifest;
     try {
-      manifest = JSON.parse(await zip.entryData(MANIFEST_NAME));
-    } catch {
+      manifest = JSON.parse(await readEntryCapped(zip, entryMap[MANIFEST_NAME], maxEntryBytes));
+    } catch (err) {
+      if (err instanceof ArchiveInvalid) throw err;
       throw new ArchiveInvalid(`${MANIFEST_NAME} не є валідним JSON`);
     }
     console.log(`[VALIDATE] ${MANIFEST_NAME} розібрано: id="${manifest.id}", entryPoint="${manifest.entryPoint}"`);
@@ -67,6 +191,9 @@ async function validateScenarioArchive(filePath, catalogId) {
     if (missing.length > 0) {
       throw new ArchiveInvalid(`У ${MANIFEST_NAME} відсутні поля: ${missing.join(', ')}`);
     }
+
+    const fieldProblem = manifestFieldProblem(manifest);
+    if (fieldProblem) throw new ArchiveInvalid(fieldProblem);
 
     const versionProblem = manifestVersionProblem(manifest.manifestVersion);
     if (versionProblem) throw new ArchiveInvalid(versionProblem);
@@ -84,15 +211,15 @@ async function validateScenarioArchive(filePath, catalogId) {
 
     // The deployed player checks no scene format version, so a newer scene would
     // load hollow rather than fail. Read one at a time, so peak memory is the
-    // largest file, not their sum; like manifest.json, no file has a size limit
-    // of its own beyond the upload's.
+    // largest file, not their sum, and each is capped at `maxEntryBytes`.
     for (const entry of Object.values(entryMap)) {
       if (entry.isDirectory || !isSceneFile(entry.name)) continue;
 
       let data;
       try {
-        data = await zip.entryData(entry.name);
-      } catch {
+        data = await readEntryCapped(zip, entry, maxEntryBytes);
+      } catch (err) {
+        if (err instanceof ArchiveInvalid) throw err;
         throw new ArchiveInvalid(`Файл "${entry.name}" не читається з архіву (пошкоджений або стиснений непідтримуваним методом)`);
       }
       const problem = sceneFileProblem(entry.name, data);
@@ -120,4 +247,4 @@ async function validateScenarioArchive(filePath, catalogId) {
   }
 }
 
-module.exports = { validateScenarioArchive, ArchiveInvalid, MANIFEST_NAME };
+module.exports = { validateScenarioArchive, listArchiveEntries, ArchiveInvalid, MANIFEST_NAME, declaredEntryCount };

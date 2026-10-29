@@ -19,10 +19,11 @@ async function isAvailable(pool) {
   }
 }
 
-/** Applies init.sql's baseline plus every migration. */
-async function prepareSchema(pool) {
+/** The table `db/init.sql` creates, which every migration builds on. */
+async function createBaseline(pool) {
   // The baseline normally comes from db/init.sql, which only runs inside the
-  // Postgres container. Recreate just the table the migrations build on.
+  // Postgres container. Recreate just the table the migrations build on - as init.sql
+  // has it, with `is_published`: migration 010 derives `status` from it and 011 drops it.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS scenarios (
       id               VARCHAR(100)  PRIMARY KEY,
@@ -42,11 +43,19 @@ async function prepareSchema(pool) {
     )
   `);
 
+}
+
+/** Applies init.sql's baseline plus every migration. */
+async function prepareSchema(pool) {
+  await createBaseline(pool);
   await runMigrations(pool);
 }
 
 async function truncateAll(pool) {
-  await pool.query('TRUNCATE scenarios, scenario_sessions, categories, lti_registrations, lti_states, lti_sessions RESTART IDENTITY CASCADE');
+  await pool.query(
+    'TRUNCATE scenarios, scenario_versions, scenario_sessions, categories, publish_keys, audit_events, ' +
+    'lti_registrations, lti_states, lti_sessions RESTART IDENTITY CASCADE'
+  );
 }
 
 /**
@@ -67,24 +76,42 @@ async function seedScenarios(pool) {
 
   await pool.query(`
     INSERT INTO scenarios
-      (id, title, description, category, category_label, scenario_url, is_published, created_at)
+      (id, title, description, category, category_label, scenario_url, status, created_at)
     VALUES
       ('solar-system', 'Сонячна Система', 'Модель планетарної системи',
-       'astronomy', 'Астрономія', '/scenarios/aaa.zip', true,  '2026-01-05T00:00:00Z'),
+       'astronomy', 'Астрономія', '/scenarios/aaa.zip', 'published',  '2026-01-05T00:00:00Z'),
       ('cell-biology', 'Будова клітини', 'Органели та мембрана',
-       'biology', 'Біологія', '/scenarios/bbb.zip', true,  '2026-01-04T00:00:00Z'),
+       'biology', 'Біологія', '/scenarios/bbb.zip', 'published',  '2026-01-04T00:00:00Z'),
       ('tie-a', 'Однакова мітка А', 'tie',
-       'biology', 'Біологія', '/scenarios/ccc.zip', true,  '2026-01-03T00:00:00Z'),
+       'biology', 'Біологія', '/scenarios/ccc.zip', 'published',  '2026-01-03T00:00:00Z'),
       ('tie-b', 'Однакова мітка Б', 'tie',
-       'biology', 'Біологія', '', true,  '2026-01-03T00:00:00Z'),
+       'biology', 'Біологія', '', 'published',  '2026-01-03T00:00:00Z'),
       ('hidden-one', 'Прихований', 'not published',
-       'physics', 'Фізика', '/scenarios/ddd.zip', false, '2026-01-02T00:00:00Z'),
+       'physics', 'Фізика', '/scenarios/ddd.zip', 'draft', '2026-01-02T00:00:00Z'),
       ('drive-legacy', 'Legacy Drive', 'external',
        'physics', 'Фізика',
-       'https://drive.google.com/file/d/FAKEID/view?usp=sharing', false, '2026-01-01T00:00:00Z')
+       'https://drive.google.com/file/d/FAKEID/view?usp=sharing', 'draft', '2026-01-01T00:00:00Z')
   `);
 }
 
+/**
+ * Gives scenario `id` a `current` archive version straight in SQL (and points its row at it),
+ * so a test of something else need not upload a ZIP to make the row approvable.
+ * `sha` is any 64 hex characters; the object itself is not stored.
+ */
+async function addCurrentVersion(pool, id, sha = 'a'.repeat(64)) {
+  await pool.query(`
+    INSERT INTO scenario_versions (scenario_id, sha256, bytes, state) VALUES ($1, $2, 1000, 'current')`, [id, sha]);
+  await pool.query(`
+    UPDATE scenarios SET archive_sha256 = $2, archive_bytes = 1000, scenario_url = $3 WHERE id = $1`,
+  [id, sha, `/scenarios/${sha}.zip`]);
+}
+
+/** Puts a row at `status` directly (no transition rules, no audit): fixtures only. */
+const setStatus = (pool, id, status) => pool.query('UPDATE scenarios SET status = $2 WHERE id = $1', [id, status]);
+
 const PUBLISHED_COUNT = 4;
 
-module.exports = { isAvailable, prepareSchema, truncateAll, seedScenarios, PUBLISHED_COUNT };
+module.exports = {
+  isAvailable, createBaseline, prepareSchema, truncateAll, seedScenarios, addCurrentVersion, setStatus, PUBLISHED_COUNT,
+};
