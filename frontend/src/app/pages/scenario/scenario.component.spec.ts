@@ -101,6 +101,12 @@ describe('ScenarioComponent', () => {
       expect(q('.description').textContent).toBe('Long text\nsecond line');
     });
 
+    it('DW-3.7 the body column is as wide as its parent and a long byline item wraps (390 px must not scroll sideways)', () => {
+      // With `margin: 0 auto` in a column flex host the item loses its stretch and shrink-wraps to its widest child.
+      expect(getComputedStyle(q('.layout')).width).toBe('100%');
+      expect(getComputedStyle(q('.byline-item')).overflowWrap).toBe('anywhere');
+    });
+
     it('DW-3.4 the meta table lists version, author, size, updated and ID', () => {
       const rows = qa('.meta-row').map(r => [r.querySelector('dt')!.textContent!.trim(), r.querySelector('dd')!.textContent!.trim()]);
       expect(rows).toEqual([

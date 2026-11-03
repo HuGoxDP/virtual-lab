@@ -40,9 +40,11 @@ $narrow: 859px;
 }
 
 // ── body ──
+// :host is a column flex box and the auto side margins switch off its default stretch, so without
+// width: 100% the column shrink-wraps to its widest child (an unbroken author or version) and overflows a phone.
 .layout {
   position: relative; display: flex; flex-wrap: wrap; align-items: flex-start;
-  gap: clamp(20px, 3vw, 44px); max-width: 1180px; margin: clamp(-70px, -7vw, -48px) auto 0;
+  gap: clamp(20px, 3vw, 44px); width: 100%; max-width: 1180px; margin: clamp(-70px, -7vw, -48px) auto 0;
   padding: 0 $gutter 64px;
 }
 .content { flex: 1 1 380px; min-width: 0; animation: vl-rise 0.3s ease both; }
@@ -55,7 +57,7 @@ $narrow: 859px;
   display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); margin-bottom: var(--space-8);
   font-size: 12.5px; color: color-mix(in srgb, var(--color-text) 66%, transparent);
 }
-.byline-item { display: inline-flex; align-items: center; gap: 6px; }
+.byline-item { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; overflow-wrap: anywhere; }
 .description {
   margin: 0 0 var(--space-8); max-width: 66ch; font-size: clamp(14px, 1.6vw, 16px); line-height: 1.75;
   color: color-mix(in srgb, var(--color-text) 88%, transparent); text-wrap: pretty;
