@@ -307,9 +307,13 @@ test.describe('streaming (manifest) scenario delivery', () => {
       `streamed first frame took ${streamed.timeToFirstFrame} ms`
     ).toBeLessThan(60_000);
 
-    // Recorded, not yet explained: the manifest path holds ~2.9x the texture
-    // memory of the ZIP path for the same 19 textures — 269.8 MB against
-    // 92.8 MB, reproducible across runs. Every solar-system asset has exactly
+    // Recorded, not yet explained: the manifest path holds ~2.8x the texture
+    // memory of the ZIP path for the same 20 textures — 273.8 MB against
+    // 96.8 MB, reproducible across runs (the first recording was 269.8 MB
+    // against 92.8 MB on 0.1.0-local.1786569427449; re-measured 2026-11-10 on
+    // 0.1.0-local.1794342651370 — the G2 diagnosis, confirmed by ROADMAP P7:
+    // `textures` (GPU uploads) matches, `estimatedTextureVramBytes` (live
+    // Texture objects) differs). Every solar-system asset has exactly
     // one LOD, so it is not a retained ladder, and the counts match exactly.
     //
     // It matters because it is the opposite of what a VRAM budget assumes, and
