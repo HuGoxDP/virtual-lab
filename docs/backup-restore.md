@@ -41,8 +41,10 @@ A scratch stack is the same images and configs with its own volumes, so
 VL=./virtual-lab   # wherever the checkout is
 cd $VL
 
-# 1. A scratch stack: its own volumes (docker-compose.scratch.yml) and its own
-#    frontend port (3998, so the live stack keeps 8044).
+# 1. A scratch stack: its own volumes and container names
+#    (docker-compose.scratch.yml) and its own TLS port (3998, so the live stack
+#    keeps 8044). The F variable below is what every command from here on uses.
+F="-f docker-compose.yml -f docker-compose.scratch.yml"
 docker compose -p vlabscratch \
   -f docker-compose.yml -f docker-compose.scratch.yml up -d --build
 
@@ -72,9 +74,13 @@ docker compose -p vlabscratch \
   -f docker-compose.yml -f docker-compose.scratch.yml up -d
 
 # 6. Restore. The script dry-runs without --yes and says what it will do.
-#    (`--entrypoint node`, because the image's entrypoint is backup.mjs.)
-docker compose -p vlabscratch $F run --rm \
-  --entrypoint node \
+#    Three files, not two: docker-compose.restore.yml mounts the content volumes
+#    read-WRITE (the service's own read-only mounts exist so a nightly job can
+#    never write them; a restore must), and `--entrypoint node` because the
+#    image's entrypoint is backup.mjs.
+docker compose -p vlabscratch \
+  -f docker-compose.yml -f docker-compose.scratch.yml -f docker-compose.restore.yml \
+  run --rm --entrypoint node \
   -e BACKUP_DIR=/backups -v "$PWD/backup/out-scratch:/backups" \
   backup restore.mjs "$NAME" --yes
 
