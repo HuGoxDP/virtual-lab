@@ -105,6 +105,38 @@ services:
           cpus: '0.5'
           memory: 256m
 
+  # ── Backup: nightly dump + volume copies ───────────
+  # What runs, on what schedule, with what retention lives here in the repo, so
+  # a production host reuses the same procedure (the off-host target is P5b).
+  # A manual run: docker compose run --rm -e BACKUP_RUN_ONCE=1 backup
+  backup:
+    build: ./backup
+    container_name: VirtualLabBackup
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      BACKUP_DIR: ${BACKUP_DIR:-/backups}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_SCHEDULE_HOURS: ${BACKUP_SCHEDULE_HOURS:-24}
+    volumes:
+      # Where the backups land: a local directory for the local stack, a mounted
+      # off-host target on the host that runs this (P5b). Never inside pgdata.
+      - ${BACKUP_DIR:-./backup/out}:/backups
+      # Read-only copies. pgdata is NOT mounted: the database is dumped
+      # logically (backup/backup.mjs), which is crash-consistent.
+      - virtual_lab_archives:/volumes/archives:ro
+      - virtual_lab_assets:/volumes/assets:ro
+      - virtual_lab_previews:/volumes/previews:ro
+      - virtual_lab_lti:/volumes/lti:ro
+    depends_on:
+      database:
+        condition: service_healthy
+
 volumes:
   virtual_lab_pgdata:
     name: virtual_lab_pgdata

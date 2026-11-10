@@ -1,0 +1,17 @@
+# docker-compose.https.yml
+#
+# Publishes the stack's own TLS listener (443, built by nginx/make-cert.mjs)
+# next to the plain 80 one:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+#   curl -k https://127.0.0.1:8443/api/health        # the local proof
+#
+# The certificate is the self-signed one the image builds — `curl -k` (or a
+# browser warning) is expected. A production host mounts its own certificate
+# and its own ports here; that, with the off-host backup target, is P5b's.
+
+services:
+
+  frontend:
+    ports:
+      - "${HTTPS_PORT:-8443}:443"

@@ -51,3 +51,10 @@ coverage/
 /e2e/playwright-report/
 /e2e/blob-report/
 /e2e/.cache/
+
+# Backups land here on a local stack (never committed); production mounts its
+# off-host target at the same place (P5b).
+/backup/out/
+
+# Backups of the scratch restore exercise (never committed)
+/backup/out-scratch/

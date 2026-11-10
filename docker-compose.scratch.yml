@@ -1,0 +1,46 @@
+# docker-compose.scratch.yml
+#
+# A second copy of the stack for the restore exercise: its own volumes (a
+# `down -v` here cannot touch the live stack's data) and its own ports, taken
+# from the environment so the live stack keeps its own. Used by
+# docs/backup-restore.md:
+#
+#   docker compose -p vlabscratch \
+#     -f docker-compose.yml -f docker-compose.scratch.yml up -d
+#
+# Only the names of the volumes and the published ports differ — every image,
+# script and config is the stack's own, so what is proven here is the real
+# procedure, not a rehearsal of a different one.
+
+volumes:
+  virtual_lab_pgdata:
+    name: scratch_virtual_lab_pgdata
+  virtual_lab_archives:
+    name: scratch_virtual_lab_archives
+  virtual_lab_assets:
+    name: scratch_virtual_lab_assets
+  virtual_lab_lti:
+    name: scratch_virtual_lab_lti
+  virtual_lab_previews:
+    name: scratch_virtual_lab_previews
+
+services:
+
+  # The live stack pins its container names (VirtualLab*); a second project
+  # cannot reuse them, so the scratch stack gets its own. Everything else is
+  # the stack's own.
+  database:
+    container_name: ScratchDatabase
+  backend:
+    container_name: ScratchBackend
+  backup:
+    container_name: ScratchBackup
+
+  frontend:
+    container_name: ScratchFrontend
+    ports:
+      # The scratch stack's TLS port. NOT FRONTEND_PORT (the .env value is the
+      # live stack's, 8044, and two containers cannot publish one host port):
+      # a dedicated variable, defaulting to 3998. The base compose still
+      # publishes 80, which is how "no HSTS over plain http" is exercised.
+      - "${SCRATCH_FRONTEND_PORT:-3998}:443"
