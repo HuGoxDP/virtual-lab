@@ -90,7 +90,7 @@ docker compose -p vlabscratch $F exec -T database \
   psql -U "$(grep -m1 '^DB_USER=' .env | cut -d= -f2)" \
        -d "$(grep -m1 '^DB_NAME=' .env | cut -d= -f2)" \
   -tAc "select count(*) from scenarios where id = 'backup-proof'"     # 1
-curl -fsS http://127.0.0.1:3998/scenarios/backup-proof.txt            # restore-me
+curl -kfsS https://127.0.0.1:3998/scenarios/backup-proof.txt   # restore-me (the scratch's TLS port)
 
 docker compose -p vlabscratch $F down -v          # done: the scratch is thrown away
 ```
