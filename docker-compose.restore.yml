@@ -1,0 +1,23 @@
+# docker-compose.restore.yml
+#
+# The restore needs WRITE access to the content volumes (that is the point of
+# a restore); the nightly backup mounts them read-only on purpose. Stack this
+# file for restore.mjs and nothing else:
+#
+#   docker compose -p <project> \
+#     -f docker-compose.yml [-f docker-compose.scratch.yml] \
+#     -f docker-compose.restore.yml \
+#     run --rm --entrypoint node -e BACKUP_DIR=/backups \
+#     -v "$PWD/backup/out:/backups" backup restore.mjs <name> [--yes]
+#
+# Entries merge by target path, so these replace the service's read-only mounts
+# for the run.
+
+services:
+
+  backup:
+    volumes:
+      - virtual_lab_archives:/volumes/archives
+      - virtual_lab_assets:/volumes/assets
+      - virtual_lab_previews:/volumes/previews
+      - virtual_lab_lti:/volumes/lti

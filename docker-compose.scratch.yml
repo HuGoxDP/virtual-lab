@@ -26,9 +26,21 @@ volumes:
 
 services:
 
+  # The live stack pins its container names (VirtualLab*); a second project
+  # cannot reuse them, so the scratch stack gets its own. Everything else is
+  # the stack's own.
+  database:
+    container_name: ScratchDatabase
+  backend:
+    container_name: ScratchBackend
+  backup:
+    container_name: ScratchBackup
+
   frontend:
+    container_name: ScratchFrontend
     ports:
-      # The frontend port of the scratch stack (the API has no published port
-      # in the live stack either, and the exercise talks to it inside the
-      # network). Default 3998, so the live stack keeps its own.
-      - "${FRONTEND_PORT:-3998}:80"
+      # The scratch stack's TLS port. NOT FRONTEND_PORT (the .env value is the
+      # live stack's, 8044, and two containers cannot publish one host port):
+      # a dedicated variable, defaulting to 3998. The base compose still
+      # publishes 80, which is how "no HSTS over plain http" is exercised.
+      - "${SCRATCH_FRONTEND_PORT:-3998}:443"
