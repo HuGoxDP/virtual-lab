@@ -24,6 +24,13 @@ RUN npm run build
 # stops being true: a blocked script means the app does not start.
 RUN node scripts/check-csp-assumptions.mjs
 
+# The stack's own TLS certificate, built by the same script that documents it
+# (nginx/make-cert.mjs): local and self-signed, so nothing secret is committed.
+# nginx.conf listens on 443 ssl; without this file the container would not
+# start. A production host mounts its own certificate over /etc/nginx/tls/.
+COPY nginx/make-cert.mjs /tmp/make-cert.mjs
+RUN node /tmp/make-cert.mjs /etc/nginx/tls && rm /tmp/make-cert.mjs
+
 # ── Stage 2: nginx ────────────────────────────────────
 FROM nginx:alpine
 COPY --from=build /app/dist/university-mock/browser /usr/share/nginx/html
@@ -32,7 +39,8 @@ COPY nginx/csp.conf   /etc/nginx/csp.conf
 # The player's own headers ship with the engine; nginx cannot include from
 # node_modules at run time, so the build stage's copy is taken here.
 COPY --from=build /app/node_modules/WebEngineTS/dist/player/player.nginx.conf /etc/nginx/snippets/player.nginx.conf
+COPY --from=build /etc/nginx/tls /etc/nginx/tls
 # Which LMS origins may frame /lti/pick (Moodle's "Select content" iframe): the entrypoint runs this script, which
 # validates LTI_FRAME_ANCESTORS (unset = 'self') and renders /etc/nginx/lti-pick.conf, included by nginx.conf.
 COPY --chmod=0755 nginx/15-lti-frame-ancestors.sh /docker-entrypoint.d/15-lti-frame-ancestors.sh
-EXPOSE 80
+EXPOSE 80 443
