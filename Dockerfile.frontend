@@ -29,7 +29,8 @@ RUN node scripts/check-csp-assumptions.mjs
 # nginx.conf listens on 443 ssl; without this file the container would not
 # start. A production host mounts its own certificate over /etc/nginx/tls/.
 COPY nginx/make-cert.mjs /tmp/make-cert.mjs
-RUN node /tmp/make-cert.mjs /etc/nginx/tls && rm /tmp/make-cert.mjs
+RUN apk add --no-cache openssl \
+ && node /tmp/make-cert.mjs /etc/nginx/tls && rm /tmp/make-cert.mjs
 
 # ── Stage 2: nginx ────────────────────────────────────
 FROM nginx:alpine

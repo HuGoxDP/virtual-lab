@@ -50,41 +50,43 @@ docker compose -p vlabscratch \
 #    row in the database, one object in the archive store. (A real rehearsal
 #    would publish a release through the API instead — both paths end in a
 #    database row and stored bytes.)
-SC=vlabscratch
-docker compose -p $SC exec -T database \
+docker compose -p vlabscratch $F exec -T database \
   psql -U "$(grep -m1 '^DB_USER=' .env | cut -d= -f2)" \
        -d "$(grep -m1 '^DB_NAME=' .env | cut -d= -f2)" \
   -c "insert into scenarios (id, title, category, category_label) values ('backup-proof','Backup proof','demo','Demo')"
-docker compose -p $SC run --rm -v virtual_lab_archives:/v alpine \
+# Outside compose (it has no 'alpine' service), on the SCRATCH volume:
+docker run --rm -v scratch_virtual_lab_archives:/v alpine \
   sh -c 'printf "restore-me" > /v/objects/backup-proof.txt'
 
 # 3. Back it up, once, on demand (the service's own script).
-docker compose -p $SC run --rm \
+docker compose -p vlabscratch $F run --rm \
   -e BACKUP_DIR=/backups -e BACKUP_RUN_ONCE=1 \
   -v "$PWD/backup/out-scratch:/backups" backup
 NAME=$(ls -1 backup/out-scratch | head -1)     # the timestamped directory
 
 # 4. Destroy the scratch stack and its volumes. This is the disaster.
-docker compose -p $SC down -v
+docker compose -p vlabscratch $F down -v
 
 # 5. Bring it back — empty, exactly like a recovered host.
 docker compose -p vlabscratch \
   -f docker-compose.yml -f docker-compose.scratch.yml up -d
 
 # 6. Restore. The script dry-runs without --yes and says what it will do.
-docker compose -p vlabscratch run --rm \
+#    (`--entrypoint node`, because the image's entrypoint is backup.mjs.)
+docker compose -p vlabscratch $F run --rm \
+  --entrypoint node \
   -e BACKUP_DIR=/backups -v "$PWD/backup/out-scratch:/backups" \
-  backup node restore.mjs "$NAME" --yes
+  backup restore.mjs "$NAME" --yes
 
 # 7. Verify, and only then trust it: the row is back, the bytes are back, and
 #    nginx serves the restored object again.
-docker compose -p vlabscratch exec -T database \
+docker compose -p vlabscratch $F exec -T database \
   psql -U "$(grep -m1 '^DB_USER=' .env | cut -d= -f2)" \
        -d "$(grep -m1 '^DB_NAME=' .env | cut -d= -f2)" \
   -tAc "select count(*) from scenarios where id = 'backup-proof'"     # 1
 curl -fsS http://127.0.0.1:3998/scenarios/backup-proof.txt            # restore-me
 
-docker compose -p vlabscratch down -v          # done: the scratch is thrown away
+docker compose -p vlabscratch $F down -v          # done: the scratch is thrown away
 ```
 
 Every step either verifies or destroys, and nothing above touches the live
