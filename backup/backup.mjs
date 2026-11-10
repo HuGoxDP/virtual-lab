@@ -93,18 +93,25 @@ function runOnce() {
     const started = new Date();
     const dir = targetDir(started);
     mkdirSync(join(dir, "volumes"), { recursive: true });
-    console.log(`backup -> ${dir}`);
-    const bytes = dumpTo(join(dir, "db.sql.gz"));
-    console.log(`db.sql.gz ${bytes} bytes (${DB.name}@${DB.host}:${DB.port})`);
-    const volumes = VOLUMES.map(({ name, mount }) => copyVolume(name, mount, join(dir, "volumes")));
-    for (const v of volumes) console.log(`volumes/${v.name}.tar.gz ${v.bytes} bytes`);
-    writeFileSync(join(dir, "manifest.json"), JSON.stringify({
-        createdAt: started.toISOString(),
-        format: "pg_dump plain SQL, gzip; volumes as gzipped tar",
-        database: { host: DB.host, port: DB.port, name: DB.name, user: DB.user },
-        volumes,
-        retentionDays: KEEP_DAYS,
-    }, null, 1) + "\n");
+    try {
+        console.log(`backup -> ${dir}`);
+        const bytes = dumpTo(join(dir, "db.sql.gz"));
+        console.log(`db.sql.gz ${bytes} bytes (${DB.name}@${DB.host}:${DB.port})`);
+        const volumes = VOLUMES.map(({ name, mount }) => copyVolume(name, mount, join(dir, "volumes")));
+        for (const v of volumes) console.log(`volumes/${v.name}.tar.gz ${v.bytes} bytes`);
+        writeFileSync(join(dir, "manifest.json"), JSON.stringify({
+            createdAt: started.toISOString(),
+            format: "pg_dump plain SQL, gzip; volumes as gzipped tar",
+            database: { host: DB.host, port: DB.port, name: DB.name, user: DB.user },
+            volumes,
+            retentionDays: KEEP_DAYS,
+        }, null, 1) + "\n");
+    } catch (err) {
+        // A half-written directory has no manifest, so it is not a backup — and
+        // a restore of it would fail halfway. Leave no partial evidence.
+        rmSync(dir, { recursive: true, force: true });
+        throw err;
+    }
     prune(started);
     console.log(`backup done in ${((Date.now() - started.getTime()) / 1000).toFixed(1)}s`);
 }
