@@ -16,7 +16,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 import { adminScenarios, smallestPublishedScenario } from '../helpers/api';
-import { loseWebGLContext, playerFrame, playerFrames, profilerState, readEngineBuild, waitForFrames } from '../helpers/engine';
+import { ENGINE_URL, loseWebGLContext, playerFrame, playerFrames, profilerState, readEngineBuild, waitForFrames } from '../helpers/engine';
 
 /** The largest published scenario — the only one whose download is slow enough to watch. */
 async function largestPublishedId(): Promise<string> {
@@ -185,7 +185,7 @@ test.describe('viewer', () => {
         const { MemoryProfiler } = await import(url);
         MemoryProfiler.diagnosticsAllowed = true;
         MemoryProfiler.showOverlay();
-      }, new URL('/assets/WebEngineTS.standalone.js', page.url()).href);
+      }, new URL(ENGINE_URL, page.url()).href);
 
       await expectProfilerOff(page, 'after a scenario re-opened it');
     });
