@@ -9,7 +9,7 @@ const cors = require('cors');
 const { runMigrations } = require('./migrations');
 const storage = require('./storage');
 const { pool } = require('./db');
-const { bootstrapToken, tokensMatch } = require('./auth');
+const { bootstrapToken, bootstrapTokenWarning, tokensMatch } = require('./auth');
 const { parseMaxArchiveBytes } = require('./config');
 const catalogPublic = require('./routes/catalog-public');
 const { parseLimit, parseOffset, escapeLikePattern, parseSort } = catalogPublic;
@@ -36,6 +36,11 @@ app.set('trust proxy', trustProxy.value);
 
 if (!bootstrapToken() && require.main === module) {
   console.warn('[AUTH] ADMIN_TOKEN is not set — bootstrap moderator is off (personal keys still work)');
+}
+
+const authWarning = bootstrapTokenWarning();
+if (authWarning && require.main === module) {
+  console.warn(authWarning);
 }
 
 app.use(catalogPublic.router);

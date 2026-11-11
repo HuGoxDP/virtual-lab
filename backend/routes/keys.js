@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 
 const { pool, inTransaction } = require('../db');
-const { authenticate, authorize, sha256Hex } = require('../auth');
+const { authenticate, authorize, generateToken, sha256Hex } = require('../auth');
 const audit = require('../audit');
 
 const router = express.Router();
@@ -56,7 +56,7 @@ router.post('/api/keys', authorize('moderator'), async (req, res) => {
     return res.status(400).json({ error: `role має бути одним із: ${ROLES.join(', ')}` });
   }
 
-  const token = crypto.randomBytes(32).toString('base64url');
+  const token = generateToken();
 
   try {
     const key = await inTransaction(async db => {

@@ -65,7 +65,7 @@ test('178. issuing a key (DW-2.2)', async t => {
     assert.deepEqual(Object.keys(res.body).sort(), ['id', 'label', 'role', 'token']);
     assert.equal(res.body.label, 'Олена Коваль');
     assert.equal(res.body.role, 'author');
-    assert.ok(res.body.token.length >= 40, 'a token with real entropy');
+    assert.match(res.body.token, /^vlk_[A-Za-z0-9_-]{43}$/, 'B6 DW-1.3: the vlk_ format');
     assert.equal(res.headers['cache-control'], 'no-store');
   });
 

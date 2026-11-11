@@ -162,3 +162,79 @@ test('186. forbiddenAuthorFields names exactly the fields an author may not send
     assert.deepEqual(forbiddenAuthorFields({ author: 'x', isPublished: true }), ['author', 'isPublished']);
   });
 });
+
+// ── B6 phase 1 (DW-1.1 … DW-1.4): token format, constant-time compare, bootstrap warning ──
+
+const { generateToken, tokensMatch, bootstrapTokenWarning } = require('../../auth');
+const realCrypto = require('node:crypto');
+
+test('B6.1 generateToken issues vlk_ + 43 URL-safe characters', () => {
+  const token = generateToken();
+  assert.match(token, /^vlk_[A-Za-z0-9_-]{43}$/);
+  // 256 bits of randomness: the prefix plus 43 characters of base64url.
+  assert.equal(Buffer.from(token.slice(4), 'base64url').length, 32);
+});
+
+test('B6.1 a thousand generated tokens are all distinct', () => {
+  const seen = new Set();
+  for (let i = 0; i < 1000; i++) seen.add(generateToken());
+  assert.equal(seen.size, 1000);
+});
+
+test('B6.2 tokensMatch compares fixed-width digests, so a length mismatch cannot throw', async t => {
+  const calls = [];
+  const original = realCrypto.timingSafeEqual;
+  realCrypto.timingSafeEqual = (a, b) => { calls.push([a.length, b.length]); return original(a, b); };
+  try {
+    await t.test('a different-length token is false, not an error', () => {
+      assert.equal(tokensMatch('short', 'a-much-longer-token-entirely'), false);
+    });
+
+    await t.test('the same token is true', () => {
+      assert.equal(tokensMatch('vlk_same-token-value', 'vlk_same-token-value'), true);
+    });
+
+    await t.test('a different token of the same length is false', () => {
+      assert.equal(tokensMatch('vlk_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'vlk_baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'), false);
+    });
+
+    await t.test('both operands of timingSafeEqual are 32-byte digests', () => {
+      assert.ok(calls.length > 0, 'timingSafeEqual was never called');
+      for (const [a, b] of calls) assert.deepEqual([a, b], [32, 32]);
+    });
+
+    await t.test('the source has no length branch before the compare', () => {
+      const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', '..', 'auth.js'), 'utf8');
+      const body = src.slice(src.indexOf('function tokensMatch'), src.indexOf('function resolvePrincipal'));
+      assert.doesNotMatch(body, /\.length\s*===?\s*\w+\.length/);
+    });
+  } finally {
+    realCrypto.timingSafeEqual = original;
+  }
+});
+
+test('B6.4 bootstrapTokenWarning names the length rule and never the value', async t => {
+  const original = process.env.ADMIN_TOKEN;
+  try {
+    await t.test('an unset token has nothing to warn about', () => {
+      delete process.env.ADMIN_TOKEN;
+      assert.equal(bootstrapTokenWarning(), null);
+    });
+
+    await t.test('a 32+ character token is accepted silently', () => {
+      process.env.ADMIN_TOKEN = 'x'.repeat(32);
+      assert.equal(bootstrapTokenWarning(), null);
+    });
+
+    await t.test('a short token warns once, with its length and no value', () => {
+      process.env.ADMIN_TOKEN = 'short';
+      const warning = bootstrapTokenWarning();
+      assert.match(warning, /5 characters/);   // 'short' is 5
+      assert.match(warning, /at least 32/);
+      assert.ok(!warning.includes('short'), 'the warning must not repeat the token');
+    });
+  } finally {
+    if (original === undefined) delete process.env.ADMIN_TOKEN;
+    else process.env.ADMIN_TOKEN = original;
+  }
+});
