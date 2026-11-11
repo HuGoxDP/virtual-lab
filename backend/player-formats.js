@@ -2,28 +2,32 @@
 //
 // What the deployed student player can read — the one place that says so.
 //
-// The player is the engine build the frontend ships (`frontend/WebEngineTS-0.1.0.tgz`,
-// checked against 0.1.0-local.1789023160893). The platform refuses at upload (and so
-// in `publish:release`) and at `import:assets` anything that build would misread,
-// because the player itself does not always refuse: that build checks no scene or
-// prefab format version at all, so a version-2 ("link mode") scene would load hollow
-// and silently, in front of a student. Refusing to store what a deployed reader cannot
-// read is the same rule Kubernetes applies to API versions and glTF to
-// `extensionsRequired`.
+// The player is the engine the frontend depends on: the `v0.2.0` release tarball
+// (A10), fetched from GitHub Releases rather than committed as a file. The
+// platform refuses at upload (and so in `publish:release`) and at
+// `import:assets` anything that build would misread, because the player itself
+// does not always refuse: a build that predates the version check would load a
+// version-2 ("link mode") file hollow and silently, in front of a student.
+// Refusing to store what a deployed reader cannot read is the same rule
+// Kubernetes applies to API versions and glTF to `extensionsRequired`.
 //
 // **When to raise these, and why not sooner.**
 //
-//   SCENE_FORMAT_VERSIONS — add 2 only when BOTH hold:
-//     1. the engine in the frontend tarball reads the version (it has
-//        `SceneSerializer._refuseUnknownVersion` and accepts 2), and
-//     2. what reaches the player is complete with it. A link-mode scene names
-//        prefabs that must be loaded before it is deserialized; the editor's
-//        exported-scenario template (`SCENARIO_TEMPLATE` in WebEngineTSEditor)
-//        calls `SceneSerializer.deserializeScene` without preloading any, so
-//        even a v2-capable engine would build placeholders there.
-//     Until then the editor's Build/Publish is to expand links, so archives carry
-//     version 1. Raising early lets a hollow scene through to students; raising
-//     late only refuses an upload, which is the cheap failure.
+//   SCENE_FORMAT_VERSIONS — a scene stays [1] even now: a link-mode *scene*
+//     names prefabs that must be loaded before it is deserialized, and the
+//     editor's exported-scenario template (`SCENARIO_TEMPLATE` in
+//     WebEngineTSEditor) calls `SceneSerializer.deserializeScene` without
+//     preloading any, so even a v2-capable engine would build placeholders
+//     there. The editor's Build/Publish is to expand links, so archives carry
+//     version 1 scenes.
+//
+//   PREFAB_FORMAT_VERSIONS — a prefab file is read differently: it goes through
+//     `Resources`/`AssetFiles`, which preloads the prefabs nested inside it (A5's
+//     E3/E5), and the engine the platform now ships (the v0.2.0 release, A10)
+//     reads version-2 prefab files. So a `.prefab.json` may be 1 or 2; a scene
+//     may not. A prefab a script instantiates at runtime is written by
+//     `Prefab.toJSON`, which emits 2 exactly when it holds an internal
+//     reference — the case E3/E5 exist for.
 //
 //   MANIFEST_MAJOR_VERSIONS — `manifest.json`'s `manifestVersion` is a string
 //     like "1.0". Every producer writes "1.0": ScenarioCreator's build-package.mjs
@@ -40,8 +44,17 @@
 // test/unit/player-formats.test.js pins all three, so raising one is a decision
 // that edits that test too, never a drive-by.
 
-/** Scene (`*.scene.json`) and prefab (`*.prefab.json`) format versions. Absent means 1. */
+/** Scene (`*.scene.json`) format versions. Absent means 1. */
 const SCENE_FORMAT_VERSIONS = Object.freeze([1]);
+
+/**
+ * Prefab (`*.prefab.json`) format versions. Absent means 1.
+ *
+ * A prefab is loaded through `Resources`/`AssetFiles`, which preloads the
+ * prefabs nested inside it, so version 2 (which an internal reference makes)
+ * is complete when it is deserialized — unlike a link-mode scene.
+ */
+const PREFAB_FORMAT_VERSIONS = Object.freeze([1, 2]);
 
 /** Major versions of `manifestVersion` in an archive's `manifest.json`. */
 const MANIFEST_MAJOR_VERSIONS = Object.freeze([1]);
@@ -85,7 +98,9 @@ function readsOnly(versions, suffix = '') {
  * @param {Buffer|Uint8Array|string} data
  */
 function sceneFileProblem(name, data) {
-  const kind = /\.prefab\.json$/i.test(name) ? 'префаба' : 'сцени';
+  const isPrefab = /\.prefab\.json$/i.test(name);
+  const kind = isPrefab ? 'префаба' : 'сцени';
+  const versions = isPrefab ? PREFAB_FORMAT_VERSIONS : SCENE_FORMAT_VERSIONS;
 
   let json;
   try {
@@ -103,12 +118,12 @@ function sceneFileProblem(name, data) {
 
   if (!Number.isInteger(version)) {
     return `У файлі ${kind} "${name}" поле version має бути цілим числом, а не ${shown(version)}; ` +
-      `вʼюер платформи читає ${readsOnly(SCENE_FORMAT_VERSIONS)}`;
+      `вʼюер платформи читає ${readsOnly(versions)}`;
   }
 
-  if (!SCENE_FORMAT_VERSIONS.includes(version)) {
+  if (!versions.includes(version)) {
     return `Файл ${kind} "${name}" має формат версії ${version}, ` +
-      `а вʼюер платформи читає ${readsOnly(SCENE_FORMAT_VERSIONS)}`;
+      `а вʼюер платформи читає ${readsOnly(versions)}`;
   }
 
   return null;
@@ -181,6 +196,7 @@ async function streamingManifestProblem(manifest, readObject) {
 
 module.exports = {
   SCENE_FORMAT_VERSIONS,
+  PREFAB_FORMAT_VERSIONS,
   MANIFEST_MAJOR_VERSIONS,
   STREAMING_SCHEMA_VERSIONS,
   isSceneFile,
