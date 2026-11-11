@@ -267,7 +267,9 @@ export class UploadWizardComponent implements HasUnsavedChanges {
     this.busy.set(true);
     this.error.set(null);
     try {
-      await this.api.transition(current.id, action);
+      // B6 (DW-5.3): bind the publish to the version this wizard just uploaded and
+      // reviewed; a 409 means it moved, and the error says so.
+      await this.api.transition(current.id, action, undefined, action === 'approve' ? current.currentVersion?.id : undefined);
       this.toast.show(action === 'submit' ? 'Надіслано на модерацію' : 'Опубліковано в каталозі');
       await this.router.navigate(['/admin/scenarios', current.id, 'publish']);
     } catch (err) {

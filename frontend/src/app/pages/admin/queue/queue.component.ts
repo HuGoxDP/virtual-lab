@@ -2,6 +2,7 @@
 
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { HttpErrorResponse } from '@angular/common/http';
 
 import { AuditRow } from '../../../models/admin.model';
 import { AdminScenario } from '../../../models/scenario.model';
@@ -302,14 +303,31 @@ export class QueueComponent implements OnInit {
       if (proposal) {
         await this.api.versionAction(row.id, row.pendingVersionId!, decision === 'approve' ? 'accept' : 'reject');
       } else {
-        await this.api.transition(row.id, decision, decision === 'reject' ? this.note().trim() || undefined : undefined);
+        await this.api.transition(
+          row.id,
+          decision,
+          decision === 'reject' ? this.note().trim() || undefined : undefined,
+          // B6 (DW-5.3): the version this card shows is the version being approved.
+          decision === 'approve' && !proposal && card.row.currentVersion ? card.row.currentVersion.id : undefined,
+        );
       }
       this.toast.show(TOASTS[decision][proposal ? 'version' : 'scenario']);
       this.cancelReturn();
       await this.load();
     } catch (err) {
       // The server is the authority: a refusal (wrong status, no archive) is shown on the card as sent.
+      // B6 (DW-5.3): a 409 here means the archive changed under the moderator — the row is
+      // reloaded so the card shows the current version, not the one that was refused.
+      // B6 (DW-5.3): only THE version conflict reloads — the archive changed under the
+      // moderator, so the card must show the version that is current now. Any other 409
+      // (already published, wrong status) is a refusal of this click and leaves the list
+      // as it is, which is what the existing behaviour and its test pin.
+      const archiveChanged = err instanceof HttpErrorResponse
+        && err.status === 409
+        && (err.error as { error?: string } | null)?.error === 'Архів змінився після перевірки';
       this.errors.update(current => ({ ...current, [row.id]: AdminService.describeError(err) }));
+      if (archiveChanged) await this.load();
+      else this.cancelReturn();
     } finally {
       this.busyId.set(null);
     }

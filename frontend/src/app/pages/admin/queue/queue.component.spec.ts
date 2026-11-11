@@ -246,7 +246,10 @@ describe('QueueComponent', () => {
 
     it('the server\'s refusal is shown on that card as sent, and the card stays', async () => {
       await click(action('mitosis', 'approve'));
-      http.expectOne('/api/scenarios/mitosis/approve').flush({ error: 'Сценарій уже опубліковано' }, { status: 409, statusText: 'Conflict' });
+      const req = http.expectOne('/api/scenarios/mitosis/approve');
+      // B6 (DW-5.3): the approve carries the version the card shows.
+      expect(req.request.body).toEqual({ versionId: 1 });
+      req.flush({ error: 'Сценарій уже опубліковано' }, { status: 409, statusText: 'Conflict' });
       await settle(fixture);
       expect(card('mitosis').querySelector('[role="alert"]')?.textContent).toContain('Сценарій уже опубліковано');
       expect(card('complex').querySelector('[role="alert"]')).toBeNull();

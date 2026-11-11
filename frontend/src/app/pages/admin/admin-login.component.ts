@@ -50,7 +50,12 @@ const STEPS = [
               <vl-icon name="warning-circle" size="16" /><span>{{ text }}</span>
             </p>
           }
-          <button class="btn btn-primary btn-block" type="submit" [disabled]="busy()">
+          @if (!secureContext()) {
+            <p id="login-notice" class="plaque" role="alert">
+              <vl-icon name="shield-warning" size="16" /><span>Вхід можливий лише через HTTPS — код не може бути переданий без шифрування</span>
+            </p>
+          }
+          <button class="btn btn-primary btn-block" type="submit" [disabled]="busy() || !secureContext()">
             <vl-icon name="sign-in" size="16" />Увійти
           </button>
         </form>
@@ -96,8 +101,11 @@ export class AdminLoginComponent {
     this.error.set(null);
   }
 
+  /** B6 (DW-5.1): a sign-in over plain HTTP is refused before the code leaves the field. */
+  protected readonly secureContext = () => typeof window !== 'undefined' && window.isSecureContext;
+
   protected async submit(): Promise<void> {
-    if (this.busy()) return;
+    if (this.busy() || !this.secureContext()) return;
     this.busy.set(true);
     this.error.set(null);
     try {

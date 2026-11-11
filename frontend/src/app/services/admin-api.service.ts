@@ -118,9 +118,19 @@ export class AdminApi {
     return this.delete(`/api/catalog/${seg(id)}`);
   }
 
-  /** submit / withdraw / approve / reject / unpublish; `note` only means something for `reject`. */
-  transition(id: string, action: TransitionAction, note?: string): Promise<TransitionResult> {
-    return this.post(`/api/scenarios/${seg(id)}/${action}`, action === 'reject' && note !== undefined ? { note } : {});
+  /**
+   * submit / withdraw / approve / reject / unpublish; `note` only means something for `reject`.
+   *
+   * B6 (DW-5.3): an approve carries the version the moderator just reviewed
+   * (`currentVersion.id`). The server answers 409 when that version is no longer the current
+   * one, and the screen reloads the row and says so — publishing bytes nobody reviewed is the
+   * failure this prevents.
+   */
+  transition(id: string, action: TransitionAction, note?: string, versionId?: number): Promise<TransitionResult> {
+    const body = action === 'reject' && note !== undefined
+      ? { note }
+      : action === 'approve' && versionId !== undefined ? { versionId } : {};
+    return this.post(`/api/scenarios/${seg(id)}/${action}`, body);
   }
 
   history(id: string): Promise<AuditRow[]> {
@@ -247,5 +257,23 @@ export class AdminApi {
 
   revokeKey(id: number): Promise<KeyRow> {
     return this.post(`/api/keys/${id}/revoke`);
+  }
+
+  /**
+   * B6 (DW-5.2): replace a key and return the new token once. The old key is revoked by the
+   * server and the scenarios it owned move to the new one, so a lost key cannot orphan a
+   * teacher's work. Rotating the session's own key is allowed: the caller swaps the stored
+   * code for the new token and stays signed in.
+   */
+  rotateKey(id: number): Promise<CreatedKey> {
+    return this.post(`/api/keys/${id}/rotate`);
+  }
+
+  /**
+   * B6 (DW-5.4): hand a scenario to another key, or to `null` for moderators only.
+   * Moderator-only on the server; the editor shows the action for a moderator alone.
+   */
+  transferScenario(id: string, keyId: number | null): Promise<{ id: string; ownerKeyId: number | null }> {
+    return this.put(`/api/scenarios/${seg(id)}/owner`, { keyId });
   }
 }
