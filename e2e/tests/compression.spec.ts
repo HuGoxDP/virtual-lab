@@ -30,7 +30,7 @@ import { gunzipSync } from 'node:zlib';
 import { BASE_URL } from '../helpers/api';
 
 /** The biggest immutable file the stack serves, and the one every page pays for. */
-const ENGINE_BUNDLE = '/assets/WebEngineTS.standalone.js';
+const ENGINE_BUNDLE = '/engine/0.2.0/WebEngineTS.standalone.js';
 
 /** One raw GET: the status, the headers of interest, and the bytes as sent. */
 function rawGet(path: string, acceptEncoding?: string): Promise<{ status: number; headers: Record<string, string>; body: Buffer }> {

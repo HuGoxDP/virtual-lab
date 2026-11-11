@@ -38,7 +38,7 @@ test.describe('player serving', () => {
   const ACAO_PATHS = [
     '/player/player.html',
     '/player/player.js',
-    '/assets/WebEngineTS.standalone.js',
+    '/engine/0.2.0/WebEngineTS.standalone.js',
     '/assets/basis/basis_transcoder.js',
     '/assets/basis/basis_transcoder.wasm',
     // Not published as files under these names, but the header is `always`: a 404 for a missing
@@ -75,7 +75,7 @@ test.describe('player serving', () => {
   });
 
   test('the engine bundle and transcoder keep the platform CSP and their cache policy', async ({ request }) => {
-    for (const path of ['/assets/WebEngineTS.standalone.js', '/assets/basis/basis_transcoder.wasm']) {
+    for (const path of ['/engine/0.2.0/WebEngineTS.standalone.js', '/assets/basis/basis_transcoder.wasm']) {
       const res = await request.get(path);
       expect(header(res, 'content-security-policy'), path).toContain(`default-src 'self'`);
       expect(header(res, 'x-content-type-options'), path).toBe('nosniff');

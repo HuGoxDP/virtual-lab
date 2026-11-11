@@ -13,7 +13,13 @@
 
 import type { Frame, Page } from '@playwright/test';
 
-export const ENGINE_URL = '/assets/WebEngineTS.standalone.js';
+/**
+ * The engine bundle the frame loads, from its versioned path (A10): same URL
+ * the app uses, so a stack that still serves the old path fails here rather
+ * than in a student's browser. `engine-url.spec.ts` pins the version against
+ * the frontend's dependency when that checkout is beside this one.
+ */
+export const ENGINE_URL = '/engine/0.2.0/WebEngineTS.standalone.js';
 export const PLAYER_PATH = '/player/player.html';
 
 export interface EngineSnapshot {
