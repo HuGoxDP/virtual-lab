@@ -29,7 +29,7 @@
               {
                 "glob": "WebEngineTS.standalone.js",
                 "input": "node_modules/WebEngineTS/dist",
-                "output": "/assets"
+                "output": "/engine/0.2.0"
               },
               {
                 "glob": "{player.html,player.js}",

@@ -24,8 +24,9 @@ is the working guide**: architecture, conventions, and the rules that are easy t
 
 This is the **consumer** end of a four-repo ecosystem (all under `C:\Users\HuGox\WebstormProjects\`):
 
-- **WebEngineTS** — the 3D engine, a consumable npm library. Ships here as a packed tarball
-  (`frontend/WebEngineTS-0.1.0.tgz`, a `file:` dependency).
+- **WebEngineTS** — the 3D engine, a consumable npm library. Depends on its **GitHub Release**
+  tarball (`v0.2.0` is the current one: `…/releases/download/v0.2.0/WebEngineTS-0.2.0.tgz`), not on
+  a committed file — the Docker build fetches it (A10).
 - **ScenarioCreator** — build pipeline that compiles scenario source into distributable `.zip`
   archives. Scenario *content* lives there, never here.
 - **WebEngineTSEditor** — the graphical scenario editor; another engine consumer. Will eventually
@@ -38,11 +39,12 @@ back, and the engine never imports from it.
 discovered here that this repo cannot fix, with evidence and repro steps. Check there before
 re-investigating something odd about the engine or an archive; it is probably already written up.
 
-**Engine updates arrive via `npm run release:local` run in the WebEngineTS repo** — it builds,
-packs, copies the tarball here and reinstalls it. Do not hand-edit the tarball or the dependency
-spec. The **tarball filename** stays `WebEngineTS-0.1.0.tgz` while the content changes every run,
-so the dependency spec never needs touching. The package *inside* is stamped
-`0.1.0-local.<timestamp>` and `frontend/package-lock.json` records it.
+**Engine updates arrive by moving the dependency to a new GitHub Release tag** (A10): the URL in
+`frontend/package.json`, then `npm install` so the lockfile records it, then the versioned path
+follows — `angular.json` publishes the bundle under `/engine/<version>/`, `player-config.ts`'s
+`ENGINE_URL` names that path, and `player-config.spec.ts` fails when the URL does not carry the
+installed engine's version. Because the path is versioned, nginx serves it `immutable` and a
+returning browser can never mix a cached engine with a new player.
 
 **Which engine build is running is answerable at run time: `BuildInfo`** (`version` / `builtAt` /
 `isBuild`), rendered by the viewer under `?diag=1` (the stamp is all that flag does). `builtAt` is the field that identifies a
@@ -390,10 +392,10 @@ serving (the `^~` is required or the `.zip` regex block wins), `no-cache` on `in
 sandboxed player frame, and everything the frame loads is a static file the platform serves out of the
 tarball:
 
-- **Build time:** `WebEngineTS: file:WebEngineTS-0.1.0.tgz` in `frontend/package.json`. The `angular.json`
+- **Build time:** `WebEngineTS: <GitHub Release URL>` in `frontend/package.json`. The `angular.json`
   assets rules copy from `node_modules/WebEngineTS/dist` the standalone bundle to
-  `/assets/WebEngineTS.standalone.js` (Three.js is bundled inside it, which is why `three` is not a
-  dependency here, only `@types/three`) and `player/{player.html,player.js}` to `/player/`.
+  `/engine/<version>/WebEngineTS.standalone.js` (Three.js is bundled inside it, which is why `three` is
+  not a dependency here, only `@types/three`) and `player/{player.html,player.js}` to `/player/`.
   `Dockerfile.frontend` also copies `player.nginx.conf` into the nginx image, because nginx cannot
   include from `node_modules` at run time.
 - **Runtime:** there is **no import map on `/`**. The viewer gives `PlayerHost` the player URL
@@ -410,8 +412,8 @@ Consequences to respect:
   a second Three.js instance would break its `instanceof` checks.
 - The player's files, headers and handshake are the engine's. Changing them is an engine change plus
   `release:local`, which refuses a tarball that lacks `dist/player/`.
-- `frontend/WebEngineTS-0.1.0.tgz` **is intentionally committed** (there is no registry to fetch
-  it from at Docker build time). Do not gitignore it.
+- The engine tarball is **no longer committed**: the dependency is the release URL, fetched at
+  `npm install` time (the Docker build already needs the network for npm).
 - `Dockerfile.frontend` uses `npm install`, not `npm ci`, on purpose: the lockfile is generated on
   Windows where `@napi-rs/nice` resolves to a native MSVC binary, while Alpine falls back to the
   wasm runtime and pulls `@emnapi/*` peers the Windows lockfile cannot record.

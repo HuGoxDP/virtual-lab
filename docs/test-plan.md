@@ -488,9 +488,9 @@ engine from inside the player frame (`e2e/helpers/engine.ts`). `viewer-profiler.
 (scenarios 145, 148 and 154-157 are retired: the page has no profiler to lock, the host always sends
 `diag: false` and the engine latches the gate inside the frame; 163 goes with them).
 
-164. [U] The host is built with `/player/player.html`, `/assets/WebEngineTS.standalone.js`,
-     `transcoderPath: '/assets/basis/'`; every load sends `diag: false`, with or without `?diag=1`; the
-     viewer exposes no diagnostics member (DW-5.2, DW-5.5).
+164. [U] The host is built with `/player/player.html`, `/engine/<version>/WebEngineTS.standalone.js`
+     (the installed engine's own version — A10), `transcoderPath: '/assets/basis/'`; every load sends
+     `diag: false`, with or without `?diag=1`; the viewer exposes no diagnostics member (DW-5.2, DW-5.5).
 165. [U] Host adapter: `onFps` reaches the HUD as "N FPS" (absent before the first report), `onPaused`
      flips the pause button, the button asks the host to pause/resume (state is the player's word, never
      guessed), `onProgress` drives the ring only while loading, `onContextLost` shows the overlay (DW-5.2).

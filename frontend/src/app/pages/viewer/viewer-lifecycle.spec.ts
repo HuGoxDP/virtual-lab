@@ -132,7 +132,8 @@ describe('ViewerComponent on PlayerHost', () => {
       await running(fixture);
       expect(host.options).toMatchObject({
         playerUrl: '/player/player.html',
-        engineUrl: '/assets/WebEngineTS.standalone.js',
+        // A10: the released engine, from its versioned path.
+        engineUrl: '/engine/0.2.0/WebEngineTS.standalone.js',
         transcoderPath: '/assets/basis/',
       });
       expect(host.container).toBe(el(fixture).querySelector('.player-host'));

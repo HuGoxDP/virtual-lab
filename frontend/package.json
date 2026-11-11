@@ -36,7 +36,7 @@
     "@types/three": "^0.182.0",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
-    "WebEngineTS": "file:WebEngineTS-0.1.0.tgz"
+    "WebEngineTS": "https://github.com/HuGoxDP/WebEngineTS/releases/download/v0.2.0/WebEngineTS-0.2.0.tgz"
   },
   "devDependencies": {
     "@angular/build": "~21.2.8",

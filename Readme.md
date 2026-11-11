@@ -68,8 +68,7 @@ virtual-lab/
 │   │   └── environments/
 │   │       └── environment.ts     # catalogUrl: '/api/catalog'
 │   ├── angular.json
-│   ├── package.json
-│   └── WebEngineTS-0.1.0.tgz     # 3D-движок (npm-пакет)
+│   ├── package.json               # залежність WebEngineTS — URL релізу GitHub
 │
 ├── backend/                  # Express API
 │   ├── server.js             # Весь бекенд в одному файлі
@@ -583,7 +582,7 @@ VALUES ('test', 'Тест', 'math', 'Математика', 'Опис');
 - Node.js 20
 - npm 11.6+
 - Angular CLI 21
-- Файл WebEngineTS-0.1.0.tgz
+- Доступ до GitHub Releases (движок — npm-залежність за URL, v0.2.0)
 
 ### Для запуску (runtime)
 - Docker + Docker Compose — більше нічого
