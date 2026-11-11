@@ -37,6 +37,15 @@ FROM nginx:alpine
 COPY --from=build /app/dist/university-mock/browser /usr/share/nginx/html
 COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
 COPY nginx/csp.conf   /etc/nginx/csp.conf
+# Pre-compress the static text assets the image carries (P3): the same bytes
+# gzip -9 produces at build time, so `gzip_static on` (nginx.conf) serves them
+# without compressing per request. Only the files the image ships — the
+# content-addressed archives and manifests arrive at run time and keep the
+# on-the-fly gzip. A sibling .gz next to a file is how nginx finds it; -k keeps
+# the original, which is what an identity request is served.
+RUN find /usr/share/nginx/html -type f \
+      \( -name '*.js' -o -name '*.css' -o -name '*.json' -o -name '*.html' -o -name '*.wasm' \) \
+      ! -name '*.gz' ! -name '*.br' -exec gzip -9 -k {} +
 # The player's own headers ship with the engine; nginx cannot include from
 # node_modules at run time, so the build stage's copy is taken here.
 COPY --from=build /app/node_modules/WebEngineTS/dist/player/player.nginx.conf /etc/nginx/snippets/player.nginx.conf
