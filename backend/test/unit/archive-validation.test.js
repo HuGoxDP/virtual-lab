@@ -188,10 +188,15 @@ test('scene and prefab files the player cannot read are refused, by name', async
   });
 
   await t.test('a prefab is named as one', async () => {
+    // A10: a version-2 prefab is accepted (Resources/AssetFiles preloads what
+    // it names, and the release reads it); version 3 is still refused, and
+    // named as a prefab rather than a scene.
     const message = await refused({
-      'assets/prefabs/Door.prefab.json': JSON.stringify({ version: 2, snapshot: {} }),
+      'assets/prefabs/Door.prefab.json': JSON.stringify({ version: 3, snapshot: {} }),
     });
     assert.match(message, /префаба "assets\/prefabs\/Door\.prefab\.json"/);
+    assert.match(message, /версії 3/);
+    assert.match(message, /лише версії 1, 2/);
   });
 
   await t.test('uppercase extension is still a scene', async () => {

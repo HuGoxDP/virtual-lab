@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 
 const {
   SCENE_FORMAT_VERSIONS,
+  PREFAB_FORMAT_VERSIONS,
   MANIFEST_MAJOR_VERSIONS,
   STREAMING_SCHEMA_VERSIONS,
   isSceneFile,
@@ -18,10 +19,18 @@ const {
 
 test('what the deployed player reads', async t => {
   // Pinned on purpose: raising any of these lets content through to students
-  // that the player in frontend/WebEngineTS-0.1.0.tgz would misread. The header
-  // of player-formats.js says when it is safe; this test makes it a decision.
-  await t.test('scene and prefab format: version 1 only', () => {
+  // that the player would misread. The header of player-formats.js says when
+  // it is safe; this test makes it a decision.
+  await t.test('scene format: version 1 only', () => {
+    // A link-mode scene still needs its prefabs preloaded, which the exported
+    // scenario template does not do (A10).
     assert.deepEqual(SCENE_FORMAT_VERSIONS, [1]);
+  });
+
+  await t.test('prefab format: versions 1 and 2', () => {
+    // A prefab is read through Resources/AssetFiles, which preloads the prefabs
+    // nested inside it, and the v0.2.0 release reads version 2 (A10).
+    assert.deepEqual(PREFAB_FORMAT_VERSIONS, [1, 2]);
   });
 
   await t.test('manifest.json: major 1 only', () => {
@@ -34,6 +43,7 @@ test('what the deployed player reads', async t => {
 
   await t.test('the lists cannot be changed at run time', () => {
     assert.ok(Object.isFrozen(SCENE_FORMAT_VERSIONS));
+    assert.ok(Object.isFrozen(PREFAB_FORMAT_VERSIONS));
     assert.ok(Object.isFrozen(MANIFEST_MAJOR_VERSIONS));
     assert.ok(Object.isFrozen(STREAMING_SCHEMA_VERSIONS));
   });
@@ -77,6 +87,20 @@ test('sceneFileProblem reads bytes the way the player does', async t => {
 
   await t.test('a version written as 2.0 is the number 2', () => {
     assert.match(sceneFileProblem('a.scene.json', '{"version":2.0}'), /версії 2/);
+  });
+
+  await t.test('a version-2 prefab is accepted', () => {
+    // A10: the release reads version-2 prefab files; a script can instantiate
+    // one whenever it holds an internal reference.
+    assert.equal(sceneFileProblem('a.prefab.json', '{"version":2}'), null);
+  });
+
+  await t.test('a version-3 prefab is still refused', () => {
+    assert.match(sceneFileProblem('a.prefab.json', '{"version":3}'), /версії 3/);
+  });
+
+  await t.test('a version-2 scene is still refused', () => {
+    assert.match(sceneFileProblem('a.scene.json', '{"version":2}'), /версії 2/);
   });
 });
 

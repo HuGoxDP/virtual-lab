@@ -9,7 +9,12 @@ import type { PlayerHostOptions } from 'WebEngineTS/player-host';
 
 /** Where the sandboxed player, the engine bundle it imports and the KTX2 transcoder are served. */
 export const PLAYER_URL = '/player/player.html';
-export const ENGINE_URL = '/assets/WebEngineTS.standalone.js';
+/**
+ * The released engine, from its versioned path: the version is the engine's own
+ * (pinned by the spec in this folder), so a returning browser can never mix a
+ * cached engine with a new player, and the URL never needs a cache-buster.
+ */
+export const ENGINE_URL = '/engine/0.2.0/WebEngineTS.standalone.js';
 /** The engine's default is `/basis/`, which 404s here: Angular publishes `src/assets` under `/assets`. */
 export const TRANSCODER_PATH = '/assets/basis/';
 
