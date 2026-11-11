@@ -35,6 +35,12 @@ const MAX_ARCHIVE_ENTRIES = parsePositiveInt(process.env.MAX_ARCHIVE_ENTRIES, 20
 /** Uploads one author key may start per hour (moderators and the bootstrap token are exempt). */
 const AUTHOR_UPLOADS_PER_HOUR = parsePositiveInt(process.env.AUTHOR_UPLOADS_PER_HOUR, 20);
 
+/**
+ * B6 (DW-4.3): how many cover uploads one author key may start an hour. Its own counter,
+ * so covers cannot eat the archive budget (and archives cannot eat it).
+ */
+const AUTHOR_PREVIEWS_PER_HOUR = parsePositiveInt(process.env.AUTHOR_PREVIEWS_PER_HOUR, 30);
+
 /** Failed credential checks one address may make per 15 minutes before it is answered 429. */
 const AUTH_FAILURES_PER_WINDOW = parsePositiveInt(process.env.AUTH_FAILURES_PER_WINDOW, 30);
 
@@ -63,6 +69,7 @@ module.exports = {
   MAX_ENTRY_BYTES,
   MAX_ARCHIVE_ENTRIES,
   AUTHOR_UPLOADS_PER_HOUR,
+  AUTHOR_PREVIEWS_PER_HOUR,
   AUTH_FAILURES_PER_WINDOW,
   parseMaxArchiveBytes,
   parsePositiveInt,

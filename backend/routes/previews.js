@@ -18,6 +18,7 @@ const { inTransaction } = require('../db');
 const { authorize, canEditScenario, requireScenarioEditor } = require('../auth');
 const audit = require('../audit');
 const { PREVIEW_MAX_BYTES } = require('../config');
+const { limitAuthorPreviews } = require('../rate-limits');
 const { inspectPreview } = require('../preview-image');
 const storage = require('../storage');
 const { httpError, sendError } = require('../http-error');
@@ -54,7 +55,9 @@ async function lockEditable(db, id, principal) {
   return row.image_url;
 }
 
-router.post('/api/scenarios/:id/preview', authorize('author'), requireScenarioEditor, receivePreview, async (req, res) => {
+router.post('/api/scenarios/:id/preview', authorize('author'), requireScenarioEditor,
+  // B6 (DW-4.3): the cover counter runs before the body is read.
+  limitAuthorPreviews, receivePreview, async (req, res) => {
   try {
     if (!req.file) throw httpError(400, 'Очікується файл у полі "preview"');
     const { id } = req.params;

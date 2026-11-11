@@ -24,7 +24,10 @@ for (const action of Object.keys(TRANSITIONS)) {
     }
 
     try {
-      const moved = await inTransaction(db => applyTransition(db, req.principal, req.params.id, action, { note }));
+      const moved = await inTransaction(db => applyTransition(db, req.principal, req.params.id, action, {
+        note,
+        versionId: req.body?.versionId,
+      }));
       res.json({
         id: moved.id,
         status: moved.status,

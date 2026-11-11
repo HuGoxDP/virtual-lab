@@ -40,7 +40,7 @@ router.get('/api/admin/dashboard', authorize('author'), async (req, res) => {
            AND (s.status = 'review'
                 OR EXISTS (SELECT 1 FROM scenario_versions v WHERE v.scenario_id = s.id AND v.state = 'pending'))
       `, [ownerKeyId]),
-      audit.listActivity(pool, { ownerKeyId, limit: DASHBOARD_ACTIVITY }),
+      audit.listActivity(pool, { ownerKeyId, limit: DASHBOARD_ACTIVITY, sinceScenarioCreated: ownerKeyId !== null }),
     ]);
 
     const counts = Object.fromEntries(STATUSES.map(status => [status, 0]));
@@ -54,7 +54,14 @@ router.get('/api/admin/dashboard', authorize('author'), async (req, res) => {
 
 router.get('/api/scenarios/:id/history', authorize('author'), requireScenarioEditor, async (req, res) => {
   try {
-    res.json(await audit.listActivity(pool, { scenarioId: req.params.id, limit: HISTORY_LIMIT }));
+    // A moderator administers the catalog and keeps the full history of an id; every
+    // other principal sees only the live row's era (B6, DW-4.2).
+    res.json(await audit.listActivity(pool, {
+      scenarioId: req.params.id,
+      limit: HISTORY_LIMIT,
+      sinceScenarioCreated: req.principal.role !== 'moderator',
+    }));
+
   } catch (err) {
     sendError(res, err, 'GET /api/scenarios/:id/history');
   }

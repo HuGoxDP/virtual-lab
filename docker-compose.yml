@@ -55,6 +55,7 @@ services:
       LTI_TOOL_KEY_FILE: /srv/lti/tool-key.pem
       # Optional limits; an empty value falls back to the backend default.
       AUTHOR_UPLOADS_PER_HOUR: ${AUTHOR_UPLOADS_PER_HOUR:-}
+      AUTHOR_PREVIEWS_PER_HOUR: ${AUTHOR_PREVIEWS_PER_HOUR:-}
       AUTH_FAILURES_PER_WINDOW: ${AUTH_FAILURES_PER_WINDOW:-}
       MAX_ENTRY_BYTES: ${MAX_ENTRY_BYTES:-}
       MAX_ARCHIVE_ENTRIES: ${MAX_ARCHIVE_ENTRIES:-}
