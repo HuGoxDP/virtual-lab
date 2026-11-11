@@ -9,7 +9,7 @@ const cors = require('cors');
 const { runMigrations } = require('./migrations');
 const storage = require('./storage');
 const { pool } = require('./db');
-const { bootstrapToken, bootstrapTokenWarning, tokensMatch } = require('./auth');
+const { bootstrapToken, bootstrapTokenWarning, httpsRequired, tokensMatch } = require('./auth');
 const { parseMaxArchiveBytes } = require('./config');
 const catalogPublic = require('./routes/catalog-public');
 const { parseLimit, parseOffset, escapeLikePattern, parseSort } = catalogPublic;
@@ -41,6 +41,10 @@ if (!bootstrapToken() && require.main === module) {
 const authWarning = bootstrapTokenWarning();
 if (authWarning && require.main === module) {
   console.warn(authWarning);
+}
+
+if (!httpsRequired() && require.main === module) {
+  console.warn('[AUTH] REQUIRE_HTTPS is off — credentials are accepted over plain HTTP (production: P5b)');
 }
 
 app.use(catalogPublic.router);

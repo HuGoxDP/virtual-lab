@@ -261,7 +261,13 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   `ADMIN_TOKEN`, a moderator with `keyId: null` and label `bootstrap`. **Unset `ADMIN_TOKEN` turns only the
   bootstrap off** — keys keep working and nothing answers 503. No header, or a scheme other than the exact
   `Bearer ` → 401. `authenticate` / `requireRole(role)` / `authorize(role)` / `canEditScenario(principal, row)`
-  are the whole vocabulary; a route states its role in one place.
+  are the whole vocabulary; a route states its role in one place. **B6:** keys issued by
+  `generateToken()` carry a `vlk_` prefix (43 base64url characters, 256 bits; a key issued before B6 has
+  none and keeps working — the SHA-256 is what is stored); `tokensMatch` hashes both sides and compares the
+  32-byte digests, so the bootstrap comparison no longer branches on the expected token's length; and
+  `REQUIRE_HTTPS=true` answers a presented credential `403 https_required` over plain HTTP before anything is
+  resolved (no last-used stamp, no auth-failure budget) — on by default in `docker-compose.https.yml`
+  (P5b turns it on in production), unset everywhere else, so today's behaviour is unchanged.
   - **Keys** (`routes/keys.js`, moderator only): `GET /api/keys`, `POST /api/keys {label 1-100, role}` (the
     token is in that one response and nowhere else: only its SHA-256 is stored, it is never logged or
     listed), `POST /api/keys/:id/revoke` (idempotent; keys are revoked, never deleted). `GET /api/auth/me` →

@@ -46,6 +46,18 @@ const BOOTSTRAP_LABEL = 'bootstrap';
 /** Read per request, so an unset token turns the bootstrap off without a restart in tests. */
 const bootstrapToken = () => process.env.ADMIN_TOKEN || '';
 
+/**
+ * Whether a credential is accepted only over HTTPS (B6 phase 2).
+ *
+ * Read per request like the bootstrap token, so a test or an operator can turn it
+ * on without a restart. Only the literal true/1 turns it on: anything else keeps
+ * today's behaviour, because a typo must not lock the platform out.
+ */
+function httpsRequired() {
+  const raw = process.env.REQUIRE_HTTPS;
+  return raw === 'true' || raw === '1';
+}
+
 const sha256Hex = token => crypto.createHash('sha256').update(token).digest('hex');
 
 /**
@@ -96,6 +108,12 @@ async function authenticate(req, res, next) {
   if (!token) {
     return res.status(401).json({ error: 'Потрібна авторизація' });
   }
+  // B6 phase 2: with the switch on, a credential never travels in the clear. The
+  // answer is 403 https_required before anything is resolved, and it does not count
+  // against the address — 31 such calls still answer 403, never 429.
+  if (httpsRequired() && !req.secure) {
+    return res.status(403).json({ error: 'Потрібне HTTPS-з’єднання', code: 'https_required' });
+  }
 
   try {
     const principal = await resolvePrincipal(token);
@@ -126,6 +144,12 @@ async function optionalAuthenticate(req, res, next) {
   const header = req.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) return next();
+  // B6 phase 2: with the switch on, a credential never travels in the clear. The
+  // answer is 403 https_required before anything is resolved, and it does not count
+  // against the address — 31 such calls still answer 403, never 429.
+  if (httpsRequired() && !req.secure) {
+    return res.status(403).json({ error: 'Потрібне HTTPS-з’єднання', code: 'https_required' });
+  }
 
   try {
     const principal = await resolvePrincipal(token);
@@ -196,6 +220,7 @@ function bootstrapTokenWarning() {
 
 module.exports = {
   bootstrapToken,
+  httpsRequired,
   bootstrapTokenWarning,
   generateToken,
   tokensMatch,
