@@ -104,4 +104,64 @@ router.post('/api/keys/:id/revoke', authorize('moderator'), async (req, res) => 
   }
 });
 
+
+// ── POST /api/keys/:id/rotate ───────────────────────
+// B6 phase 3: replace a lost key without orphaning what it owns.
+//
+// One transaction: the old key row is locked, the new key takes its label and
+// role, every scenario the old key owned moves to the new one, and the old key
+// is revoked (its first revocation time kept — COALESCE, as in revoke). The new
+// token is in this one response and nowhere else.
+//
+// Two concurrent rotates of one key cannot both succeed: the second finds the
+// key already revoked by a rotate in this transaction (the row is locked, so the
+// two run serially) and answers 409.
+router.post('/api/keys/:id/rotate', authorize('moderator'), async (req, res) => {
+  const id = /^\d{1,10}$/.test(req.params.id) ? Number(req.params.id) : NaN;
+  if (!Number.isSafeInteger(id) || id > MAX_KEY_ID) {
+    return res.status(400).json({ error: 'Невалідний id ключа' });
+  }
+
+  try {
+    const rotated = await inTransaction(async db => {
+      const { rows } = await db.query(
+        'SELECT id, label, role, revoked_at FROM publish_keys WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+      const old = rows[0];
+      if (!old) return { error: 404 };
+      if (old.revoked_at) return { error: 409 };
+
+      const token = generateToken();
+      const inserted = await db.query(
+        'INSERT INTO publish_keys (label, role, token_hash) VALUES ($1, $2, $3) RETURNING id',
+        [old.label, old.role, sha256Hex(token)]
+      );
+      const newId = inserted.rows[0].id;
+      const moved = await db.query(
+        'UPDATE scenarios SET owner_key_id = $1 WHERE owner_key_id = $2',
+        [newId, id]
+      );
+      await db.query(
+        "UPDATE publish_keys SET revoked_at = COALESCE(revoked_at, NOW()) WHERE id = $1",
+        [id]
+      );
+      await audit.record(db, req.principal, 'key.rotate', null, {
+        fromKeyId: id,
+        toKeyId: newId,
+        scenarios: moved.rowCount,
+      });
+      return { id: newId, label: old.label, role: old.role, token };
+    });
+
+    if (rotated.error === 404) return res.status(404).json({ error: 'Ключ не знайдено' });
+    if (rotated.error === 409) return res.status(409).json({ error: 'Ключ уже замінено' });
+
+    res.set('Cache-Control', 'no-store');
+    res.status(201).json(rotated);
+  } catch (err) {
+    console.error('[KEYS] rotate error:', err.message);
+    res.status(500).json({ error: 'Помилка сервера' });
+  }
+});
 module.exports = { router };

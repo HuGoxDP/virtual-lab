@@ -182,6 +182,17 @@ const ROUTES = [
     name: 'GET /api/auth/me', ok: 200, allowed: ANY_PRINCIPAL,
     send: (r, h) => r.get('/api/auth/me').set(h),
   },
+  // ── B6 phase 3: rotation and ownership transfer ──
+  {
+    name: 'POST /api/keys/:id/rotate', ok: 201, allowed: MODERATORS,
+    send: (r, h) => r.post(`/api/keys/${spare.id}/rotate`).set(h),
+    state: () => count('SELECT COUNT(*)::int AS n FROM publish_keys'),
+  },
+  {
+    name: 'PUT /api/scenarios/:id/owner', ok: 200, allowed: MODERATORS,
+    send: (r, h) => r.put('/api/scenarios/rt-own/owner').set(h).send({ keyId: keys.authorB.id }),
+    state: async () => (await pool.query('SELECT owner_key_id FROM scenarios WHERE id = $1', ['rt-own'])).rows[0].owner_key_id,
+  },
   // ── Phase 3: the workflow and the version history ──
   ...[['submit', 'rt-own', ['authorA', ...MODERATORS]], ['withdraw', 'rt-rev', ['authorA', ...MODERATORS]],
     ['approve', 'rt-own', MODERATORS], ['reject', 'rt-rev', MODERATORS], ['unpublish', 'rt-pub', MODERATORS]]

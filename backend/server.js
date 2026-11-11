@@ -54,6 +54,7 @@ app.use(require('./routes/workflow').router);
 app.use(require('./routes/versions').router);
 app.use(require('./routes/categories').router);
 app.use(require('./routes/previews').router);
+app.use(require('./routes/ownership').router);
 app.use(require('./routes/version-tools').router);
 app.use(require('./routes/bulk').router);
 app.use(require('./routes/dashboard').router);
