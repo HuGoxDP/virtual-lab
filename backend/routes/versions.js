@@ -15,7 +15,7 @@
 const express = require('express');
 
 const { pool, inTransaction } = require('../db');
-const { authorize, canEditScenario } = require('../auth');
+const { authorize, canEditScenario, requireLiveKey } = require('../auth');
 const audit = require('../audit');
 const { httpError, sendError } = require('../http-error');
 const versions = require('../versions');
@@ -76,6 +76,8 @@ for (const [action, { run }] of Object.entries(DECISIONS)) {
   router.post(`/api/scenarios/:id/versions/:vid/${action}`, authorize('moderator'), async (req, res) => {
     try {
       await inTransaction(async db => {
+        // F-R1: the decision is a write, so the caller's key is re-read, locked, first.
+        await requireLiveKey(db, req.principal);
         await lockScenario(db, req.params.id);
         const version = await loadVersion(db, req.params.id, req.params.vid);
         await run(db, req.params.id, version);
@@ -91,6 +93,8 @@ for (const [action, { run }] of Object.entries(DECISIONS)) {
 router.delete('/api/scenarios/:id/versions/:vid', authorize('author'), async (req, res) => {
   try {
     await inTransaction(async db => {
+      // F-R1: a delete is a write, so the caller's key is re-read, locked, first.
+      await requireLiveKey(db, req.principal);
       const scenario = await lockScenario(db, req.params.id);
       if (!canEditScenario(req.principal, scenario)) throw httpError(403, 'Це не ваш сценарій');
       const version = await loadVersion(db, req.params.id, req.params.vid);

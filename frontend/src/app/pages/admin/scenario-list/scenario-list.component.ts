@@ -151,7 +151,8 @@ const BULK_LABELS: Readonly<Record<BulkAction, string>> = {
                 </td>
                 <td class="wrap">{{ row.categoryLabel }}</td>
                 <td class="nowrap">{{ row.version || '—' }}</td>
-                <td class="wrap author">{{ row.author || '—' }}</td>
+                <!-- B6 (DW-5.4): the owner key's label when the row has one, the author otherwise. -->
+                <td class="wrap author" data-role="owner">{{ row.ownerLabel || row.author || '—' }}</td>
                 <td class="nowrap">{{ archiveLabel(row) }}</td>
                 <td>
                   <vl-status-pill [status]="row.status" />

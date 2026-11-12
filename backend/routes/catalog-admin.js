@@ -7,7 +7,7 @@
 const express = require('express');
 
 const { pool, inTransaction } = require('../db');
-const { authorize, canEditScenario } = require('../auth');
+const { authorize, canEditScenario, requireLiveKey } = require('../auth');
 const audit = require('../audit');
 const { validateFeatures, forbiddenAuthorFields, imageUrlProblem, scenarioTextProblem } = require('../catalog-input');
 const { ADMIN_COLUMNS } = require('../scenario-rows');
@@ -102,6 +102,7 @@ router.post('/api/catalog', authorize('author'), async (req, res) => {
     }
 
     const created = await inTransaction(async db => {
+      await requireLiveKey(db, principal); // F-R1: a revoked key creates nothing
       if (!byAuthor) await ensureCategory(db, category, categoryLabel);
       const { rows } = await db.query(`
         INSERT INTO scenarios
@@ -216,6 +217,7 @@ router.put('/api/catalog/:id', authorize('author'), async (req, res) => {
   try {
     values.push(id); // последний параметр — WHERE id = $N
     await inTransaction(async db => {
+      await requireLiveKey(db, principal); // F-R1: a revoked key edits nothing
       // Locked, so the ownership read below cannot go stale before the write.
       const { rows } = await db.query('SELECT owner_key_id, status, image_url FROM scenarios WHERE id = $1 FOR UPDATE', [id]);
       if (!rows[0]) throw httpError(404, 'Сценарій не знайдено');
@@ -255,6 +257,7 @@ router.put('/api/catalog/:id', authorize('author'), async (req, res) => {
 router.delete('/api/catalog/:id', authorize('moderator'), async (req, res) => {
   try {
     const rowCount = await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1: a revoked key deletes nothing
       const result = await db.query('DELETE FROM scenarios WHERE id = $1', [req.params.id]);
       if (result.rowCount) await audit.record(db, req.principal, 'scenario.delete', req.params.id);
       return result.rowCount;

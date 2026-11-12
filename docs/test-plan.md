@@ -723,6 +723,35 @@ stack built from the branch). The old admin, its `/admin/legacy` route, its styl
      until the moderator accepts -> revoked code is rejected; dashboard; Напрями add/hide/delete. *Written against a stack built from
      this branch; see the build report for what was run.*
 
+#### B6 hardening (2026-11-12): the review focus as tests
+
+Specs: `backend/test/integration/{rights-table,bola-sweep,escalation,key-logs,key-revocation-race,keys-rotate,ownership,
+workflow-version-bind,history-era,preview-limits,https-required}.test.js`, `backend/test/helpers/routes.js`,
+`backend/test/unit/nginx-forwarded-proto.test.js`. The §7 rows are quoted verbatim above their `describe` blocks; the sweep
+enumerates `app._router.stack` (26 `:id` routes, 52 method+path pairs) so a route added later cannot forget its owner check,
+and a deliberately added unprotected `:id` route fails it (checked, reverted, uncommitted).
+
+232. [I] Rights table (DW-6.1): the seven §7 rows, each with the owning author, another author, a moderator key, the bootstrap, a
+     revoked key, the key a rotation replaced, and no caller; every "Ні" cell asserts the status **and** that the database did
+     not move (title, status, version rows, draft rows, `owner_key_id`).
+233. [I] BOLA sweep (DW-6.2): author B, who is not the owner, calls every enumerated `:id` route against author A's scenario with
+     a minimal body -> 403 or 404, never 2xx, except the public-read allow-list; the enumeration covers at least 26 routes.
+234. [I] Escalation (DW-6.3): the alias fields (`ownerKeyId`, `owner_key_id`, `status`) are not read - the row keeps the
+     server-derived owner, status and attribution; `AUTHOR_FORBIDDEN_FIELDS` and `archive*` are 400 on POST and PUT; every
+     moderator-only route answers an author 403; the dashboard is an author route but shows only the caller's rows.
+235. [I] Logs (DW-6.3): a whole key life cycle (issue -> `/auth/me` -> create -> upload -> rotate -> the old key refused ->
+     revoke -> a wrong token) runs with every `console.*` captured; neither a token, nor `SHA-256(token)`, nor the admin token
+     appears in what was written. Adding `console.log(token)` to the issue route makes it fail (checked, reverted).
+236. [I] Revocation race (DW-7.1, F-R1): a multipart upload streamed half at a time over a real listener with the key revoked
+     while the body is in flight -> 403 `Ключ відкликано`, no version row, no journal row, no stored object, an untouched row;
+     a live key still uploads and submits; a revocation landing while a transaction is open is refused by `requireLiveKey`;
+     the bootstrap principal (no key row) passes.
+237. [I] Timings (DW-1.2): both comparison paths go through a fixed-length `timingSafeEqual` (a unit spy), not a statistical
+     timing test.
+238. [E] Rotation and the stale approve (DW-7.6 extended, `admin-moderation.spec`): rotate a code from «Доступ» - the old code is
+     refused, the new one owns the scenario, the row still counts it; an archive swapped under the open queue card is refused by
+     name (`Архів змінився після перевірки`), nothing is published, and the reloaded card publishes what is current now.
+
 
 ### 4.11 Golden paths (E2E)
 

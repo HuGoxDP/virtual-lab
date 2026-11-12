@@ -5,7 +5,7 @@
 const express = require('express');
 
 const { pool, inTransaction } = require('../db');
-const { authorize } = require('../auth');
+const { authorize, requireLiveKey } = require('../auth');
 const audit = require('../audit');
 const storage = require('../storage');
 
@@ -127,10 +127,14 @@ router.post('/api/admin/storage/gc', authorize('moderator'), async (req, res) =>
     ];
     console.log(`[STORAGE] gc removed ${deletedArchives.length} archive(s), ${sumBytes(deletedArchives)} bytes, `
       + `${deletedPreviews.length} preview(s), ${sumBytes(deletedPreviews)} bytes`);
-    // A dry run changes nothing and is not journalled; a sweep is.
-    await inTransaction(db => audit.record(db, req.principal, 'storage.gc', null, {
-      ...summarise(deletedArchives), previews: summarise(deletedPreviews),
-    }));
+    // A dry run changes nothing and is not journalled; a sweep is. The key is re-read
+    // first (F-R1), so a key revoked before the sweep is not journalled after it.
+    await inTransaction(async db => {
+      await requireLiveKey(db, req.principal);
+      await audit.record(db, req.principal, 'storage.gc', null, {
+        ...summarise(deletedArchives), previews: summarise(deletedPreviews),
+      });
+    });
 
     res.json({
       dryRun: false,

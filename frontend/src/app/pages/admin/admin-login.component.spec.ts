@@ -25,6 +25,9 @@ describe('AdminLoginComponent', () => {
 
   beforeEach(() => {
     sessionStorage.clear();
+    // jsdom has no secure context; most cases assert the ordinary sign-in, so the
+    // flag is turned on and the B6 cases turn it off themselves.
+    (window as unknown as { isSecureContext: boolean }).isSecureContext = true;
     TestBed.configureTestingModule({
       providers: [provideRouter([{ path: 'admin', component: StubPage }, { path: 'catalog', component: StubPage }]),
         provideHttpClient(), provideHttpClientTesting()],
@@ -126,5 +129,28 @@ describe('AdminLoginComponent', () => {
     await settle(fixture, 1);
     http.expectOne('/api/auth/me').flush({ role: 'author', label: 'A', keyId: 1 });
     await settle(fixture);
+  });
+
+
+  // ── B6 (DW-5.1): no sign-in over plain HTTP ──────────────────────
+  describe('an insecure context (B6)', () => {
+    beforeEach(() => { (window as unknown as { isSecureContext: boolean }).isSecureContext = false; });
+
+    it('disables the button and shows the banner, and stores nothing on submit', async () => {
+      open();
+      const insecure = () => root.querySelector('.plaque')?.textContent ?? '';
+      expect(insecure()).toContain('Вхід можливий лише через HTTPS');
+      expect(root.querySelector<HTMLButtonElement>('button[type=submit]')!.disabled).toBe(true);
+
+      root.querySelector<HTMLInputElement>('input.code-input')!.value = 'tok';
+      root.querySelector<HTMLInputElement>('input.code-input')!.dispatchEvent(new Event('input'));
+      root.querySelector<HTMLButtonElement>('button[type=submit]')!.click();
+      await settle(fixture);
+      fixture.detectChanges();
+      http.expectNone('/api/auth/me');
+      expect(sessionStorage.getItem('adminToken')).toBeNull();
+      // The plaque is the banner, not a failure: no error text about a wrong code.
+      expect(root.querySelector('.plaque')!.textContent).toContain('Вхід можливий лише через HTTPS');
+    });
   });
 });

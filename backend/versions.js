@@ -13,6 +13,7 @@
 // are the backstop if one does not.
 
 const storage = require('./storage');
+const { requireLiveKey } = require('./auth');
 const { httpError } = require('./http-error');
 
 /** Versions kept per scenario, pending and archived included. */
@@ -101,7 +102,10 @@ async function pointScenarioAt(db, scenarioId, version) {
  * @param checks    `archive-checks` result for the new row (null: none recorded)
  */
 async function installUpload(db, scenario, principal, stored, manifest, checks = null) {
-  if (scenario.status === 'review') throw httpError(409, 'Сценарій на перевірці: відкличте з перевірки, щоб завантажити новий архів');
+  // F-R1: the upload body was streamed entirely after the request began, so a key
+  // revoked while it streamed must not land here. First statement, key row before version rows.
+  await requireLiveKey(db, principal);
+  if (scenario.status === 'review') throw httpError(409, 'Сценарій на перевірці: відкличте з перевірку, щоб завантажити новий архів');
 
   const asPending = scenario.status === 'published' && principal.role === 'author';
   const { rows: existing } = await db.query(

@@ -127,6 +127,8 @@ export interface KeyRow {
   createdAt: string;
   lastUsedAt: string | null;
   revokedAt: string | null;
+  /** B6 (DW-5.2): how many live scenarios this key owns; 0 is the interesting case. */
+  scenarioCount: number;
 }
 
 /** `POST /api/keys`: the only response that ever carries the token. */

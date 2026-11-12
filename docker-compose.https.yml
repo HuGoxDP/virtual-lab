@@ -12,6 +12,12 @@
 
 services:
 
+  backend:
+    environment:
+      # B6: this is the listener TLS actually terminates on, so a credential is
+      # accepted only here. Plain :80 keeps answering public routes.
+      REQUIRE_HTTPS: "true"
+
   frontend:
     ports:
       - "${HTTPS_PORT:-8443}:443"

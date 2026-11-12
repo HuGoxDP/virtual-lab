@@ -8,6 +8,7 @@
 
 const {
   AUTHOR_UPLOADS_PER_HOUR,
+  AUTHOR_PREVIEWS_PER_HOUR,
   AUTH_FAILURES_PER_WINDOW,
 } = require('./config');
 
@@ -54,6 +55,7 @@ function createWindowCounter({ limit, windowMs, now = Date.now }) {
 
 const failedAuth = createWindowCounter({ limit: AUTH_FAILURES_PER_WINDOW, windowMs: FAILED_AUTH_WINDOW_MS });
 const authorUploads = createWindowCounter({ limit: AUTHOR_UPLOADS_PER_HOUR, windowMs: UPLOAD_WINDOW_MS });
+const authorPreviews = createWindowCounter({ limit: AUTHOR_PREVIEWS_PER_HOUR, windowMs: UPLOAD_WINDOW_MS });
 
 /**
  * Middleware for every route that receives an archive (and for `from-archive`,
@@ -72,4 +74,22 @@ function limitAuthorUploads(req, res, next) {
   next();
 }
 
-module.exports = { createWindowCounter, failedAuth, authorUploads, limitAuthorUploads };
+
+
+/**
+  * Middleware for the cover upload (B6, DW-4.3): its own counter, so a teacher iterating on
+  * covers does not starve their archive budget and vice versa. Runs before the body is read,
+  * so a 429 costs nothing to store; a delete is not counted.
+  */
+function limitAuthorPreviews(req, res, next) {
+  const { role, keyId } = req.principal;
+  if (role !== 'author' || keyId == null) return next();
+
+  if (!authorPreviews.consume(keyId)) {
+    res.set('Retry-After', String(authorPreviews.retryAfterSeconds(keyId)));
+    return res.status(429).json({ error: 'Забагато обкладинок: спробуйте пізніше' });
+  }
+  next();
+}
+
+module.exports = { createWindowCounter, failedAuth, authorUploads, authorPreviews, limitAuthorUploads, limitAuthorPreviews };

@@ -9,7 +9,7 @@ const cors = require('cors');
 const { runMigrations } = require('./migrations');
 const storage = require('./storage');
 const { pool } = require('./db');
-const { bootstrapToken, tokensMatch } = require('./auth');
+const { bootstrapToken, bootstrapTokenWarning, httpsRequired, tokensMatch } = require('./auth');
 const { parseMaxArchiveBytes } = require('./config');
 const catalogPublic = require('./routes/catalog-public');
 const { parseLimit, parseOffset, escapeLikePattern, parseSort } = catalogPublic;
@@ -38,6 +38,15 @@ if (!bootstrapToken() && require.main === module) {
   console.warn('[AUTH] ADMIN_TOKEN is not set — bootstrap moderator is off (personal keys still work)');
 }
 
+const authWarning = bootstrapTokenWarning();
+if (authWarning && require.main === module) {
+  console.warn(authWarning);
+}
+
+if (!httpsRequired() && require.main === module) {
+  console.warn('[AUTH] REQUIRE_HTTPS is off — credentials are accepted over plain HTTP (production: P5b)');
+}
+
 app.use(catalogPublic.router);
 app.use(require('./routes/catalog-admin').router);
 app.use(require('./routes/archives').router);
@@ -45,6 +54,7 @@ app.use(require('./routes/workflow').router);
 app.use(require('./routes/versions').router);
 app.use(require('./routes/categories').router);
 app.use(require('./routes/previews').router);
+app.use(require('./routes/ownership').router);
 app.use(require('./routes/version-tools').router);
 app.use(require('./routes/bulk').router);
 app.use(require('./routes/dashboard').router);

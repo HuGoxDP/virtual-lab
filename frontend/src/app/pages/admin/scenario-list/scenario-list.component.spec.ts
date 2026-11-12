@@ -16,7 +16,7 @@ const ROWS = [
   adminRow('pub', { title: 'Опублікований', status: 'published', isPublished: true }),
   adminRow('rev', { title: 'На розгляді', status: 'review', category: 'biology', categoryLabel: 'Біологія', pendingVersionId: 9 }),
   adminRow('dra', { title: 'Чернетка', status: 'draft', archiveBytes: null, archiveSha256: null, currentVersion: null }),
-  adminRow('rej', { title: 'Повернутий', status: 'rejected', author: 'x'.repeat(300) }),
+  adminRow('rej', { title: 'Повернутий', status: 'rejected', ownerKeyId: null, ownerLabel: null, author: 'x'.repeat(300) }),
 ];
 
 const CATEGORIES = [
@@ -148,6 +148,8 @@ describe('ScenarioListComponent', () => {
     });
 
     it('keeps a 300-character unbroken author in the cell (the text is wrapped, never the layout)', () => {
+      // B6: the cell shows the owner key's label when there is one; this fixture has none,
+      // so the author stays the text the case pins.
       const cell = qa('tbody tr')[3].querySelector<HTMLElement>('.author')!;
       expect(cell.textContent?.trim().length).toBe(300);
       expect(cell.classList.contains('wrap')).toBe(true);

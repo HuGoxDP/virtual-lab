@@ -15,7 +15,7 @@
 const express = require('express');
 
 const { pool, inTransaction } = require('../db');
-const { authorize } = require('../auth');
+const { authorize, requireLiveKey } = require('../auth');
 const audit = require('../audit');
 const { validateCategory } = require('../catalog-input');
 const { httpError, sendError } = require('../http-error');
@@ -56,6 +56,7 @@ router.post('/api/categories', authorize('moderator'), async (req, res) => {
 
   try {
     const category = await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1
       await db.query(`
         INSERT INTO categories (slug, label, icon, sort_order, is_visible)
         VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM categories), $4)
@@ -78,6 +79,7 @@ router.post('/api/categories/reorder', authorize('moderator'), async (req, res) 
 
   try {
     await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1
       const { rows } = await db.query('SELECT slug FROM categories FOR UPDATE');
       const existing = new Set(rows.map(row => row.slug));
       if (existing.size !== slugs.length || slugs.some(slug => !existing.has(slug))) {
@@ -105,6 +107,7 @@ router.put('/api/categories/:slug', authorize('moderator'), async (req, res) => 
 
   try {
     const category = await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1
       const { rowCount } = await db.query(`
         UPDATE categories
            SET label      = COALESCE($2::text, label),
@@ -129,6 +132,7 @@ router.delete('/api/categories/:slug', authorize('moderator'), async (req, res) 
   const { slug } = req.params;
   try {
     await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1
       const { rows } = await db.query('SELECT slug FROM categories WHERE slug = $1 FOR UPDATE', [slug]);
       if (!rows[0]) throw httpError(404, 'Категорію не знайдено');
 
