@@ -3,6 +3,7 @@
 // The one connection pool and the helpers every route module shares.
 
 const { Pool } = require('pg');
+const { ITEM_FROM, PUBLIC_ROW } = require('./scenario-rows');
 
 // ── Подключение к PostgreSQL ─────────────────────────
 const pool = new Pool({
@@ -36,8 +37,22 @@ async function inTransaction(work) {
   }
 }
 
+/**
+ * Whether a scenario id exists **and is public** — the same condition every
+ * public read uses (`scenario-rows.js`'s `PUBLIC_ROW`), because an id check
+ * here is a public answer: 201 for an existing but hidden slug would let an
+ * anonymous caller enumerate the unpublished catalog (F-R4, B6r2). A bogus id
+ * still answers the same 404 as before.
+ *
+ * @param {string} id
+ * @returns {Promise<boolean>}
+ */
 async function scenarioExists(id) {
-  const { rowCount } = await pool.query('SELECT 1 FROM scenarios WHERE id = $1', [id]);
+  const { rowCount } = await pool.query(`
+    SELECT 1
+      ${ITEM_FROM}
+     WHERE s.id = $1 AND ${PUBLIC_ROW}
+  `, [id]);
   return rowCount > 0;
 }
 
