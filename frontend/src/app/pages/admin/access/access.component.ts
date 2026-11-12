@@ -60,7 +60,7 @@ const MAX_LABEL = 100;
     } @else {
       <div class="table-wrap">
         <table class="table keys-table" data-role="keys">
-          <thead><tr><th>Імʼя</th><th>Роль</th><th>Створено</th><th>Останнє використання</th><th>Стан</th><th><span class="visually-hidden">Дії</span></th></tr></thead>
+          <thead><tr><th>Імʼя</th><th>Роль</th><th>Створено</th><th>Останнє використання</th><th>Сценаріїв</th><th>Стан</th><th><span class="visually-hidden">Дії</span></th></tr></thead>
           <tbody>
             @for (key of rows(); track key.id) {
               <tr [attr.data-key]="key.id" [class.revoked]="key.revokedAt">
@@ -68,9 +68,11 @@ const MAX_LABEL = 100;
                 <td>{{ key.role === 'moderator' ? 'Модератор' : 'Автор' }}</td>
                 <td class="nowrap">{{ key.created }}</td>
                 <td class="nowrap" data-role="last-used">{{ key.lastUsed }}</td>
+                <td class="num" data-role="scenario-count">{{ key.scenarioCount ?? 0 }}</td>
                 <td>{{ key.revokedAt ? 'Відкликано' : 'Діє' }}</td>
                 <td class="actions">
                   @if (!key.revokedAt) {
+                    <button type="button" class="btn btn-ghost" data-action="rotate" [disabled]="busy()" (click)="rotate(key)">Замінити</button>
                     <button type="button" class="btn btn-ghost danger" data-action="revoke" [disabled]="busy()" (click)="revoke(key)">Відкликати</button>
                   }
                 </td>
@@ -120,6 +122,7 @@ export class AccessComponent implements OnInit, OnDestroy {
       isMine: mine !== null && key.id === mine,
       created: formatDateTime(key.createdAt),
       lastUsed: key.lastUsedAt ? formatDateTime(key.lastUsedAt) : 'ще не використовувався',
+      scenarioCount: key.scenarioCount ?? 0,
     }));
   });
 
@@ -174,6 +177,28 @@ export class AccessComponent implements OnInit, OnDestroy {
     } catch {
       // The server runs plain HTTP in places, where the Clipboard API is missing: the field is selectable.
       this.copyNote.set('Не вдалося скопіювати автоматично — виділіть код і скопіюйте вручну.');
+    }
+  }
+
+  /** B6 (DW-5.2): replace a key. The server revokes the old one, moves the work and returns the
+    * new token once — shown in the same one-time dialog as an issue. Rotating the session's own key
+    * swaps the stored code for the new one, so nobody is signed out by their own rotation. */
+  protected async rotate(key: { id: number; label: string; isMine: boolean }): Promise<void> {
+    if (this.busy()) return;
+    if (!confirm(`Замінити код «${key.label}»? Старий одразу перестане працювати, а сценарії, що на ньому, перейдуть до нового.`)) return;
+    this.busy.set(true);
+    this.error.set(null);
+    try {
+      const created = await this.api.rotateKey(key.id);
+      this.issued.set(created);
+      this.copyNote.set('');
+      if (key.isMine) await this.session.signIn(created.token);
+      await this.refresh();
+      this.toast.show(key.isMine ? 'Код замінено — ви вже працюєте на новому' : 'Код замінено');
+    } catch (err) {
+      this.error.set(AdminService.describeError(err));
+    } finally {
+      this.busy.set(false);
     }
   }
 

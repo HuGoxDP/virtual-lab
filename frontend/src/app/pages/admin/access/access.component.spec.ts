@@ -14,7 +14,8 @@ import { settle } from '../admin-testing';
 import { AccessComponent } from './access.component';
 
 const key = (id: number, overrides: Partial<KeyRow> = {}): KeyRow => ({
-  id, label: `Ключ ${id}`, role: 'author', createdAt: '2026-03-01T10:00:00Z', lastUsedAt: null, revokedAt: null, ...overrides,
+  id, label: `Ключ ${id}`, role: 'author', createdAt: '2026-03-01T10:00:00Z', lastUsedAt: null,
+  revokedAt: null, scenarioCount: 0, ...overrides,
 });
 const KEYS = [key(1, { role: 'moderator', label: 'Я', lastUsedAt: '2026-03-12T12:22:00Z' }), key(2, { label: '<b>Олена</b>' }), key(3, { revokedAt: '2026-03-05T10:00:00Z' })];
 
@@ -193,5 +194,30 @@ describe('AccessComponent', () => {
     await issue('Ірина');
     fixture.destroy();
     expect(document.body.innerHTML).not.toContain('TOKEN-ONCE-123');
+  });
+
+
+  // ── B6 (DW-5.2): a key can be replaced ─────────────────────────
+  describe('rotation', () => {
+    it('shows the new token once and clears it when the dialog closes', async () => {
+      open();
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      // The session signed in as keyId 1, so row 1 IS the session's own key.
+      (root.querySelectorAll('button[data-action=rotate]')[0] as HTMLButtonElement).click();
+      await settle(fixture);
+      http.expectOne('/api/keys/1/rotate').flush({ id: 9, label: 'Я', role: 'moderator', token: 'vlk_new' });
+      // The rotated key IS the session's own (DW-5.2): the new code is checked and stored,
+      // and the list is re-read. Both requests are answered in the component's order.
+      await settle(fixture, 2);
+      http.expectOne('/api/auth/me').flush({ role: 'moderator', label: 'Я', keyId: 9 });
+      await settle(fixture, 2);
+      http.expectOne('/api/keys').flush({ keys: KEYS.map(k => k.id === 1 ? { ...k, id: 9 } : k) });
+      await settle(fixture);
+      expect(TestBed.inject(AdminService).isAuthenticated()).toBe(true);
+      expect(token()!.value).toBe('vlk_new');
+      root.querySelector<HTMLButtonElement>('button[data-action=close]')!.click();
+      await settle(fixture);
+      expect(token()).toBeNull();
+    });
   });
 });

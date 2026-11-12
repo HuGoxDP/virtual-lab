@@ -23,7 +23,9 @@ const KEY_COLUMNS = `
   id, label, role,
   created_at   AS "createdAt",
   last_used_at AS "lastUsedAt",
-  revoked_at   AS "revokedAt"
+  revoked_at   AS "revokedAt",
+  (SELECT COUNT(*)::int FROM scenarios s WHERE s.owner_key_id = publish_keys.id)
+    AS "scenarioCount"
 `;
 
 // ── GET /api/auth/me ─────────────────────────────────
