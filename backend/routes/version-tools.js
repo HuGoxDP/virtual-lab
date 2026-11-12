@@ -13,7 +13,7 @@
 const express = require('express');
 
 const { pool, inTransaction } = require('../db');
-const { authorize, requireScenarioEditor } = require('../auth');
+const { authorize, requireScenarioEditor, requireLiveKey } = require('../auth');
 const audit = require('../audit');
 const { listArchiveEntries } = require('../archive-validation');
 const { runArchiveChecks } = require('../archive-checks');
@@ -42,6 +42,7 @@ router.post(`${base}/checks`, authorize('author'), requireScenarioEditor, async 
     const checks = await runArchiveChecks(storage.objectPath(version.sha256), req.params.id, version.bytes);
 
     await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1: a revoked key records no checks
       const { rowCount } = await db.query(
         'UPDATE scenario_versions SET checks = $1::jsonb WHERE id = $2 AND scenario_id = $3',
         [JSON.stringify(checks), version.id, req.params.id]

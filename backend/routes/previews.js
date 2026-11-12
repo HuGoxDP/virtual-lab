@@ -15,7 +15,7 @@ const express = require('express');
 const multer = require('multer');
 
 const { inTransaction } = require('../db');
-const { authorize, canEditScenario, requireScenarioEditor } = require('../auth');
+const { authorize, canEditScenario, requireLiveKey, requireScenarioEditor } = require('../auth');
 const audit = require('../audit');
 const { PREVIEW_MAX_BYTES } = require('../config');
 const { limitAuthorPreviews } = require('../rate-limits');
@@ -65,6 +65,7 @@ router.post('/api/scenarios/:id/preview', authorize('author'), requireScenarioEd
     const stored = await storage.commitPreview(req.file.buffer, info.ext);
 
     await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1: a revoked key adds no cover
       const previous = await lockEditable(db, id, req.principal);
       await db.query('UPDATE scenarios SET image_url = $2, updated_at = NOW() WHERE id = $1', [id, stored.url]);
       await audit.record(db, req.principal, 'scenario.preview', id, {
@@ -83,6 +84,7 @@ router.delete('/api/scenarios/:id/preview', authorize('author'), requireScenario
   try {
     const { id } = req.params;
     await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1: a revoked key removes no cover
       const previous = await lockEditable(db, id, req.principal);
       if (previous === '') return;
       await db.query("UPDATE scenarios SET image_url = '', updated_at = NOW() WHERE id = $1", [id]);

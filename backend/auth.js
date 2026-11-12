@@ -12,6 +12,7 @@
 const crypto = require('node:crypto');
 
 const { pool } = require('./db');
+const { httpError } = require('./http-error');
 const { failedAuth } = require('./rate-limits');
 
 /** No real token comes near this; a longer one is wrong without hashing it. */
@@ -204,6 +205,31 @@ function canEditScenario(principal, row) {
 }
 
 /**
+ * B6 phase 7 (F-R1): a write transaction re-reads the caller's key, locked, and refuses
+ * a key that was revoked after the request began.
+ *
+ * `authenticate` resolves the principal once, at the start of a request, and every write
+ * route then re-checks *ownership* under the scenario's row lock — never `revoked_at`.
+ * A key revoked while a body was streaming therefore still wrote: for an archive upload
+ * that window is the whole body, up to nginx's 300 s proxy timeout and 200 MB. This is
+ * the check that closes it, and it runs as the **first** statement of a write transaction,
+ * so the `publish_keys` row lock is taken before any scenario lock the transaction then
+ * takes — the order `rotate` uses as well, so a rotation and a write cannot deadlock.
+ *
+ * @param {import('pg').PoolClient} db  the write transaction's own client
+ * @param {{role: string, keyId: number|null, label: string}} principal
+ * @throws {Error & {status: number}} 403 when the key row is gone or revoked
+ */
+async function requireLiveKey(db, principal) {
+  if (principal.keyId == null) return; // the bootstrap ADMIN_TOKEN is not a key row
+  const { rows } = await db.query(
+    'SELECT revoked_at FROM publish_keys WHERE id = $1 FOR UPDATE',
+    [principal.keyId]
+  );
+  if (!rows[0] || rows[0].revoked_at) throw httpError(403, 'Ключ відкликано');
+}
+
+/**
  * A start-up warning when the bootstrap ADMIN_TOKEN is set but shorter than
  * {@link MIN_BOOTSTRAP_TOKEN_LENGTH}: it guards every write endpoint, so a
  * guessable one is worth naming. The value itself never appears in the
@@ -231,4 +257,5 @@ module.exports = {
   authorize,
   canEditScenario,
   requireScenarioEditor,
+  requireLiveKey,
 };

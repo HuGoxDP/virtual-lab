@@ -10,7 +10,7 @@
 // Everything a route or the compatibility `PUT {isPublished}` needs is `applyTransition`;
 // the table below is the single statement of the rules.
 
-const { canEditScenario } = require('./auth');
+const { canEditScenario, requireLiveKey } = require('./auth');
 const audit = require('./audit');
 const { httpError } = require('./http-error');
 
@@ -55,6 +55,10 @@ function parseRejectNote(raw) {
 async function applyTransition(db, principal, id, action, { note, versionId } = {}) {
   const rule = TRANSITIONS[action];
   if (!rule) throw new Error(`unknown transition "${action}"`);
+
+  // F-R1: a transition is a write, so the caller's key is re-read, locked, before anything
+  // else is locked. A key revoked while the request was in flight moves no scenario.
+  await requireLiveKey(db, principal);
 
   const { rows } = await db.query('SELECT id, status, owner_key_id FROM scenarios WHERE id = $1 FOR UPDATE', [id]);
   const row = rows[0];

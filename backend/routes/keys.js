@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 
 const { pool, inTransaction } = require('../db');
-const { authenticate, authorize, generateToken, sha256Hex } = require('../auth');
+const { authenticate, authorize, generateToken, requireLiveKey, sha256Hex } = require('../auth');
 const audit = require('../audit');
 
 const router = express.Router();
@@ -62,6 +62,7 @@ router.post('/api/keys', authorize('moderator'), async (req, res) => {
 
   try {
     const key = await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1
       const { rows } = await db.query(
         'INSERT INTO publish_keys (label, role, token_hash) VALUES ($1, $2, $3) RETURNING id',
         [label, role, sha256Hex(token)]
@@ -89,6 +90,7 @@ router.post('/api/keys/:id/revoke', authorize('moderator'), async (req, res) => 
 
   try {
     const key = await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1
       const { rows } = await db.query(`
         UPDATE publish_keys SET revoked_at = COALESCE(revoked_at, NOW())
          WHERE id = $1
@@ -126,6 +128,7 @@ router.post('/api/keys/:id/rotate', authorize('moderator'), async (req, res) => 
 
   try {
     const rotated = await inTransaction(async db => {
+      await requireLiveKey(db, req.principal); // F-R1
       const { rows } = await db.query(
         'SELECT id, label, role, revoked_at FROM publish_keys WHERE id = $1 FOR UPDATE',
         [id]

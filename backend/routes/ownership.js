@@ -9,7 +9,7 @@
 const express = require('express');
 
 const { pool, inTransaction } = require('../db');
-const { authorize } = require('../auth');
+const { authorize, requireLiveKey } = require('../auth');
 const audit = require('../audit');
 const { httpError } = require('../http-error');
 
@@ -40,6 +40,8 @@ router.put('/api/scenarios/:id/owner', authorize('moderator'), async (req, res) 
 
   try {
     const moved = await inTransaction(async db => {
+      // F-R1: a moderator key revoked mid-request transfers nothing.
+      await requireLiveKey(db, req.principal);
       const { rows } = await db.query(
         'SELECT owner_key_id FROM scenarios WHERE id = $1 FOR UPDATE',
         [req.params.id]

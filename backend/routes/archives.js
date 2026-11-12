@@ -8,7 +8,7 @@ const express = require('express');
 const multer = require('multer');
 
 const { pool, inTransaction } = require('../db');
-const { authorize, canEditScenario } = require('../auth');
+const { authorize, canEditScenario, requireLiveKey } = require('../auth');
 const { limitAuthorUploads } = require('../rate-limits');
 const audit = require('../audit');
 const { MAX_ARCHIVE_BYTES } = require('../config');
@@ -82,6 +82,21 @@ function archiveRoute(tag, ingest) {
 const NO_FILE = { status: 400, body: { error: 'Очікується файл у полі "archive"' } };
 
 /**
+ * F-R1: the unlocked half of the revocation check. The transaction re-reads the key under
+ * a row lock and that is the answer that counts; this only keeps a key revoked mid-upload
+ * from storing bytes nobody will ever reference, which the garbage collector would then
+ * have to reclaim. No lock, so nothing can deadlock against `rotate`.
+ *
+ * @param {{keyId: number|null}} principal
+ * @returns {Promise<boolean>} true when the key row is gone or revoked
+ */
+async function revokedAlready(principal) {
+  if (principal.keyId == null) return false;
+  const { rows } = await pool.query('SELECT revoked_at FROM publish_keys WHERE id = $1', [principal.keyId]);
+  return !rows[0] || !!rows[0].revoked_at;
+}
+
+/**
  * POST /api/scenarios/:id/archive   (author who owns it, or moderator; multipart field "archive")
  *
  * Stores the upload as /scenarios/<sha256>.zip and records it in the scenario's version
@@ -106,6 +121,11 @@ router.post('/api/scenarios/:id/archive', authorize('author'), limitAuthorUpload
       throw httpError(409, 'Сценарій на перевірці: відкличте з перевірки, щоб завантажити новий архів');
     }
 
+    // F-R1: a key revoked while this body streamed gets nothing at all, not even bytes.
+    if (await revokedAlready(principal)) {
+      return { status: 403, body: { error: 'Ключ відкликано' } };
+    }
+
     // Validate before committing — a broken archive must never enter the store.
     const validated = await validateScenarioArchive(file, id);
     const { manifest, warnings } = validated;
@@ -116,6 +136,9 @@ router.post('/api/scenarios/:id/archive', authorize('author'), limitAuthorUpload
     console.log(`[ARCHIVE] ${id}: sha256=${result.sha256} ${result.deduplicated ? '(вже є в сховищі, дедуп)' : '(новий об\'єкт збережено)'}`);
 
     const installed = await inTransaction(async db => {
+      // F-R1: the whole body was streamed into this request, so a key revoked while it
+      // streamed must be caught here, under the transaction and before any scenario lock.
+      await requireLiveKey(db, principal);
       // Owner and status are read under the lock: a concurrent approve cannot let an
       // author's upload land as `current` on a row that has just become published.
       const { rows: [row] } = await db.query(
@@ -183,12 +206,20 @@ router.post('/api/scenarios/from-archive', authorize('author'), limitAuthorUploa
       throw httpError(409, `Сценарій з id "${id}" вже існує`);
     }
 
+    // F-R1: the same unlocked guard as the upload route, before the bytes are stored.
+    if (await revokedAlready(principal)) {
+      throw httpError(403, 'Ключ відкликано');
+    }
+
     const result = await commit();
     const description = typeof manifest.description === 'string' ? manifest.description : '';
 
     let installed;
     try {
       installed = await inTransaction(async db => {
+        // F-R1: the same guard as the upload route — the body is streamed, so this
+        // transaction must agree with a revocation that landed while it was read.
+        await requireLiveKey(db, principal);
         await db.query(`
           INSERT INTO scenarios
             (id, title, description, full_description, category, category_label, version, author, owner_key_id)
