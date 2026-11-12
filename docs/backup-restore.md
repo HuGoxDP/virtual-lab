@@ -32,6 +32,25 @@ on the host that runs the stack):
   and never deletes the newest one, even past the window (a schedule that never
   ran again must not leave an empty backup root).
 
+## Where the backup root is
+
+Two names, deliberately (OPS1, research F-4). Inside the container the backup
+always writes to `/backups`; the host directory it is mounted from is
+`BACKUP_HOST_DIR` (`./backup/out` when unset, an off-host mount on a real host).
+They used to be one name, which meant a host that set `BACKUP_DIR=/srv/...`
+moved the *mount source* and left the container writing to a path nothing was
+mounted on — every backup disappeared with the container, and the documented
+runs only worked because they passed `-v` by hand.
+
+Set the host directory and leave the container path alone:
+
+```bash
+BACKUP_HOST_DIR=/srv/virtual-lab-backups docker compose up -d
+```
+
+The deploy pipeline (OPS1) sets it, reads a backup back after it is taken, and
+restores it on a rollback.
+
 ## The procedure (run it on a scratch stack, never the live one)
 
 A scratch stack is the same images and configs with its own volumes, so

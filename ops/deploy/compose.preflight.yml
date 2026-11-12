@@ -1,0 +1,32 @@
+# ops/deploy/compose.preflight.yml
+#
+# The preflight stack: what the pipeline runs against a release *before* it
+# touches a server, on this machine, on port 8048. Same images, same compose
+# files, same smoke suite — the difference from the rehearsal is only the name,
+# so a preflight failure is about the release and not about the rehearsal's
+# induced migration.
+
+volumes:
+  virtual_lab_pgdata:
+    name: preflight_virtual_lab_pgdata
+  virtual_lab_archives:
+    name: preflight_virtual_lab_archives
+  virtual_lab_assets:
+    name: preflight_virtual_lab_assets
+  virtual_lab_lti:
+    name: preflight_virtual_lab_lti
+  virtual_lab_previews:
+    name: preflight_virtual_lab_previews
+
+services:
+
+  database:
+    container_name: PreflightDatabase
+  backend:
+    container_name: PreflightBackend
+  backup:
+    container_name: PreflightBackup
+
+  frontend:
+    container_name: PreflightFrontend
+    ports: !override ["8048:80"]

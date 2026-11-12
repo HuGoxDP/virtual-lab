@@ -1,0 +1,16 @@
+# ops/deploy/compose.release-editor.yml
+#
+# The editor half of a release: an image built in the editor's own repo (OPS1
+# phase 2, research F-8 — never through `docker-compose.editor.yml`'s build
+# context, which resolves against a sibling checkout that a production host does
+# not have).
+#
+#   ED_TAG=<commit sha> \
+#     docker compose -f docker-compose.yml -f ops/deploy/compose.editor.yml \
+#                    -f ops/deploy/compose.release-editor.yml up -d
+
+services:
+
+  editor:
+    image: webengine-editor/editor:${ED_TAG:?set ED_TAG to the editor release tag}
+    pull_policy: never

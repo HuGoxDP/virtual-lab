@@ -1,0 +1,39 @@
+# ops/deploy/compose.rehearsal.yml
+#
+# A rehearsal stack: the release's own compose, run on this machine with its own
+# names, volumes and port (8047), so the pipeline proves itself against Docker
+# it can tear down (OPS1, decision D-14). It is the same images and the same
+# remote scripts the production run uses — only the transport and the names
+# differ.
+#
+# The live stack pins its container names (VirtualLab*) and every volume a fixed
+# `name:`, so a second project on the same file set has to rename both; that is
+# what this file does, exactly as docker-compose.scratch.yml does for the
+# restore exercise.
+
+volumes:
+  virtual_lab_pgdata:
+    name: rehearsal_virtual_lab_pgdata
+  virtual_lab_archives:
+    name: rehearsal_virtual_lab_archives
+  virtual_lab_assets:
+    name: rehearsal_virtual_lab_assets
+  virtual_lab_lti:
+    name: rehearsal_virtual_lab_lti
+  virtual_lab_previews:
+    name: rehearsal_virtual_lab_previews
+
+services:
+
+  database:
+    container_name: RehearsalDatabase
+  backend:
+    container_name: RehearsalBackend
+  backup:
+    container_name: RehearsalBackup
+
+  # 8047: the rehearsal's port. The live catalog keeps 8044 and the engine's
+  # player host keeps its own, so nothing here collides with a running stack.
+  frontend:
+    container_name: RehearsalFrontend
+    ports: !override ["8047:80"]

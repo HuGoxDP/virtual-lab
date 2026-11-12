@@ -1,0 +1,34 @@
+# ops/deploy/compose.release.yml
+#
+# A release runs images, not builds (OPS1, decision D-2). The worker builds
+# `virtual-lab/<service>:<tag>` from the exact commit it is deploying, ships them
+# over SSH, and the host never runs a compiler.
+#
+#   VL_TAG=<commit sha> VL_COMMIT=<same> \
+#     docker compose -f docker-compose.yml -f ops/deploy/compose.release.yml up -d
+#
+# Both variables are required and have no default: a release that fell back to
+# `latest` would be a release nobody can name afterwards, which is the whole
+# point of tagging by content address.
+
+services:
+
+  database:
+    image: postgres:16-alpine
+    pull_policy: never
+
+  backend:
+    image: virtual-lab/backend:${VL_TAG:?set VL_TAG to the release tag}
+    pull_policy: never
+    environment:
+      # What `/api/health` reports as `build.commit`, so a smoke test can prove
+      # *which* release answers (research F-7). Nothing sets it without this file.
+      API_COMMIT: ${VL_COMMIT:?set VL_COMMIT to the release commit}
+
+  frontend:
+    image: virtual-lab/frontend:${VL_TAG:?set VL_TAG to the release tag}
+    pull_policy: never
+
+  backup:
+    image: virtual-lab/backup:${VL_TAG:?set VL_TAG to the release tag}
+    pull_policy: never
