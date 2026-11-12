@@ -55,9 +55,12 @@ router.get('/api/admin/dashboard', authorize('author'), async (req, res) => {
 router.get('/api/scenarios/:id/history', authorize('author'), requireScenarioEditor, async (req, res) => {
   try {
     // A moderator administers the catalog and keeps the full history of an id; every
-    // other principal sees only the live row's era (B6, DW-4.2).
+    // other principal sees only the live row's era (B6, DW-4.2). The era is anchored to the
+    // hand-over that made them the owner, when one happened (B6r1, F-R3) — the viewer's key
+    // is separate from the ownership filter, because a moderator here owns nothing.
     res.json(await audit.listActivity(pool, {
       scenarioId: req.params.id,
+      eraOwnerKeyId: req.principal.keyId ?? null,
       limit: HISTORY_LIMIT,
       sinceScenarioCreated: req.principal.role !== 'moderator',
     }));
