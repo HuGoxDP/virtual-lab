@@ -270,8 +270,16 @@ by `npm run import:assets`; proven end to end and exposed in the catalog, but op
   (P5b turns it on in production), unset everywhere else, so today's behaviour is unchanged.
   - **Keys** (`routes/keys.js`, moderator only): `GET /api/keys`, `POST /api/keys {label 1-100, role}` (the
     token is in that one response and nowhere else: only its SHA-256 is stored, it is never logged or
-    listed), `POST /api/keys/:id/revoke` (idempotent; keys are revoked, never deleted). `GET /api/auth/me` →
-    `{role, label, keyId}` for any valid principal. Each use moves `last_used_at`.
+    listed), `POST /api/keys/:id/revoke` (idempotent; keys are revoked, never deleted),
+    `POST /api/keys/:id/rotate` (a new token, same label and role, one transaction: every
+    `scenarios.owner_key_id` moves, the old key is revoked — `COALESCE` keeps an already-revoked key's
+    original `revoked_at`). `GET /api/auth/me` → `{role, label, keyId}` for any valid principal. Each use
+    moves `last_used_at`. The author contract for B7 is `docs/publish-api.md`.
+  - **A write re-reads the caller's key** (B6 phase 7, F-R1): `authorize` resolves the principal once, at the
+    start of a request, so a key revoked while a body streamed used to still write. `auth.requireLiveKey(db,
+    principal)` re-reads the row `FOR UPDATE` as the first statement of every write transaction and answers
+    403 `Ключ відкликано`; the key row is locked before any scenario row (the order `rotate` uses), so the two
+    cannot deadlock. `routes/archives.js` also reads the key without a lock before the store commits bytes.
   - **Failed authentication is limited per address** (`AUTH_FAILURES_PER_WINDOW`, 30 per 15 min → 429);
     only a presented-and-wrong credential counts and a valid key is checked first, so it is never limited.
     **Author uploads are limited per key** (`AUTHOR_UPLOADS_PER_HOUR`, 20 → 429; moderators and the
@@ -458,8 +466,8 @@ Consequences to respect:
 
 ```bash
 # Tests
-cd backend  && npm test           # 1487 tests; needs docker-compose.test.yml up
-cd frontend && npx ng test --no-watch   # 766 tests
+cd backend  && npm test           # 1658 tests; needs docker-compose.test.yml up
+cd frontend && npx ng test --no-watch   # 770 tests
 cd frontend && npm run test:scripts     # the CSP checker's own tests (node --test)
 cd frontend && npm run build && npm run check:csp   # built index.html: no import map, nonce or blob: script-src
 cd e2e      && npm test           # 141 Playwright tests (19 skip: streaming without an imported asset store, ktx2 without a KTX2 scenario, editor-csp without its stack);
