@@ -16,7 +16,7 @@ const request = require('supertest');
 const { app, pool } = require('../../server');
 const { failedAuth } = require('../../rate-limits');
 const { isAvailable, prepareSchema, truncateAll } = require('../helpers/db');
-const { idRoutes, PUBLIC_READ_ALLOWLIST } = require('../helpers/routes');
+const { idRoutes, routes, PUBLIC_READ_ALLOWLIST } = require('../helpers/routes');
 
 let available = false;
 let authorA, authorB;
@@ -101,4 +101,16 @@ test('B6.2 the enumeration covers at least what the route files declare', () => 
   // A route added later is enumerated automatically; the number here is the
   // floor this branch starts from, and it is recorded so a fall is noticed.
   assert.ok(idRoutes(app).length >= 26, `only ${idRoutes(app).length} :id routes`);
+});
+
+test('B6.2 the public-read allow-list names only routes the app actually serves', () => {
+  // F-R5 of the B6 review: the list had three entries no route answers (`GET /api/scenarios/:id`,
+  // `GET /play/:id` — an Angular client route, not a server one — and
+  // `GET /api/scenarios/:id/manifest`). A superset is harmless today and a hazard later: the
+  // sweep skips whatever is on it, so a dead name hides a future route that reuses the path.
+  // `routes(app)` strips the `/^` mount prefix, so a path reads as it is called.
+  const served = routes(app).flatMap(r => r.methods.map(m => `${m} ${r.path}`));
+  for (const entry of PUBLIC_READ_ALLOWLIST) {
+    assert.ok(served.includes(entry), `${entry} is on the allow-list but the app does not serve it`);
+  }
 });

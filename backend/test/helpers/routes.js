@@ -48,16 +48,19 @@ function methodPathList(app) {
 }
 
 /**
- * Routes an anonymous caller may read (the catalog and a scenario page).
- * Everything else with an `:id` must refuse author B with 403 or 404.
+ * Routes an anonymous caller may read. Everything else with an `:id` must refuse author B
+ * with 403 or 404.
+ *
+ * The sweep asserts every entry here is actually served (B6r3): the list is the contract
+ * for "a 2xx is allowed here", so a name the app no longer answers — or a public route that
+ * was later guarded — has to be noticed rather than sit there and skip a future route.
+ * `/play/:id` is deliberately not in this list: it is an Angular client route
+ * (`frontend/src/app/app.routes.ts`), not a server route, so the server never sees it.
  */
 const PUBLIC_READ_ALLOWLIST = [
   'GET /api/catalog',
   'GET /api/catalog/:id',
-  'GET /api/scenarios/:id',
   'GET /api/health',
-  'GET /play/:id',
-  'GET /api/scenarios/:id/manifest',
 ];
 
 /**
