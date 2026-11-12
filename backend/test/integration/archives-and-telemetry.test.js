@@ -17,7 +17,7 @@ process.env.ARCHIVE_ROOT = ARCHIVE_ROOT;
 
 const { app, pool } = require('../../server');
 const storage = require('../../storage');
-const { isAvailable, prepareSchema, truncateAll, seedScenarios } = require('../helpers/db');
+const { isAvailable, prepareSchema, truncateAll, seedScenarios, setStatus } = require('../helpers/db');
 const { validArchive, invalidArchives } = require('../helpers/fixtures');
 
 const AUTH = { Authorization: `Bearer ${process.env.ADMIN_TOKEN}` };
@@ -398,6 +398,22 @@ test('telemetry input handling', async t => {
     await request(app).post('/api/telemetry/session')
       .send({ scenarioId: 'nope' })
       .expect(404);
+  });
+
+  await t.test('a hidden scenario is refused, not enumerated', async () => {
+    // B6r2 (F-R4): the id check is a public answer, so an existing but unpublished slug
+    // must answer the same 404 as a bogus one. 201 here would let an anonymous caller
+    // walk the hidden catalog by id.
+    await setStatus(pool, 'solar-system', 'draft');
+
+    await request(app).post('/api/telemetry/session')
+      .send({ scenarioId: 'solar-system' })
+      .expect(404);
+
+    await setStatus(pool, 'solar-system', 'published');
+    await request(app).post('/api/telemetry/session')
+      .send({ scenarioId: 'solar-system' })
+      .expect(201);
   });
 
   await t.test('a missing scenarioId is refused', async () => {
