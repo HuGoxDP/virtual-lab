@@ -107,7 +107,12 @@ test('178. the list never includes a token or its hash', async t => {
   assert.ok(!body.includes(made.body.token), 'no token');
   assert.ok(!/token|hash/i.test(body), 'no token or hash field at all');
   const item = list.body.keys.find(k => k.id === made.body.id);
-  assert.deepEqual(Object.keys(item).sort(), ['createdAt', 'id', 'label', 'lastUsedAt', 'revokedAt', 'role']);
+  // B6: `scenarioCount` joined the list (the access page shows what a key owns). What this
+  // pins is the field set itself: anything that reads a credential rather than the metadata
+  // a moderator needs changes the columns and fails here.
+  assert.deepEqual(Object.keys(item).sort(),
+    ['createdAt', 'id', 'label', 'lastUsedAt', 'revokedAt', 'role', 'scenarioCount']);
+  assert.equal(item.scenarioCount, 0, 'a fresh key owns nothing');
 });
 
 test('178. captured logs never contain a token', async t => {
