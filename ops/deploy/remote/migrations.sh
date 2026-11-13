@@ -7,9 +7,11 @@ set -euo pipefail
 
 DEPLOY_PATH="$1"
 PROJECT="$2"
+COMPOSE_FILES="$3"
 
 cd "$DEPLOY_PATH/releases/current" 2>/dev/null || { echo "migrations_error=no-current-release" >&2; exit 1; }
-SET=$(docker compose --project-name "$PROJECT" --env-file "$DEPLOY_PATH/shared/.env" \
+SET=$(COMPOSE_FILE="$COMPOSE_FILES" \
+  docker compose --project-name "$PROJECT" --env-file "$DEPLOY_PATH/shared/.env" \
   exec -T database \
   psql -U "$(grep -m1 '^DB_USER=' "$DEPLOY_PATH/shared/.env" | cut -d= -f2)" \
        -d "$(grep -m1 '^DB_NAME=' "$DEPLOY_PATH/shared/.env" | cut -d= -f2)" \

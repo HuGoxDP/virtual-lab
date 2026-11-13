@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { deployWindow } from './window.mjs';
 import { needsDbRestore } from './rollback.mjs';
-import { composeFiles, releaseId } from './release.mjs';
+import { composeFiles as releaseComposeFiles, releaseId } from './release.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REMOTE = path.resolve(HERE, '../remote');
@@ -63,6 +63,18 @@ const refusal = (failed, steps, exitCode, extra = {}) => ({
 });
 
 /**
+ * The compose file list for a release, as the single string every compose-touching
+ * script receives.
+ *
+ * @param {{composeFiles?: string[]|string, extra?: string[], editor?: boolean}} context
+ * @returns {string} comma-separated, in order.
+ */
+function composeFilesFor(context) {
+  const files = context.composeFiles ?? releaseComposeFiles({ editor: context.editor === true, extra: context.extra ?? [] });
+  return Array.isArray(files) ? files.join(',') : String(files);
+}
+
+/**
  * The deploy sequence.
  *
  * @param {object} context
@@ -78,6 +90,9 @@ const refusal = (failed, steps, exitCode, extra = {}) => ({
 export async function deployPlatform(context) {
   const { transport, config, commits, images, locks = [], log = null, now = () => new Date(), red } = context;
   const done = [];
+  // The compose file list every step that talks to compose needs, as one string the
+  // scripts pass to `COMPOSE_FILE` (a path in a value cannot become a flag).
+  const composeFiles = composeFilesFor(context);
 
   // D-8, first gate: the teaching-hours window. `inspect` and a dry run are
   // allowed at any time, which is why this is the caller's to ask about.
@@ -94,7 +109,7 @@ export async function deployPlatform(context) {
   done.push(prepare.name);
   if (!prepare.ok) return refusal(prepare.name, done, 4);
 
-  const backup = await step('backup', transport, [config.DEPLOY_PATH, 'virtual-lab'], { locks, log });
+  const backup = await step('backup', transport, [config.DEPLOY_PATH, 'virtual-lab', composeFiles], { locks, log });
   done.push(backup.name);
   if (!backup.ok) return refusal(backup.name, done, 4);
 
@@ -104,7 +119,7 @@ export async function deployPlatform(context) {
     return refusal(verifyBackup.name, done, 4, { reason: 'the backup did not read back' });
   }
 
-  const before = await step('migrations', transport, [config.DEPLOY_PATH, 'virtual-lab'], { locks, log });
+  const before = await step('migrations', transport, [config.DEPLOY_PATH, 'virtual-lab', composeFiles], { locks, log });
   done.push(before.name);
   if (!before.ok) return refusal(before.name, done, 4);
 
@@ -118,7 +133,7 @@ export async function deployPlatform(context) {
   done.push(upload.name);
   if (!upload.ok) return refusal(upload.name, done, 4);
 
-  const up = await step('up', transport, [config.DEPLOY_PATH, release, 'virtual-lab'], { locks, log });
+  const up = await step('up', transport, [config.DEPLOY_PATH, release, 'virtual-lab', composeFiles], { locks, log });
   done.push(up.name);
   if (!up.ok) return refusal(up.name, done, 5);
 
@@ -128,7 +143,7 @@ export async function deployPlatform(context) {
   done.push(waitHealthy.name);
   if (!waitHealthy.ok) return refusal(waitHealthy.name, done, 5);
 
-  const after = await step('migrations', transport, [config.DEPLOY_PATH, 'virtual-lab'], { locks, log });
+  const after = await step('migrations', transport, [config.DEPLOY_PATH, 'virtual-lab', composeFiles], { locks, log });
   done.push(after.name);
 
   if (red !== 'smoke') {
@@ -168,17 +183,18 @@ export async function rollbackRelease(context) {
   const { transport, config, previousRelease, backupName, needsDb = true, redPrevious = false } = context;
   const { locks = [], log = null } = context;
   const done = [];
+  const composeFiles = composeFilesFor(context);
 
-  const stop = await step('stop', transport, [config.DEPLOY_PATH, 'virtual-lab'], { locks, log });
+  const stop = await step('stop', transport, [config.DEPLOY_PATH, 'virtual-lab', previousRelease, composeFiles], { locks, log });
   done.push(stop.name);
 
   if (needsDb) {
-    const restore = await step('restore-db', transport, [config.DEPLOY_PATH, backupName, 'virtual-lab'], { locks, log });
+    const restore = await step('restore-db', transport, [config.DEPLOY_PATH, backupName, 'virtual-lab', composeFiles], { locks, log });
     done.push(restore.name);
     if (!restore.ok) return refusal(restore.name, done, 11);
   }
 
-  const up = await step('up', transport, [config.DEPLOY_PATH, previousRelease, 'virtual-lab'], { locks, log });
+  const up = await step('up', transport, [config.DEPLOY_PATH, previousRelease, 'virtual-lab', composeFiles], { locks, log });
   done.push(up.name);
   if (!up.ok) return refusal(up.name, done, 11);
 
@@ -198,5 +214,5 @@ export const RELEASE_ENV = 'ops/deploy/release.env';
  * env beside them. They travel together, which is why one function names both.
  */
 export function bundleManifest({ editor = false, extra = [] }) {
-  return { compose: composeFiles({ editor, extra }), releaseEnv: RELEASE_ENV };
+  return { compose: releaseComposeFiles({ editor, extra }), releaseEnv: RELEASE_ENV };
 }

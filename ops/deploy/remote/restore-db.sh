@@ -8,6 +8,7 @@ set -euo pipefail
 DEPLOY_PATH="$1"
 BACKUP_NAME="$2"
 PROJECT="$3"
+COMPOSE_FILES="$4"
 
 BACKUP_PATH="$DEPLOY_PATH/backups/$BACKUP_NAME"
 [ -d "$BACKUP_PATH" ] || { echo "error=no-backup" >&2; exit 1; }
@@ -16,6 +17,7 @@ if [ ! -f "$BACKUP_PATH/verified" ]; then
   exit 1
 fi
 cd "$DEPLOY_PATH/releases/current" || { echo "error=no-current-release" >&2; exit 1; }
+COMPOSE_FILE="$COMPOSE_FILES" \
 docker compose --project-name "$PROJECT" \
   --env-file "$DEPLOY_PATH/shared/.env" \
   run --rm --entrypoint node \

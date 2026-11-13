@@ -6,16 +6,18 @@ set -euo pipefail
 
 DEPLOY_PATH="$1"
 PROJECT="$2"
-shift 2
-RELEASE_ID="${1:-}"
+RELEASE_ID="$3"
+COMPOSE_FILES="$4"
 
-cd "$DEPLOY_PATH/releases/${RELEASE_ID:-current}" 2>/dev/null || {
+RELEASE_DIR="$DEPLOY_PATH/releases/${RELEASE_ID:-current}"
+if [ ! -d "$RELEASE_DIR" ]; then
   # No release directory: the stack cannot be running either.
   echo "stopped=0"
   echo "stop_ok=1"
   exit 0
-}
-docker compose --project-name "$PROJECT" \
+fi
+cd "$RELEASE_DIR"
+COMPOSE_FILE="$COMPOSE_FILES" docker compose --project-name "$PROJECT" \
   --env-file "$DEPLOY_PATH/shared/.env" \
   down --remove-orphans >/dev/null 2>&1 || true
 echo "stopped=1"
