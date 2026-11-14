@@ -230,18 +230,27 @@ async function writeState(transport, deployPath, record, { locks = [], log = nul
  */
 function shipImages(missing, transport) {
   return Promise.all(missing.map(name => new Promise((resolve, reject) => {
+    // `docker save` of a name the local Docker does not have fails here, and its
+    // stderr is the only thing that says which name — so it is carried to the
+    // refusal rather than thrown away.
+    const stderr = [];
     const child = spawn('docker', ['save', name], { stdio: ['pipe', 'pipe', 'pipe'] });
     const gz = createGzip();
     const chunks = [];
     gz.on('data', chunk => chunks.push(chunk));
     gz.on('end', () => {
       transport.pipeIn(Readable.from(chunks), 'gunzip | docker load')
-        .then(answer => resolve({ name, code: answer.code }), reject);
+        .then(answer => resolve({
+          name, code: answer.code, stderr: Buffer.concat(stderr).toString('utf8'),
+        }), reject);
     });
-    gz.on('error', reject);
+    gz.on('error', () => reject(new Error(`gzip of ${name} failed`)));
     child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code !== 0) resolve({ name, code, stderr: Buffer.concat(stderr).toString('utf8') });
+    });
     child.stdout.pipe(gz);
-    child.stderr.on('data', () => {});
+    child.stderr.on('data', chunk => stderr.push(chunk));
   })));
 }
 
@@ -298,7 +307,11 @@ export async function deployPlatform(context) {
     const shipped = await shipImages(missing, transport);
     done.push('ship');
     const failed = shipped.find(part => part.code !== 0);
-    if (failed) return refusal('ship', done, 4, { reason: `shipping ${failed.name} failed` });
+    if (failed) {
+      return refusal('ship', done, 4, {
+        reason: `shipping ${failed.name} failed: ${failed.stderr?.trim() || `docker save exited ${failed.code}`}`,
+      });
+    }
   }
 
   // The bundle is the release: if it was never written, there is nothing to

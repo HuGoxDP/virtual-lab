@@ -202,7 +202,10 @@ export async function runDeploy(options) {
     }
     const result = await deployPlatform(context);
     if (!result.ok) {
-      log.warn(`${command} ${target} stopped at ${result.failed} (exit ${result.exitCode})`);
+      // The reason is part of the refusal: a log line that names the step without
+      // saying why is a line nobody can act on (OPS1 phase 5).
+      log.warn(`${command} ${target} stopped at ${result.failed} (exit ${result.exitCode})`
+        + `${result.reason ? `: ${result.reason}` : ''}`);
       if (result.rollback) {
         log.info('rollback: bringing the previous release back');
         const back = await rollbackRelease({ ...context, ...result });
