@@ -354,8 +354,56 @@ function handTree(destination) {
   });
   if (archive.status !== 0) throw new Error('git archive of the rehearsal tree failed');
   mkdirSync(destination, { recursive: true });
-  const unpack = run('tar', ['-xzf', '-', '-C', destination], { input: archive.stdout, maxBuffer: 1 << 26 });
+  const unpack = run('tar', ['-xzf', '-C', destination], { input: archive.stdout, maxBuffer: 1 << 26 });
   if (unpack.status !== 0) throw new Error(unpack.stderr);
+}
+
+/**
+ * The images a rehearsal run needs, built from the commits it deploys — with the
+ * pipeline's own `buildCommands`, so the rehearsal proves the build description
+ * too.
+ *
+ * The frontend and backup images are identical across the four commits, so they
+ * are built once and tagged; the *backend* differs in C (a migration file the
+ * database applies at start) and in D (a process that exits), so it is built per
+ * commit — which is what makes R-4 and R-5 real rather than simulated. A release
+ * is identified by its tag, and `/api/health` reports the commit `release.env`
+ * pins, so re-tagging the unchanged images is honest: the release id, the commit
+ * and the behaviour all stay what the deploy says they are.
+ *
+ * @param {{A: string, B: string, C: string, D: string}} commits
+ */
+async function buildImages(commits) {
+  const { buildCommands } = await import('./lib/build.mjs');
+  const started = Date.now();
+  const build = (service, sha) => {
+    // The image is built from the tree of that commit, so the worktree is moved
+    // there first: a build from the branch's HEAD would build B four times and
+    // call it A, C and D.
+    sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', sha]);
+    const command = buildCommands({ vlRepo: VL_REPO, edRepo: '', vl: sha, ed: null, editor: false })
+      .find(c => c.service === service);
+    const answer = run('docker', command.argv, { cwd: VL_REPO, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+    if (answer.status !== 0) {
+      throw new Error(`building ${service} at ${SHORT_(sha)} failed: ${answer.stderr.slice(-400)}`);
+    }
+  };
+  const tag = (service, from, to) => {
+    const answer = run('docker', ['tag', `virtual-lab/${service}:${from}`, `virtual-lab/${service}:${to}`]);
+    if (answer.status !== 0) throw new Error(`tagging ${service} ${SHORT_(from)} → ${SHORT_(to)} failed`);
+  };
+  for (const commit of [commits.A, commits.B, commits.C, commits.D]) build('backend', commit);
+  // The frontend and backup images are the same in all four, so one build of each
+  // (at A) is tagged for the rest.
+  build('frontend', commits.A);
+  build('backup', commits.A);
+  for (const commit of [commits.B, commits.C, commits.D]) {
+    tag('frontend', commits.A, commit);
+    tag('backup', commits.A, commit);
+  }
+  sh('git', ['-C', VL_REPO, 'switch', '-q', SCRATCH_BRANCH]);
+  process.stdout.write(`images: backend x4, frontend and backup tagged from ${SHORT_(commits.A)} `
+    + `(${((Date.now() - started) / 1000).toFixed(0)}s)\n`);
 }
 
 // ── the run ───────────────────────────────────────────────────────────────────
@@ -435,10 +483,16 @@ async function main(argv = process.argv.slice(2)) {
     const commits = scratchCommits(base);
     process.stdout.write(`rehearsal: A=${SHORT_(commits.A)} B=${SHORT_(commits.B)} `
       + `C=${SHORT_(commits.C)} D=${SHORT_(commits.D)}\n`);
+    // The images the deploys run: built from the very commits they deploy, with
+    // the pipeline's own build description.
+    await buildImages(commits);
 
     // R-1 — a fresh install on an empty root. The backup is `none`, and the record
     // says so, which is what the rollback's restore decision reads.
     if (want('R-1')) {
+      // The release is cut from A, so the worktree is at A: the bundle the deploy
+      // uploads is read from there.
+      sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.A]);
       await recorder.row('R-1 deploy A on an empty root', 0, () => deployCommand(
         { envFile, localRoot }, 'deploy',
       ).status);
