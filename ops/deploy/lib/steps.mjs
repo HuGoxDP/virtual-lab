@@ -225,33 +225,48 @@ async function writeState(transport, deployPath, record, { locks = [], log = nul
  * gzipped, piped into the host's `docker load`. No registry is involved, so a
  * release can be pulled back out of a cache nobody controls.
  *
+ * `save` is injected so a test can prove the plumbing — which images are shipped,
+ * what command they travel through — without a local Docker holding them.
+ *
  * @param {string[]} missing — the image names to ship.
  * @param {{pipeIn: Function}} transport
+ * @param {(name: string) => Promise<Readable>} [save]
  */
-function shipImages(missing, transport) {
-  return Promise.all(missing.map(name => new Promise((resolve, reject) => {
-    // `docker save` of a name the local Docker does not have fails here, and its
-    // stderr is the only thing that says which name — so it is carried to the
-    // refusal rather than thrown away.
+function shipImages(missing, transport, { save = defaultSave } = {}) {
+  return Promise.all(missing.map(async name => {
+    let stream;
+    try {
+      stream = await save(name);
+    } catch (err) {
+      return { name, code: 1, stderr: String(err.message ?? err) };
+    }
+    const answer = await transport.pipeIn(stream, 'gunzip | docker load');
+    return { name, code: answer.code, stderr: '' };
+  }));
+}
+
+/**
+ * The real ship: `docker save` on this side, gzipped. A name the local Docker
+ * does not have rejects, and the daemon's message is carried to the refusal —
+ * "which image was missing" is the one thing a refusal has to say.
+ */
+function defaultSave(name) {
+  return new Promise((resolve, reject) => {
     const stderr = [];
     const child = spawn('docker', ['save', name], { stdio: ['pipe', 'pipe', 'pipe'] });
     const gz = createGzip();
     const chunks = [];
     gz.on('data', chunk => chunks.push(chunk));
-    gz.on('end', () => {
-      transport.pipeIn(Readable.from(chunks), 'gunzip | docker load')
-        .then(answer => resolve({
-          name, code: answer.code, stderr: Buffer.concat(stderr).toString('utf8'),
-        }), reject);
-    });
     gz.on('error', () => reject(new Error(`gzip of ${name} failed`)));
     child.on('error', reject);
     child.on('exit', (code) => {
-      if (code !== 0) resolve({ name, code, stderr: Buffer.concat(stderr).toString('utf8') });
+      if (code !== 0) reject(new Error(Buffer.concat(stderr).toString('utf8').trim()
+        || `docker save ${name} exited ${code}`));
     });
+    gz.on('end', () => resolve(Readable.from(chunks)));
     child.stdout.pipe(gz);
     child.stderr.on('data', chunk => stderr.push(chunk));
-  })));
+  });
 }
 
 /**
@@ -278,6 +293,10 @@ function shipImages(missing, transport) {
 export async function deployPlatform(context) {
   const { transport, config, commits, images, locks = [], log = null, now = () => new Date(), red } = context;
   const done = [];
+  // A dry run contacts nothing, so the steps that would move bytes (the image ship
+  // and the bundle upload) are *described* instead of performed — the one thing a
+  // dry run can do for them.
+  const dry = transport.kind === 'dry-run';
   // The compose file list every step that talks to compose needs, as one string the
   // scripts pass to `COMPOSE_FILE` (a path in a value cannot become a flag).
   const composeFiles = composeFilesFor(context);
@@ -302,15 +321,21 @@ export async function deployPlatform(context) {
   if (!ship.ok) return refusal(ship.name, done, 4);
   const missing = images.filter((name, i) => ship[`image_${i}_have`] !== 'true');
   if (missing.length > 0) {
-    // The worker ships what the host lacks; a release is images plus a compose
-    // list, and neither half alone is a release (decision D-2).
-    const shipped = await shipImages(missing, transport);
-    done.push('ship');
-    const failed = shipped.find(part => part.code !== 0);
-    if (failed) {
-      return refusal('ship', done, 4, {
-        reason: `shipping ${failed.name} failed: ${failed.stderr?.trim() || `docker save exited ${failed.code}`}`,
-      });
+    if (dry) {
+      // A dry run describes the ship it would make: the images are the host's to
+      // have, and this machine's Docker is not the host's (it contacts nothing).
+      log?.info(`ship → would ship ${missing.join(', ')} through gunzip | docker load`);
+    } else {
+      // The worker ships what the host lacks; a release is images plus a compose
+      // list, and neither half alone is a release (decision D-2).
+      const shipped = await shipImages(missing, transport, { save: context.save });
+      done.push('ship');
+      const failed = shipped.find(part => part.code !== 0);
+      if (failed) {
+        return refusal('ship', done, 4, {
+          reason: `shipping ${failed.name} failed: ${failed.stderr?.trim() || `docker save exited ${failed.code}`}`,
+        });
+      }
     }
   }
 
@@ -319,7 +344,6 @@ export async function deployPlatform(context) {
   // stream that cannot be opened. A dry run has nothing on disk to stream, so it
   // *describes* the upload instead (the one step it cannot perform for real).
   const bundlePath = context.bundlePath;
-  const dry = transport.kind === 'dry-run';
   if (!dry && (!bundlePath || !existsSync(bundlePath))) {
     return refusal('upload-bundle', done, 4, { reason: 'the release bundle is missing' });
   }
