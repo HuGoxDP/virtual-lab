@@ -9,6 +9,7 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { Readable } from 'node:stream';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -184,14 +185,33 @@ describe('DW-4.1 the happy deploy runs the steps in the gate order', () => {
 
   it('the images the host lacks are shipped, the rest are not', async () => {
     const transport = transportFor({ images: [true, false, false] });
-    const result = await deployPlatform(contextFor(transport));
+    // The ship is injected: a real `docker save` would need the images to exist
+    // locally, and what is under test here is *which* images travel and through
+    // what command — not Docker's own behaviour.
+    const saved = [];
+    const result = await deployPlatform(contextFor(transport, {
+      save: async name => { saved.push(name); return Readable.from([`image ${name}`]); },
+    }));
     assert.ok(result.ok, JSON.stringify(result));
+    assert.deepEqual(saved, [IMAGES[1], IMAGES[2]], 'the two missing images, in order');
     const piped = transport.calls.filter(c => c.script === 'pipeIn');
     const loads = piped.filter(p => p.fixedCommand === 'gunzip | docker load');
     assert.equal(loads.length, 2, 'the two missing images are shipped');
     const upload = piped.find(p => p.fixedCommand !== 'gunzip | docker load');
     assert.ok(upload, 'the bundle is streamed, not named as a path');
     assert.deepEqual(upload.args, [path.join(CFG.DEPLOY_PATH, 'releases'), RELEASE_A]);
+  });
+
+  it('an image the local Docker does not have refuses the ship, naming it', async () => {
+    const transport = transportFor({ images: [false, false, false] });
+    const result = await deployPlatform(contextFor(transport, {
+      save: async () => { throw new Error('Error response from daemon: No such image: virtual-lab/backend:t'); },
+    }));
+    assert.equal(result.failed, 'ship');
+    assert.equal(result.exitCode, 4);
+    assert.match(result.reason, /No such image: virtual-lab\/backend:t/);
+    const names = transport.calls.map(callName);
+    assert.equal(names.includes('up.sh'), false, 'nothing was brought up');
   });
 
   it('and nothing after `up` runs when an earlier step fails', async () => {
