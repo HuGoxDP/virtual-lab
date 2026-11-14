@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { basename } from 'node:path';
-import { shqArgs } from './shq.mjs';
+import { shq, shqArgs } from './shq.mjs';
 
 /**
  * Runs a child and resolves with its exit status and output.
@@ -21,10 +21,11 @@ import { shqArgs } from './shq.mjs';
  * @param {string} command the executable.
  * @param {string[]} argv
  * @param {import('node:stream').Readable} [stdin]
+ * @param {NodeJS.ProcessEnv} [env] — extra environment for the child.
  */
-function runChild(command, argv, stdin) {
+function runChild(command, argv, stdin, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(command, argv, { stdio: ['pipe', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : undefined });
     const stdout = [];
     const stderr = [];
     child.stdout.on('data', chunk => stdout.push(chunk));
@@ -39,6 +40,19 @@ function runChild(command, argv, stdin) {
     else child.stdin.end();
   });
 }
+
+/**
+ * On Windows the local transport runs the same scripts through Git Bash, whose
+ * MSYS layer rewrites any argument that *looks* like a path before it reaches a
+ * Windows binary — `/c/Users/...` became `C:/Program Files/Git/...`, and a mount
+ * source pointed at the Git installation instead of the host's disk. Setting this
+ * once here fixes every `docker` call the scripts make (Docker Desktop accepts
+ * the MSYS form itself).
+ *
+ * It is deliberately an empty object on every other platform: nothing changes
+ * where the problem does not exist.
+ */
+const MSYS_GUARD = process.platform === 'win32' ? { MSYS_NO_PATHCONV: '1' } : {};
 
 /** The ssh options that make a deploy unattendable and host-key-strict (D-13). */
 function sshOptions(cfg, knownHostsPath) {
@@ -71,6 +85,13 @@ export function sshTransport(cfg, knownHostsPath) {
 
   return {
     kind: 'ssh',
+    /**
+     * The path list separator of the machine the scripts run on: a Linux host
+     * joins `COMPOSE_FILE` entries with `:`, a Windows one with `;` (compose-go
+     * splits on the OS separator). The pipeline asks the transport, because only
+     * the transport knows where the script runs.
+     */
+    listSeparator: ':',
     /** Runs `scriptFile` on the host with `args` as `$1…$n`. */
     async run(scriptFile, args = []) {
       const script = await readFile(scriptFile, 'utf8');
@@ -78,10 +99,12 @@ export function sshTransport(cfg, knownHostsPath) {
     },
     /**
      * Streams a tarball into the host's `gunzip | docker load` (decision D-2).
-     * `fixedCommand` is the only string ever sent as a command.
+     * `fixedCommand` is the only string ever sent as a command; the values it
+     * needs travel as quoted positional arguments after `_`.
      */
-    async pipeIn(readable, fixedCommand = 'gunzip | docker load') {
-      return runChild('ssh', [...base, fixedCommand], readable);
+    async pipeIn(readable, fixedCommand = 'gunzip | docker load', args = []) {
+      const command = ['bash', '-c', fixedCommand, '_', ...shqArgs(args)].join(' ');
+      return runChild('ssh', [...base, command], readable);
     },
     describe: () => `ssh ${target}`,
   };
@@ -91,16 +114,33 @@ export function sshTransport(cfg, knownHostsPath) {
 export function localTransport() {
   return {
     kind: 'local',
+    // `;` on this machine (see MSYS_GUARD): compose splits `COMPOSE_FILE` on the
+    // OS separator, and a colon-joined list is one long invalid path here.
+    listSeparator: process.platform === 'win32' ? ';' : ':',
     async run(scriptFile, args = []) {
       const script = await readFile(scriptFile, 'utf8');
-      return runChild('bash', ['-s', '--', ...shqArgs(args)], Readable.from([script]));
+      return runChild('bash', ['-s', '--', ...shqArgs(args)], Readable.from([script]), MSYS_GUARD);
     },
-    async pipeIn(readable, fixedCommand = 'gunzip | docker load') {
-      return runChild('bash', ['-c', fixedCommand], readable);
+    async pipeIn(readable, fixedCommand = 'gunzip | docker load', args = []) {
+      return runChild('bash', ['-c', fixedCommand, '_', ...shqArgs(args)], readable, MSYS_GUARD);
     },
     describe: () => 'local (this machine)',
   };
 }
+
+/**
+ * The fixed command that unpacks a streamed release bundle into `$1/$2.tmp` and
+ * renames it when complete. It is `remote/upload-bundle.sh` as one line, so both
+ * transports run *the same procedure* rather than a local shortcut — which is
+ * what makes a rehearsal a proof of the production upload (D-14).
+ *
+ * `$1` and `$2` are inside single quotes on the way through the shell, so they
+ * reach `bash -c` as positional parameters and never as a substituted command
+ * (D-13).
+ */
+export const UPLOAD_BUNDLE_COMMAND = 'set -euo pipefail; D="$1"; I="$2"; T="$D/$I.tmp"; ' +
+  'rm -rf "$T"; mkdir -p "$T"; tar -xzf - -C "$T"; mv "$T" "$D/$I"; ' +
+  'echo "release_dir=$D/$I"; echo "upload_ok=1"';
 
 /**
  * What each script would answer on a real run, so a dry run walks the whole
@@ -114,7 +154,9 @@ const DRY_RUN_ANSWERS = {
   'migrations.sh': 'migrations=<stub>\nmigrations_ok=1\n',
   'upload-bundle.sh': 'release_dir=<stub>\nupload_ok=1\n',
   'wait-healthy.sh': 'healthy=1\nchecks=0\nwait_ok=1\n',
-  'state.sh': 'state_ok=1\n',
+  // A dry run has no release record, which is the fresh-install path — the one
+  // sequence a first deploy cannot prove on a host that already runs something.
+  'state.sh': '{"current":null,"previous":null,"history":[]}\n',
   'prune.sh': 'prune_ok=1\n',
   'stop.sh': 'stopped=1\nstop_ok=1\n',
   'restore-db.sh': 'restored=<stub>\nrestore_ok=1\n',
@@ -124,13 +166,15 @@ const DRY_RUN_ANSWERS = {
 export function dryRunTransport(print) {
   return {
     kind: 'dry-run',
+    // A dry run describes a host, and the host is Linux.
+    listSeparator: ':',
     async run(scriptFile, args = []) {
       print(`would run ${scriptFile} :: ${args.map(a => JSON.stringify(a)).join(' ')}`);
       const name = basename(scriptFile);
       return { code: 0, stdout: DRY_RUN_ANSWERS[name] ?? 'ok=1\n', stderr: '' };
     },
-    async pipeIn(readable, fixedCommand) {
-      print(`would stream images through :: ${fixedCommand}`);
+    async pipeIn(readable, fixedCommand, args = []) {
+      print(`would stream images through :: ${fixedCommand} :: ${shqArgs(args).join(' ')}`);
       return { code: 0, stdout: '', stderr: '' };
     },
     describe: () => 'dry-run (nothing contacted)',
@@ -147,6 +191,8 @@ export function recordingTransport(answers = []) {
   return {
     kind: 'recording',
     calls,
+    // The tests describe a Linux host.
+    listSeparator: ':',
     async run(scriptFile, args = []) {
       calls.push({ script: scriptFile, args });
       const answer = typeof answers === 'function'
@@ -154,8 +200,8 @@ export function recordingTransport(answers = []) {
         : (answers[calls.length - 1] ?? {});
       return { code: answer.code ?? 0, stdout: answer.stdout ?? '', stderr: answer.stderr ?? '' };
     },
-    async pipeIn(readable, fixedCommand) {
-      calls.push({ script: 'pipeIn', fixedCommand });
+    async pipeIn(readable, fixedCommand, args = []) {
+      calls.push({ script: 'pipeIn', fixedCommand, args });
       return { code: 0, stdout: '', stderr: '' };
     },
     describe: () => 'recording',

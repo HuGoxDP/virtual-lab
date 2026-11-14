@@ -25,3 +25,7 @@ fi
 echo "verified=1"
 echo "tables=$TABLES"
 echo "verify_ok=1"
+# The marker `restore-db.sh` refuses to work without (D-9): it is written last,
+# so a backup that fails any check above is never restorable — an unverified dump
+# is not a rollback target, and restoring one would trade an outage for data loss.
+: > "$BACKUP_PATH/verified"

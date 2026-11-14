@@ -10,10 +10,16 @@ KEEP="$1"; shift
 apply=false
 if [ "$MODE" = "apply" ]; then apply=true; fi
 
+# The keep list is comma-separated (`keepForPrune` names the ids), and an unquoted
+# `$KEEP` would split on nothing: commas are not IFS, so `vl-a,vl-b` would be one
+# unkeepable word and every release's images would look prunable.
+IFS=',' read -ra KEEP_IDS <<< "$KEEP"
+
 removed=0
 for name in "$@"; do
   skip=false
-  for keep in $KEEP; do
+  for keep in "${KEEP_IDS[@]}"; do
+    [ -z "$keep" ] && continue
     if [ "$name" = "$keep" ]; then skip=true; break; fi
   done
   if [ "$skip" = true ]; then echo "keep=$name"; continue; fi
