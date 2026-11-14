@@ -198,12 +198,53 @@ describe('DW-4.1 the happy deploy runs the steps in the gate order', () => {
     assert.equal(names.includes('wait-healthy.sh'), false);
   });
 
-  it('a failure after `up` is exit 5 and the rollback is asked for', async () => {
-    const transport = transportFor({ red: 'waitHealthy' });
+  it('a stack that never becomes healthy rolls back like a red smoke (exit 10)', async () => {
+    // The induced failure applies once: the rollback's own wait-healthy must be
+    // able to answer, or the rollback would fail for the same reason the deploy
+    // did and nothing would be proved.
+    let unhealthyCalls = 0;
+    const transport = transportFor();
+    const answer = transport.run.bind(transport);
+    transport.run = async (script, args) => {
+      if (callName({ script }) === 'wait-healthy.sh' && unhealthyCalls === 0) {
+        unhealthyCalls += 1;
+        return { code: 1, stdout: 'error=timeout\n' };
+      }
+      return answer(script, args);
+    };
     const result = await deployPlatform(contextFor(transport));
-    assert.equal(result.exitCode, 5);
+    assert.equal(result.exitCode, 10);
     assert.equal(result.failed, 'wait-healthy');
-    assert.equal(result.rollback, undefined, 'a stack that never came up is not rolled back');
+    assert.equal(result.rollback, true, 'the stack was replaced, so it has to come back');
+    // No "after" migration read is possible, so the database comes back: the
+    // backend applies migrations at start and it may have applied some.
+    assert.equal(result.needsDbRestore, true);
+
+    const back = await rollbackRelease({
+      ...contextFor(transport), previousRelease: result.previousRelease,
+      previousCommit: result.previousCommit,
+      backupName: result.backupName, needsDb: result.needsDbRestore,
+    });
+    assert.ok(back.ok, 'the rollback finished');
+    assert.ok(transport.calls.some(c => c.script.includes('restore-db.sh')), 'the database was restored');
+  });
+
+  it('`up` itself failing is exit 5, and nothing after it runs', async () => {
+    const transport = transportFor();
+    const answer = transport.run.bind(transport);
+    // Basename, never `endsWith`: `backup.sh` ends with `up.sh`, which is how
+    // this test first failed the backup instead of the up step.
+    transport.run = async (script, args) => (
+      callName({ script }) === 'up.sh' ? { code: 1, stdout: 'error=no-release\n' } : answer(script, args)
+    );
+    const result = await deployPlatform(contextFor(transport));
+    assert.equal(result.exitCode, 5, 'failed before up: the running release is untouched');
+    assert.equal(result.failed, 'up');
+    assert.equal(result.rollback, undefined);
+    const names = transport.calls.map(callName);
+    assert.equal(names.includes('wait-healthy.sh'), false);
+    assert.equal(names.includes('state.sh' ) && names.filter(n => n === 'state.sh').length > 1, false,
+      'no state write happened');
   });
 
   it('the window gate refuses before anything is contacted', async () => {
@@ -221,6 +262,8 @@ describe('DW-4.3 a fresh install has nothing to back up', () => {
     const result = await deployPlatform(contextFor(transport));
     assert.ok(result.ok, JSON.stringify(result));
     const names = transport.calls.map(callName);
+    // A fresh install has no "before" to compare against, but the "after" read
+    // still happens: the record carries what the release actually applied.
     assert.deepEqual(names, [
       'state.sh', 'inspect.sh', 'prepare.sh', 'have-images.sh', 'upload-bundle.sh',
       'up.sh', 'wait-healthy.sh', 'migrations.sh', 'state.sh', 'prune.sh',
@@ -310,20 +353,30 @@ describe('DW-4.2 a red smoke rolls back', () => {
     assert.equal(back.failed, 'smoke');
   });
 
-  it('a migration set that shrank is exit 11, with the reason named', async () => {
+  it('a migration set that shrank is exit 11, and the database comes back', async () => {
     const transport = transportFor({ migrations: [['001', '002', '003'], ['001', '002']] });
     // The read before the deploy sees 001,002,003 and the one after sees only
     // 001,002: the set shrank, which forward-only migrations cannot do, so the
-    // deploy is not trusted and nothing is rolled back to.
+    // deploy is not trusted — the database is restored anyway (DW-4.2), because
+    // a schema that lost a migration is the one thing no rollback can fix later.
     const result = await deployPlatform({ ...contextFor(transport), red: 'smoke' });
     assert.equal(result.exitCode, 11);
-    assert.equal(result.failed, 'smoke');
+    assert.equal(result.failed, 'migrations');
     assert.match(result.reason, /migration set shrank/);
+    assert.equal(result.rollback, true);
+    assert.equal(result.needsDbRestore, true);
+
+    const back = await rollbackRelease({
+      ...contextFor(transport), previousRelease: result.previousRelease,
+      previousCommit: result.previousCommit,
+      backupName: result.backupName, needsDb: result.needsDbRestore,
+    });
+    assert.ok(back.ok, 'the stack came back');
+    assert.ok(transport.calls.some(c => c.script.includes('restore-db.sh')), 'the database was restored');
     const names = transport.calls.map(callName);
-    assert.equal(names.includes('stop.sh'), false, 'no rollback was started');
-    assert.equal(names.includes('restore-db.sh'), false, 'and nothing was restored');
     assert.equal(names.includes('prune.sh'), false, 'and nothing was pruned');
-    assert.equal(names.filter(n => n === 'up.sh').length, 1, 'the new release came up once, and only once');
+    assert.equal(names.filter(n => n === 'migrations.sh').length, 2,
+      'the before-migrations read happened and so did the after one');
   });
 });
 

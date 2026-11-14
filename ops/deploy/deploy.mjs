@@ -110,6 +110,7 @@ export async function runDeploy(options) {
     extra = [],
     bundlePath = null,
     smoke = null,
+    smokePin = null,
     locks = [],
     logDir = null,
   } = options;
@@ -185,6 +186,10 @@ export async function runDeploy(options) {
     extra,
     bundlePath: bundle,
     smoke,
+    // The rehearsal's induced-failure knob: pin the smoke to a commit that is not
+    // the one deployed, and the red-smoke path runs on a stack that is otherwise
+    // fine. A production deploy never sets it.
+    smokePin: smokePin ?? (flags['smoke-expect-commit'] ? String(flags['smoke-expect-commit']) : null),
   };
 
   if (command === 'deploy') {

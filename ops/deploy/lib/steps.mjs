@@ -349,32 +349,50 @@ export async function deployPlatform(context) {
   log?.info(`upload-bundle → ${upload.code === 0 ? 'ok' : 'EXIT ' + upload.code}`);
   if (upload.code !== 0) return refusal('upload-bundle', done, 4);
 
+  // `up` is the last step that can fail with the running release untouched:
+  // everything after it has already replaced the stack, so a failure there is a
+  // rollback (exit 10 when the rollback works, 11 when it does not — the wrapper
+  // maps them for a human). Exit 5 is "failed before up" and nothing else.
   const up = await step('up', transport, [config.DEPLOY_PATH, release, projectOf(context), composeFiles], { locks, log });
   done.push(up.name);
   if (!up.ok) return refusal(up.name, done, 5);
 
-  if (red === 'waitHealthy') return refusal('waitHealthy', done, 5);
-
   const waitHealthy = await step('wait-healthy', transport, [config.FRONTEND_PORT ?? '80', '300'], { locks, log });
   done.push(waitHealthy.name);
-  if (!waitHealthy.ok) return refusal(waitHealthy.name, done, 5);
 
-  const after = await step('migrations', transport, [config.DEPLOY_PATH, projectOf(context), composeFiles], { locks, log });
-  done.push(after.name);
-
-  // The smoke is read-only and answers "is this release actually the one we shipped";
-  // a red one is what the rollback answers.
-  const smoke = await runSmoke(context, { url: `http://127.0.0.1:${config.FRONTEND_PORT ?? '80'}`, expectedCommit: commits.vl });
-  done.push(smoke.name);
-
+  // Whether the database may have changed under this deploy. The "after" read is
+  // compared against the one before (D-10); a stack that never became healthy
+  // never answers it — the backend applies migrations at start and it may have
+  // applied some before it died — so there the answer is "it may have", and the
+  // database comes back. A `needsDbRestore` that throws (a migration set that
+  // shrank, which forward-only migrations cannot do) is not a deploy worth
+  // trusting either: no rollback, exit 11, the reason named.
   let migrated = false;
-  if (!fresh) {
+  let migrationFailure = null;
+  if (waitHealthy.ok) {
     try {
-      migrated = needsDbRestore(migrationList(beforeMigrations.migrations), migrationList(after.migrations));
+      const after = await step('migrations', transport, [config.DEPLOY_PATH, projectOf(context), composeFiles], { locks, log });
+      done.push(after.name);
+      if (!fresh) migrated = needsDbRestore(migrationList(beforeMigrations.migrations), migrationList(after.migrations));
     } catch (err) {
-      return { ok: false, failed: 'smoke', steps: done, exitCode: 11, reason: err.message, rollback: true };
+      migrationFailure = err.message;
     }
   }
+  const mayHaveMigrated = fresh ? false : (waitHealthy.ok ? migrated : true);
+
+  // The smoke is read-only and answers "is this release actually the one we shipped";
+  // a red one is what the rollback answers. A stack that never answered is a red
+  // stack, so the same hand-off applies.
+  const smoke = waitHealthy.ok
+    ? await runSmoke(context, {
+      url: `http://127.0.0.1:${config.FRONTEND_PORT ?? '80'}`,
+      // The commit that must answer. `--smoke-expect-commit` overrides it, which
+      // is how a rehearsal induces a red smoke on a stack that is otherwise fine
+      // — and the override is the rehearsal's, never a production deploy's.
+      expectedCommit: context.smokePin ?? commits.vl,
+    })
+    : { name: 'smoke', ok: false, code: 1 };
+  done.push(smoke.name);
 
   if (smoke.ok) {
     await writeState(transport, config.DEPLOY_PATH, {
@@ -389,13 +407,29 @@ export async function deployPlatform(context) {
     return { ok: true, steps: done, release, backupName: backup.backup_name ?? null, migrated };
   }
 
-  // A red smoke after a deploy that migrated: the database comes back too, but
-  // only when there is a verified backup to come back from — a fresh install has
-  // nothing older to return to.
+  // A migration set that shrank is not a deploy worth trusting: forward-only
+  // migrations cannot lose one, so the schema went somewhere this run does not
+  // know about. The database comes back from the verified backup and the exit is
+  // 11 — the rollback worked, the deploy did not (DW-4.2).
+  if (migrationFailure) {
+    return {
+      ok: false, failed: 'migrations', steps: done, exitCode: 11,
+      reason: migrationFailure, rollback: true,
+      needsDbRestore: Boolean(backup.backup_name),
+      backupName: backup.backup_name ?? null,
+      previousRelease: current?.id ?? null,
+      previousCommit: current?.commit ?? null,
+      fresh,
+    };
+  }
+
+  // The database comes back only when there is a verified backup to come back
+  // from: a fresh install has nothing older to return to, and a deploy that did
+  // not migrate left the schema alone (D-10).
   return {
-    ok: false, failed: 'smoke', steps: done, exitCode: 10,
+    ok: false, failed: waitHealthy.ok ? 'smoke' : 'wait-healthy', steps: done, exitCode: 10,
     rollback: true,
-    needsDbRestore: migrated && !fresh && Boolean(backup.backup_name),
+    needsDbRestore: mayHaveMigrated && Boolean(backup.backup_name),
     backupName: backup.backup_name ?? null,
     // The release to go *back to* is the one that was running before, not the one
     // that just failed: `previous` in the record, never the release we deployed.
