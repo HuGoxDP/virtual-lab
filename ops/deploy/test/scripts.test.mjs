@@ -42,13 +42,14 @@ const hasBash = (() => {
   }
 })();
 
-/** What the Constraints of the plan forbid anywhere under ops/deploy/. */
+/** What the Constraints of the plan forbid anywhere under ops/deploy/. The build
+ * rule is separate (below), because the rehearsal driver legitimately builds its
+ * hand-made stack while the release path never may (decision D-2). */
 const FORBIDDEN = [
   [/\beval\s+/, 'eval'],
   [/curl\s+[^|]*\|\s*(ba)?sh/, 'curl piped into a shell'],
   [/--no-verify/, 'git --no-verify'],
   [/--force(-with-lease)?\b/, 'a force push'],
-  [/docker\s+compose\s+[^\n]*--build/, 'a build inside the release path'],
   [/\.env['"]?\s*\|\s*cat/, 'the shared .env printed'],
 ];
 
@@ -62,13 +63,42 @@ describe('DW-4.4 the remote scripts', () => {
     }
   });
 
-  it('nothing under ops/deploy/ contains a forbidden construct', () => {
+  /**
+ * The release path: the pipeline's entry point, every remote script it runs and
+ * every library it runs them through. A release runs images (decision D-2), so
+ * this is the set of files that must never build.
+ *
+ * The rehearsal driver is deliberately not in it: R-7's hand-made stack is built
+ * on purpose, so that `up --no-build` has something real to point at.
+ */
+function releaseFiles() {
+  return [
+    path.join(ROOT, 'deploy.mjs'),
+    ...allFiles(path.join(ROOT, 'remote')),
+    ...allFiles(path.join(ROOT, 'lib')).filter(f => f.endsWith('.mjs')),
+  ];
+}
+
+it('nothing under ops/deploy/ contains a forbidden construct', () => {
     for (const file of codeFiles()) {
       const text = readFileSync(file, 'utf8');
       for (const [pattern, what] of FORBIDDEN) {
         assert.ok(!pattern.test(text), `${path.relative(ROOT, file)} contains ${what}`);
       }
     }
+  });
+
+  it('the release path builds nothing, and only the rehearsal build is a hand-made one', () => {
+    const files = releaseFiles();
+    assert.ok(files.length >= 14, `expected the whole release path, found ${files.length} files`);
+    for (const file of files) {
+      assert.ok(!/--build/.test(readFileSync(file, 'utf8')),
+        `${path.relative(ROOT, file)} builds inside the release path`);
+    }
+    // The one build in the tree is the rehearsal's own hand-made stack (R-7), and
+    // it is not part of the release path.
+    const driver = readFileSync(path.join(ROOT, 'rehearse.mjs'), 'utf8');
+    assert.match(driver, /up', '-d', '--build/, "the hand-made stack is built (R-7)");
   });
 });
 
