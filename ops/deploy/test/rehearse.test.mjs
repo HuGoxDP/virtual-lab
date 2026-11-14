@@ -110,13 +110,13 @@ describe('DW-5.4 the rehearsal driver', () => {
   it('cuts the four rehearsal commits on a local branch that origin does not have', () => {
     const repo = tempRepo();
     try {
-      const commits = scratchCommits(repo);
+      const commits = scratchCommits('main', repo);
       assert.equal(commits.branch, SCRATCH_BRANCH);
       // A, B, C and D are four different commits, and A is what origin/main points at.
       assert.notEqual(commits.A, commits.B);
       assert.notEqual(commits.B, commits.C);
       assert.notEqual(commits.C, commits.D);
-      assert.equal(commits.A, execFileSync('git', ['-C', repo, 'rev-parse', 'origin/main'], { encoding: 'utf8' }).trim());
+      assert.equal(commits.A, execFileSync('git', ['-C', repo, 'rev-parse', 'main'], { encoding: 'utf8' }).trim());
       // B changes only a comment, so the rehearsal's second release is a release
       // in every way the pipeline can tell.
       const diff = execFileSync('git', ['-C', repo, 'diff', commits.A, commits.B], { encoding: 'utf8' });

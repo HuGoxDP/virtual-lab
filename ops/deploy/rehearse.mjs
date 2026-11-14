@@ -221,19 +221,27 @@ export function readRecord(localRoot) {
 
 /**
  * The four commits the rehearsal deploys, on a local-only branch:
- *   A = origin/main, deployed first, and the release the last rollback goes to;
+ *   A = the base commit — deployed first, and the release the last rollback goes to;
  *   B = a visible no-op (a comment), so a second release can be told apart;
  *   C = a migration file, which the red smoke refuses;
  *   D = a backend that exits at start, which the health timeout refuses.
+ *
+ * The base is the branch the pipeline itself is on, *not* `origin/main`: a
+ * rehearsal run from `origin/main` would remove `ops/deploy/` from the worktree
+ * it is running from — the pipeline is not merged yet, and the run would delete
+ * the very files it is proving. A is therefore the release the task branch
+ * carries, which is the same thing the plan asks for ("what is deployed first")
+ * with the one fact of this checkout recorded in the notes.
  *
  * The branch is deleted by the run, and it is refused if a remote branch of the
  * same name exists — a rehearsal must never push a ref another worker could read
  * as a task.
  *
+ * @param {string} [base] — the branch to cut the four commits from.
  * @param {string} [repo] — the repository to cut the commits in.
  * @returns {{A: string, B: string, C: string, D: string, branch: string}}
  */
-export function scratchCommits(repo = VL_REPO) {
+export function scratchCommits(base = 'OPS1-deploy-pipeline', repo = VL_REPO) {
   const inRepo = (...args) => sh('git', ['-C', repo, ...args]);
   const remote = inRepo('ls-remote', '--heads', 'origin', SCRATCH_BRANCH).trim();
   if (remote !== '') throw new Error(`${SCRATCH_BRANCH} exists on origin — the rehearsal never pushes`);
@@ -241,9 +249,9 @@ export function scratchCommits(repo = VL_REPO) {
   // from an interrupted one is deleted first — and a branch that is not there is
   // not an error, which is the case on the first run.
   try { inRepo('branch', '-qD', SCRATCH_BRANCH); } catch { /* no leftover */ }
-  inRepo('switch', '-q', '-c', SCRATCH_BRANCH, 'origin/main');
+  inRepo('switch', '-q', '-c', SCRATCH_BRANCH, base);
   const head = () => inRepo('rev-parse', 'HEAD').trim();
-  const A = inRepo('rev-parse', 'origin/main').trim();
+  const A = head();
 
   // B: a comment in the line that answers `/api/health`.
   const server = path.join(repo, 'backend', 'server.js');
@@ -384,6 +392,8 @@ async function main(argv = process.argv.slice(2)) {
   const recorder = createRecorder();
   const log = createLog();
   const started = liveStartedAt();
+  // The branch the pipeline is on: the rehearsal cuts its commits from it, because
+  // a run from `origin/main` would remove the pipeline from the worktree it runs in.
   const base = flags.base ? String(flags.base) : 'OPS1-deploy-pipeline';
 
   let localRoot = mkdtemp('vl-rehearsal-');
@@ -422,7 +432,7 @@ async function main(argv = process.argv.slice(2)) {
   };
 
   try {
-    const commits = scratchCommits();
+    const commits = scratchCommits(base);
     process.stdout.write(`rehearsal: A=${SHORT_(commits.A)} B=${SHORT_(commits.B)} `
       + `C=${SHORT_(commits.C)} D=${SHORT_(commits.D)}\n`);
 
