@@ -9,7 +9,7 @@
 // rather than leave a half-deployed stack, and what makes the database come
 // back only when the deploy migrated (D-10).
 
-import { createReadStream, existsSync, writeFileSync, mkdirSync, cpSync, rmSync, renameSync } from 'node:fs';
+import { createReadStream, existsSync, writeFileSync, mkdirSync, mkdtempSync, cpSync, rmSync, renameSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -97,8 +97,12 @@ export function releaseEnvContents({ vlTag, vlCommit, composeFiles: files, edTag
  */
 export function writeBundle(repoRoot, release, { out = null } = {}) {
   const files = bundleFiles({ editor: release.editor === true, extra: release.extra ?? [] });
-  const stage = path.join(os.tmpdir(), `vl-bundle-${release.vlTag.slice(0, 8)}`);
-  rmSync(stage, { recursive: true, force: true });
+  // A work directory of its own: the tar is written with a *relative* name beside
+  // its stage and then moved, and it must not be a sibling of the destination —
+  // writing it into the same directory the destination lives in made the
+  // `finally` below delete the bundle it had just made (OPS1 phase 5).
+  const work = mkdtempSync(path.join(os.tmpdir(), 'vl-bundle-work-'));
+  const stage = path.join(work, 'stage');
   mkdirSync(stage, { recursive: true });
   try {
     for (const file of files) {
@@ -120,11 +124,10 @@ export function writeBundle(repoRoot, release, { out = null } = {}) {
       cwd: stage, stdio: ['ignore', 'ignore', 'inherit'],
     });
     if (tar.status !== 0) throw new Error(`tar of the release bundle exited ${tar.status}`);
-    renameSync(path.join(path.dirname(stage), archive), target);
+    renameSync(path.join(work, archive), target);
     return { path: target, files };
   } finally {
-    rmSync(stage, { recursive: true, force: true });
-    rmSync(path.join(path.dirname(stage), `vl-bundle-${release.vlTag.slice(0, 8)}.tar.gz`), { force: true });
+    rmSync(work, { recursive: true, force: true });
   }
 }
 

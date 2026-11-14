@@ -8,11 +8,13 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { parseFields, deployPlatform, rollbackRelease, bundleManifest, composeFilesFor } from '../lib/steps.mjs';
+import { parseFields, deployPlatform, rollbackRelease, bundleManifest, composeFilesFor, writeBundle } from '../lib/steps.mjs';
 import { recordingTransport } from '../lib/transport.mjs';
 
 /** A bundle tar to upload; the step only needs the file to exist. */
@@ -395,6 +397,37 @@ describe('DW-4.2 a red smoke rolls back', () => {
 describe('the field parser and the bundle manifest', () => {
   it('reads `key=value` lines and ignores everything else', () => {
     assert.deepEqual(parseFields('a=1\nnoise line\nb=x y\n\n'), { a: '1', b: 'x y' });
+  });
+
+  it('writes a bundle tar that outlives the function that made it', () => {
+    // The bug the rehearsal's first runs found: the tar was written into the same
+    // temp directory the `finally` then deleted, so the bundle was always missing
+    // at the upload step (OPS1 phase 5). It exists after the call, and it holds
+    // what a release declares.
+    const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+    const bundle = writeBundle(repo, {
+      vlTag: A, vlCommit: A, editor: false, extra: [], edTag: null,
+    });
+    try {
+      assert.ok(existsSync(bundle.path), `${bundle.path} exists after the call`);
+      // A POSIX path for the listing: this machine's `tar` reads a drive letter as
+      // a remote host (the same rule the bundle writer itself follows).
+      const listed = bundle.path
+        .replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`)
+        .split(path.sep).join('/');
+      const tar = spawnSync('tar', ['-tzf', listed], { encoding: 'utf8', maxBuffer: 1 << 26 });
+      assert.equal(tar.status, 0, tar.stderr);
+      const members = tar.stdout.trim().split('\n').map(m => m.replace(/^\.\//, ''));
+      assert.ok(members.includes('release.env'), 'the release env is in the bundle');
+      assert.ok(members.includes('docker-compose.yml'), 'and so are the compose files');
+      assert.ok(members.includes('ops/deploy/compose.release.yml'));
+      // The env names the release, and never a secret.
+      const contents = spawnSync('tar', ['-xzOf', listed, './release.env'], { encoding: 'utf8' });
+      assert.match(contents.stdout, new RegExp(`VL_TAG=${A}`));
+      assert.doesNotMatch(contents.stdout, /PASSWORD|TOKEN/);
+    } finally {
+      rmSync(bundle.path, { force: true });
+    }
   });
 
   it('the manifest carries the compose files and the release env', () => {
