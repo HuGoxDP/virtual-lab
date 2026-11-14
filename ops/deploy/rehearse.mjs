@@ -145,14 +145,20 @@ export function createLog() {
  * @param {string[]} extra — further flags.
  */
 export function deployCommand({ envFile, localRoot, repo = VL_REPO }, command, extra = []) {
+  // Three forms of path, one reason each (the plan's phase-5 edge case, recorded):
+  //   `--env-file`  is read by Node — a Windows path;
+  //   `--repo`      is where `git` runs — a Windows path;
+  //   `--local-root` becomes DEPLOY_PATH for the scripts — POSIX, because this
+  //                 machine's `tar` reads a drive letter as a remote host and
+  //                 Docker Desktop resolves the POSIX form.
   return run('node', [
     DEPLOY, command, 'platform',
-    '--env-file', posix(envFile),
+    '--env-file', envFile,
     '--transport', 'local',
     '--local-root', posix(localRoot),
     '--project', PROJECT,
     '--compose-file', REHEARSAL_COMPOSE,
-    '--repo', posix(repo),
+    '--repo', repo,
     '--rehearsal',
     ...extra,
   ], { cwd: repo, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
@@ -299,8 +305,12 @@ export function writeEnv(localRoot, port = PORT) {
     'DEPLOY_PORT=22',
     `FRONTEND_PORT=${port}`,
   ].join('\n') + '\n');
-  return file;
+  // The Windows form: the pipeline is a Node program, and it reads this file.
+  return file.split(path.sep).join('/');
 }
+
+/** The stack's own `.env` in the rehearsal root, as a Windows path for Node. */
+const stackEnv = localRoot => path.join(localRoot, 'shared', '.env');
 
 /**
  * The one `down -v` in the task. It refuses unless every volume of the project
@@ -449,6 +459,24 @@ async function main(argv = process.argv.slice(2)) {
   let handRepo = null;
   let handEnv = null;
 
+  /**
+   * One deploy step: run it, log its whole output, put it in the table — and say
+   * *why* it is red when it is, because a row that says "FAIL exit 10" without the
+   * line that explains it is a table nobody can act on.
+   */
+  const step = async (label, expected, command, extra = []) => {
+    const answer = deployCommand({ envFile, localRoot }, command, extra);
+    log.push(`node ops/deploy/deploy.mjs ${command} platform ${extra.join(' ')}`, answer);
+    const code = await recorder.row(label, expected, () => answer.status);
+    if (code !== expected) {
+      process.stdout.write('     --- why:\n');
+      for (const line of `${answer.stdout}${answer.stderr}`.trim().split('\n').slice(-12)) {
+        if (line !== '') process.stdout.write(`     ${line}\n`);
+      }
+    }
+    return answer;
+  };
+
   /** Bring the branch the task was on back, and delete the scratch branch. */
   const finish = () => {
     sh('git', ['-C', VL_REPO, 'switch', '-q', base]);
@@ -475,7 +503,11 @@ async function main(argv = process.argv.slice(2)) {
       composeCommand(root, COMPOSE_FILES, ['down', '-v', '--remove-orphans'],
         { envFile: project === PROJECT ? envFile : handEnv, cwd: project === PROJECT ? undefined : handRepo });
     }
-    for (const dir of [localRoot, handRepo, path.dirname(envFile)]) rmSync(dir, { recursive: true, force: true });
+    // Only the directories this run actually created: a step that threw before a root
+    // exists must not turn into a second failure during the teardown.
+    for (const dir of [localRoot, handRepo, path.dirname(envFile)].filter(Boolean)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
     return true;
   };
 
@@ -493,9 +525,7 @@ async function main(argv = process.argv.slice(2)) {
       // The release is cut from A, so the worktree is at A: the bundle the deploy
       // uploads is read from there.
       sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.A]);
-      await recorder.row('R-1 deploy A on an empty root', 0, () => deployCommand(
-        { envFile, localRoot }, 'deploy',
-      ).status);
+      await step('R-1 deploy A on an empty root', 0, 'deploy');
       const record = readRecord(localRoot);
       process.stdout.write(`     backup: ${record.current?.backup ?? 'none (fresh install)'}`
         + `\n     release: ${record.current?.id ?? 'none'}\n`);
@@ -506,7 +536,7 @@ async function main(argv = process.argv.slice(2)) {
       const publish = run('npm', ['run', 'publish:release', '--', '--base-url', `http://127.0.0.1:${PORT}`], {
         cwd: path.join(VL_REPO, 'backend'),
         env: {
-          ...process.env, ADMIN_TOKEN: envValue(envFile, 'ADMIN_TOKEN'),
+          ...process.env, ADMIN_TOKEN: envValue(stackEnv(localRoot), 'ADMIN_TOKEN'),
           PUBLISH_BASE_URL: `http://127.0.0.1:${PORT}`, MSYS_NO_PATHCONV: '1',
         },
       });
@@ -523,9 +553,7 @@ async function main(argv = process.argv.slice(2)) {
     // health commit is B. The pin is what makes the second release real.
     if (want('R-3')) {
       sh('git', ['-C', VL_REPO, 'switch', '-q', commits.B]);
-      await recorder.row('R-3 deploy B (a no-op that still deploys)', 0, () => deployCommand(
-        { envFile, localRoot }, 'deploy',
-      ).status);
+      await step('R-3 deploy B (a no-op that still deploys)', 0, 'deploy');
       const record = readRecord(localRoot);
       const health = healthCommit();
       process.stdout.write(`     backup verified: ${Boolean(record.current?.backup)}`
@@ -537,9 +565,8 @@ async function main(argv = process.argv.slice(2)) {
     // it, and the marker row survives: that is the whole of D-10 in one row.
     if (want('R-4')) {
       sh('git', ['-C', VL_REPO, 'switch', '-q', commits.C]);
-      await recorder.row('R-4 deploy C with the smoke pinned to a wrong commit', 10, () => deployCommand(
-        { envFile, localRoot }, 'deploy', ['--smoke-expect-commit', '0'.repeat(40)],
-      ).status);
+      await step('R-4 deploy C with the smoke pinned to a wrong commit', 10, 'deploy',
+        ['--smoke-expect-commit', '0'.repeat(40)]);
       const probe = query(localRoot, COMPOSE_FILES, envFile,
         "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'rehearsal_probe'");
       const marker = query(localRoot, COMPOSE_FILES, envFile,
@@ -557,9 +584,7 @@ async function main(argv = process.argv.slice(2)) {
     // "after" to compare against — "it may have migrated" is the safe answer.
     if (want('R-5')) {
       sh('git', ['-C', VL_REPO, 'switch', '-q', commits.D]);
-      const answer = deployCommand({ envFile, localRoot }, 'deploy');
-      log.push('node ops/deploy/deploy.mjs deploy platform', answer);
-      await recorder.row('R-5 deploy D (backend exits at start)', 10, () => answer.status);
+      const answer = await step('R-5 deploy D (backend exits at start)', 10, 'deploy');
       const restored = answer.stdout.includes('restore-db.sh');
       const marker = query(localRoot, COMPOSE_FILES, envFile,
         "select count(*) from scenarios where id = 'rehearsal-marker'");
@@ -572,9 +597,7 @@ async function main(argv = process.argv.slice(2)) {
     // R-6 — the rollback command, from B back to A.
     if (want('R-6')) {
       sh('git', ['-C', VL_REPO, 'switch', '-q', commits.B]);
-      await recorder.row('R-6 rollback (B -> A)', 0, () => deployCommand(
-        { envFile, localRoot }, 'rollback',
-      ).status);
+      await step('R-6 rollback (B -> A)', 0, 'rollback');
       const health = healthCommit();
       process.stdout.write(`     health commit: ${health === commits.A ? 'A' : health}\n`);
     }
@@ -619,9 +642,7 @@ async function main(argv = process.argv.slice(2)) {
         const before = sha256(handEnv);
         localRoot = adoptedRoot;
         envFile = writeEnv(localRoot);
-        await recorder.row('R-7 adopt and deploy', 0, () => deployCommand(
-          { envFile, localRoot }, 'deploy',
-        ).status);
+        await step('R-7 adopt and deploy', 0, 'deploy');
         const marker = query(localRoot, COMPOSE_FILES, envFile,
           "select count(*) from scenarios where id = 'rehearsal-marker'");
         process.stdout.write(`     .env byte-identical: ${sha256(handEnv) === before}`
@@ -633,7 +654,15 @@ async function main(argv = process.argv.slice(2)) {
     // behind — including when a step threw, which is the case the finally is for.
     try { teardown(); } catch (err) { process.stderr.write(`rehearse: teardown: ${err.message}\n`); }
     const left = finish();
-    if (flags.notes) writeFileSync(path.resolve(String(flags.notes)), log.text());
+    // The log goes outside every worktree: an untracked file inside one would fail
+    // the fresh-source gate the deploy itself refuses to run without (which is how
+    // the first run's notes file blocked the second).
+    const notes = flags.notes
+      ? path.resolve(String(flags.notes))
+      : path.join(ROOT, '.workers', 'logs', `rehearsal-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
+    mkdirSync(path.dirname(notes), { recursive: true });
+    writeFileSync(notes, log.text());
+    process.stdout.write(`log: ${notes}\n`);
     rmSync(path.dirname(envFile), { recursive: true, force: true });
     if (left.volumes.length > 0 || left.containers.length > 0) {
       process.stderr.write('rehearse: the rehearsal left containers or volumes behind\n');
