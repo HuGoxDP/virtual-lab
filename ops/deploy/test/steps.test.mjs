@@ -122,16 +122,28 @@ function contextFor(transport, extras = {}) {
 }
 
 describe('DW-4.1 the happy deploy runs the steps in the gate order', () => {
-  it('state(read) → inspect → backup → verify → migrations(before) → ship → upload → up → waitHealthy → migrations(after) → state(write) → prune', async () => {
+  it('state(read) → inspect → ship → upload → prepare → backup → verify → migrations(before) → up → waitHealthy → migrations(after) → state(write) → prune', async () => {
     const transport = transportFor();
     const result = await deployPlatform(contextFor(transport));
     assert.ok(result.ok, JSON.stringify(result));
     const names = transport.calls.map(callName);
     assert.deepEqual(names, [
-      'state.sh', 'inspect.sh', 'prepare.sh', 'backup.sh', 'verify-backup.sh',
-      'migrations.sh', 'have-images.sh', 'upload-bundle.sh', 'up.sh', 'wait-healthy.sh',
+      'state.sh', 'inspect.sh', 'have-images.sh', 'upload-bundle.sh', 'prepare.sh', 'backup.sh',
+      'verify-backup.sh', 'migrations.sh', 'up.sh', 'wait-healthy.sh',
       'migrations.sh', 'state.sh', 'prune.sh',
     ]);
+  });
+
+  it('the upload comes before prepare, because the .env template travels in the bundle', async () => {
+    // A fresh host has no `.env`, and `prepare` makes one from the template the
+    // bundle carries: running it first could only ever answer `env=absent`, which
+    // is how the rehearsal's first run failed (OPS1 phase 5).
+    const transport = transportFor({ state: EMPTY });
+    await deployPlatform(contextFor(transport));
+    const names = transport.calls.map(callName);
+    assert.ok(names.includes('upload-bundle.sh'), 'the bundle was uploaded');
+    assert.ok(names.indexOf('prepare.sh') > names.indexOf('upload-bundle.sh'),
+      `prepare runs after the upload (${names.join(', ')})`);
   });
 
   it('the release record is written with what a rollback needs', async () => {
@@ -265,7 +277,7 @@ describe('DW-4.3 a fresh install has nothing to back up', () => {
     // A fresh install has no "before" to compare against, but the "after" read
     // still happens: the record carries what the release actually applied.
     assert.deepEqual(names, [
-      'state.sh', 'inspect.sh', 'prepare.sh', 'have-images.sh', 'upload-bundle.sh',
+      'state.sh', 'inspect.sh', 'have-images.sh', 'upload-bundle.sh', 'prepare.sh',
       'up.sh', 'wait-healthy.sh', 'migrations.sh', 'state.sh', 'prune.sh',
     ]);
     assert.equal(result.backupName, null, 'a fresh install has no backup, and the record says so');

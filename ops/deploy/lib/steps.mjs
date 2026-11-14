@@ -285,38 +285,6 @@ export async function deployPlatform(context) {
   done.push(inspect.name);
   if (!inspect.ok) return refusal(inspect.name, done, 4);
 
-  const prepare = await step('prepare', transport, [config.DEPLOY_PATH], { locks, log });
-  done.push(prepare.name);
-  if (!prepare.ok) return refusal(prepare.name, done, 4);
-
-  // A fresh install has nothing to back up and no migration set to compare
-  // against; an existing one is backed up before anything changes (D-9).
-  const backup = fresh
-    ? { name: 'backup', ok: true, backup_name: null, fresh: true }
-    : await step('backup', transport, [config.DEPLOY_PATH, projectOf(context), composeFiles], { locks, log });
-  if (!fresh) {
-    done.push(backup.name);
-    if (!backup.ok) return refusal(backup.name, done, 4);
-  }
-
-  const verifyBackup = fresh
-    ? { name: 'verify-backup', ok: true, verified: '1', fresh: true }
-    : await step('verify-backup', transport, [backup.backup_path], { locks, log });
-  if (!fresh) {
-    done.push(verifyBackup.name);
-    if (!verifyBackup.ok || verifyBackup.verified !== '1') {
-      return refusal(verifyBackup.name, done, 4, { reason: 'the backup did not read back' });
-    }
-  }
-
-  const beforeMigrations = fresh
-    ? { name: 'migrations', migrations: '', fresh: true }
-    : await step('migrations', transport, [config.DEPLOY_PATH, projectOf(context), composeFiles], { locks, log });
-  if (!fresh) {
-    done.push(beforeMigrations.name);
-    if (!beforeMigrations.ok) return refusal(beforeMigrations.name, done, 4);
-  }
-
   const ship = await step('have-images', transport, images, { locks, log });
   done.push(ship.name);
   if (!ship.ok) return refusal(ship.name, done, 4);
@@ -348,6 +316,42 @@ export async function deployPlatform(context) {
   done.push('upload-bundle');
   log?.info(`upload-bundle → ${upload.code === 0 ? 'ok' : 'EXIT ' + upload.code}`);
   if (upload.code !== 0) return refusal('upload-bundle', done, 4);
+
+  // `prepare` runs *after* the upload, because a fresh host has no `.env` and the
+  // template that makes one travels in the bundle: generating it before the upload
+  // could only ever answer `env=absent`, which is how the rehearsal's first run
+  // failed (OPS1 phase 5). It never overwrites an existing one (D-12).
+  const prepare = await step('prepare', transport, [config.DEPLOY_PATH], { locks, log });
+  done.push(prepare.name);
+  if (!prepare.ok) return refusal(prepare.name, done, 4);
+
+  // A fresh install has nothing to back up and no migration set to compare
+  // against; an existing one is backed up before anything changes (D-9).
+  const backup = fresh
+    ? { name: 'backup', ok: true, backup_name: null, fresh: true }
+    : await step('backup', transport, [config.DEPLOY_PATH, projectOf(context), composeFiles], { locks, log });
+  if (!fresh) {
+    done.push(backup.name);
+    if (!backup.ok) return refusal(backup.name, done, 4);
+  }
+
+  const verifyBackup = fresh
+    ? { name: 'verify-backup', ok: true, verified: '1', fresh: true }
+    : await step('verify-backup', transport, [backup.backup_path], { locks, log });
+  if (!fresh) {
+    done.push(verifyBackup.name);
+    if (!verifyBackup.ok || verifyBackup.verified !== '1') {
+      return refusal(verifyBackup.name, done, 4, { reason: 'the backup did not read back' });
+    }
+  }
+
+  const beforeMigrations = fresh
+    ? { name: 'migrations', migrations: '', fresh: true }
+    : await step('migrations', transport, [config.DEPLOY_PATH, projectOf(context), composeFiles], { locks, log });
+  if (!fresh) {
+    done.push(beforeMigrations.name);
+    if (!beforeMigrations.ok) return refusal(beforeMigrations.name, done, 4);
+  }
 
   // `up` is the last step that can fail with the running release untouched:
   // everything after it has already replaced the stack, so a failure there is a
