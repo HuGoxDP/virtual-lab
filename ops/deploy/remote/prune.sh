@@ -10,17 +10,21 @@ KEEP="$1"; shift
 apply=false
 if [ "$MODE" = "apply" ]; then apply=true; fi
 
-# The keep list is comma-separated (`keepForPrune` names the ids), and an unquoted
-# `$KEEP` would split on nothing: commas are not IFS, so `vl-a,vl-b` would be one
-# unkeepable word and every release's images would look prunable.
-IFS=',' read -ra KEEP_IDS <<< "$KEEP"
+# The keep list is comma-separated *tags*, not release ids: an image is named
+# `repo/service:<tag>` and a release id is `vl-a1b2c3d`, so comparing the two
+# kept nothing and pruned every image of every release (OPS1 phase 5). Splitting
+# on commas is the other half — an unquoted `$KEEP` splits on IFS only, so
+# `a,b` would have been one unkeepable word.
+IFS=',' read -ra KEEP_TAGS <<< "$KEEP"
 
 removed=0
 for name in "$@"; do
+  # The tag is everything after the last colon: `virtual-lab/backend:<tag>`.
+  tag="${name##*:}"
   skip=false
-  for keep in "${KEEP_IDS[@]}"; do
+  for keep in "${KEEP_TAGS[@]}"; do
     [ -z "$keep" ] && continue
-    if [ "$name" = "$keep" ]; then skip=true; break; fi
+    if [ "$tag" = "$keep" ]; then skip=true; break; fi
   done
   if [ "$skip" = true ]; then echo "keep=$name"; continue; fi
   if [ "$apply" = true ]; then

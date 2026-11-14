@@ -19,7 +19,7 @@ import { parseDeployEnv } from '../lib/config.mjs';
 import { deployWindow } from '../lib/window.mjs';
 import { makeRedactor } from '../lib/redact.mjs';
 import { shq, shqArgs } from '../lib/shq.mjs';
-import { tagOf, releaseId, imageNames, composeFiles, bundleFiles, nextState, keepForPrune } from '../lib/release.mjs';
+import { tagOf, releaseId, imageNames, composeFiles, bundleFiles, nextState, keepForPrune, keepTags } from '../lib/release.mjs';
 import { needsDbRestore } from '../lib/rollback.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -181,12 +181,16 @@ describe('DW-1.5 compose and bundle files', () => {
       'docker-compose.yml',
       'docker-compose.restore.yml',
       'ops/deploy/compose.release.yml',
+      // What `prepare` turns into `shared/.env` on a host that has none: a
+      // release has to carry it, or a fresh host has nothing to start from.
+      'ops/deploy/shared.env.template',
       'db/init.sql',
     ]);
     assert.deepEqual(composeFiles({ editor: true }), [
       'docker-compose.yml',
       'docker-compose.restore.yml',
       'ops/deploy/compose.release.yml',
+      'ops/deploy/shared.env.template',
       'db/init.sql',
       'docker-compose.editor.yml',
       'ops/deploy/compose.release-editor.yml',
@@ -227,7 +231,10 @@ describe('DW-1.6 rollback decision and release state', () => {
     }
     assert.equal(state.current.id, 'r4');
     assert.equal(state.previous.id, 'r3');
-    assert.deepEqual(keepForPrune(state), ['r4', 'r3', 'r2']);
+    // Records, not ids: an image is named by its tag, and a release id is not a
+    // tag (OPS1 phase 5 — the keep list of ids kept nothing).
+    assert.deepEqual(keepForPrune(state).map(r => r.id), ['r4', 'r3', 'r2']);
+    assert.deepEqual(keepTags(state), [VL, VL, VL]);
     assert.equal(state.history.length, 3);
 
     let wide = { current: null, previous: null, history: [] };

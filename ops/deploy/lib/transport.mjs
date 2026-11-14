@@ -154,9 +154,10 @@ const DRY_RUN_ANSWERS = {
   'migrations.sh': 'migrations=<stub>\nmigrations_ok=1\n',
   'upload-bundle.sh': 'release_dir=<stub>\nupload_ok=1\n',
   'wait-healthy.sh': 'healthy=1\nchecks=0\nwait_ok=1\n',
-  // A dry run has no release record, which is the fresh-install path — the one
-  // sequence a first deploy cannot prove on a host that already runs something.
-  'state.sh': '{"current":null,"previous":null,"history":[]}\n',
+  // A dry run describes the *general* case — a host that already runs a release,
+  // which is every deploy except the first. It cannot ask, so it says so in the
+  // plan: the fresh-install path skips backup, verify and the before-migrations.
+  'state.sh': '{"current":{"id":"vl-dryrun1","commit":"' + '0'.repeat(40) + '","migrated":false},"previous":null,"history":[]}\n',
   'prune.sh': 'prune_ok=1\n',
   'stop.sh': 'stopped=1\nstop_ok=1\n',
   'restore-db.sh': 'restored=<stub>\nrestore_ok=1\n',

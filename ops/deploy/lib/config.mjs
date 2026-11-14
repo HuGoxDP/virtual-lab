@@ -11,7 +11,11 @@
 // substituted into each other, and this one must not be.
 
 const REQUIRED = ['DEPLOY_HOST', 'DEPLOY_USER', 'DEPLOY_KEY', 'DEPLOY_DOMAIN', 'DEPLOY_PATH'];
-const OPTIONAL = { DEPLOY_PORT: '22', DEPLOY_HOSTKEY: '' };
+// `FRONTEND_PORT` is the port the stack is published on, so the pipeline can
+// wait for it and point the smoke at it. Without it the deploy could only ever
+// check port 80 — which the rehearsal (8047) and the preflight (8048) prove
+// cannot be right, because a rehearsal must not touch the live stack's port.
+const OPTIONAL = { DEPLOY_PORT: '22', DEPLOY_HOSTKEY: '', FRONTEND_PORT: '80' };
 const KEYS = new Set([...REQUIRED, ...Object.keys(OPTIONAL)]);
 
 const HOST = /^[A-Za-z0-9.-]+$/;
@@ -64,6 +68,11 @@ export function parseDeployEnv(text) {
     throw fail('DEPLOY_PORT', 'must be an integer between 1 and 65535');
   }
 
+  const frontendPort = raw.FRONTEND_PORT ?? OPTIONAL.FRONTEND_PORT;
+  if (!/^\d{1,5}$/.test(frontendPort) || Number(frontendPort) < 1 || Number(frontendPort) > 65535) {
+    throw fail('FRONTEND_PORT', 'must be an integer between 1 and 65535');
+  }
+
   const host = raw.DEPLOY_HOST;
   const ipv4 = IPV4.exec(host);
   if (ipv4 && ipv4.slice(1).some(part => Number(part) > 255)) {
@@ -90,5 +99,6 @@ export function parseDeployEnv(text) {
     DEPLOY_PATH: path,
     DEPLOY_PORT: port,
     DEPLOY_HOSTKEY: raw.DEPLOY_HOSTKEY ?? OPTIONAL.DEPLOY_HOSTKEY,
+    FRONTEND_PORT: frontendPort,
   };
 }

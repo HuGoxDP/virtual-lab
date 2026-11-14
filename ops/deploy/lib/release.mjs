@@ -60,6 +60,9 @@ export const BUNDLE_BASE = [
   'docker-compose.yml',
   'docker-compose.restore.yml',
   'ops/deploy/compose.release.yml',
+  // What `prepare` turns into `shared/.env` on a host that has none (D-12):
+  // placeholders and defaults, never a secret.
+  'ops/deploy/shared.env.template',
   'db/init.sql',
 ];
 /** Added when the release also carries the editor. */
@@ -125,11 +128,22 @@ export function nextState(state, record, { cap = 10 } = {}) {
   return { current: record, previous: state.current ?? null, history };
 }
 
-/** The release ids worth pruning images for: current, previous, one before. */
+/**
+ * The releases worth pruning images for: current, previous, one before.
+ *
+ * It returns the *records*, not the ids, because what an image is named by is
+ * its tag (`virtual-lab/backend:<tag>`) and a release id (`vl-a1b2c3d`) is not a
+ * tag — comparing the two kept nothing and pruned everything (OPS1 phase 5).
+ *
+ * @param {{current: object|null, previous: object|null, history: object[]}} state
+ * @returns {object[]} at most three records, in keep order.
+ */
 export function keepForPrune(state) {
   // current, then the history (whose head is the previous) — three distinct ids.
   return [state.current, ...(state.history ?? [])]
     .filter(Boolean)
-    .slice(0, 3)
-    .map(record => record.id);
+    .slice(0, 3);
 }
+
+/** The image tags a prune must keep: the tags of the kept releases. */
+export const keepTags = state => keepForPrune(state).map(record => record.tag ?? record.id);

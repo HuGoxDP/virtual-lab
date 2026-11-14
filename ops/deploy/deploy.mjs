@@ -14,7 +14,7 @@
 //   --compose-file <path>    an extra compose file, repeatable (the rehearsal adds
 //                            ops/deploy/compose.rehearsal.yml)
 //   --bundle <path>          the release bundle tar to upload (written by writeBundle)
-//   --smoke-expect-commit    fail the smoke unless the deployed commit equals this
+//   --smoke-expect-commit    (reserved) an explicit pin; the pipeline pins each release itself
 //   --rehearsal              local commits are allowed (the rehearsal only)
 //
 // A gate refusal is exit 4 and one line naming the gate; a deploy failure that
@@ -90,7 +90,11 @@ function haltRefusal(haltFile, log) {
 /**
  * The deploy command.
  *
- * @param {object} options — the CLI's own, injected in the tests.
+ * @param {object} options — the CLI's own, injected in the tests. Everything the
+ *   command line assembles (transport, project, compose list, bundle, smoke) is
+ *   an option, so `main()` is a thin argument parser and this function is the one
+ *   a test drives — which is what phase 5 fixed: the options were passed and
+ *   then dropped, so `--transport local --project vlrehearsal` did nothing.
  */
 export async function runDeploy(options) {
   const {
@@ -100,6 +104,14 @@ export async function runDeploy(options) {
     haltFile = null,
     knownHosts = null,
     repo = null,
+    transport = null,
+    project = null,
+    composeFiles = null,
+    extra = [],
+    bundlePath = null,
+    smoke = null,
+    locks = [],
+    logDir = null,
   } = options;
 
   const { flags, positional } = parseArgs(argv);
@@ -111,7 +123,7 @@ export async function runDeploy(options) {
 
   const envFile = flags['env-file'] ? path.resolve(String(flags['env-file'])) : null;
   const dryRun = flags['dry-run'] === true;
-  const logDir = flags['log-dir'] ? path.resolve(String(flags['log-dir'])) : null;
+  const logDir_ = logDir ?? (flags['log-dir'] ? path.resolve(String(flags['log-dir'])) : null);
 
   let cfg;
   try {
@@ -122,7 +134,7 @@ export async function runDeploy(options) {
   }
 
   const redact = makeRedactor(cfg);
-  const log = createLogger({ redact, dir: logDir, command, now });
+  const log = createLogger({ redact, dir: logDir_, command, now });
   log.info(`${command} ${target}${dryRun ? ' (dry run)' : ''}`);
 
   const stop = haltRefusal(haltFile, log);
@@ -138,18 +150,41 @@ export async function runDeploy(options) {
     return stale.exitCode;
   }
 
-  const transport = dryRun
+  const runTransport = transport ?? (dryRun
     ? dryRunTransport(line => log.write(line))
-    : (env.VL_TRANSPORT === 'local' ? localTransport() : sshTransport(cfg, knownHosts ?? `${env.HOME}/.ssh/known_hosts`));
+    : (env.VL_TRANSPORT === 'local' ? localTransport() : sshTransport(cfg, knownHosts ?? `${env.HOME}/.ssh/known_hosts`)));
 
   const commits = commitsFor({ editor: flags.editor === true, repo: repoRoot });
   const images = imageNames({ vlTag: tagOf(commits.vl), edTag: commits.ed ? tagOf(commits.ed) : null })
     .map(image => image.name);
 
+  // The release bundle: the compose files, their inputs and `release.env`, cut
+  // from this commit and written outside the worktree (so a release never
+  // depends on an untracked file). A dry run contacts nothing, so it writes
+  // nothing.
+  let bundle = bundlePath;
+  if (!dryRun && !bundle) {
+    try {
+      bundle = writeBundle(repoRoot, {
+        vlTag: tagOf(commits.vl), vlCommit: commits.vl,
+        editor: flags.editor === true, extra,
+        edTag: commits.ed ? tagOf(commits.ed) : null,
+      }).path;
+    } catch (err) {
+      log.warn(`the release bundle could not be written: ${err.message}`);
+      return 4;
+    }
+  }
+
   const context = {
-    transport, config: cfg, commits, images,
-    locks: (flags.locks ? String(flags.locks).split(',') : []),
+    transport: runTransport, config: cfg, commits, images,
+    locks: locks.length > 0 ? locks : (flags.locks ? String(flags.locks).split(',') : []),
     log, now, red: flags.red,
+    project: project ?? (flags.project ? String(flags.project) : null),
+    composeFiles: composeFiles ?? null,
+    extra,
+    bundlePath: bundle,
+    smoke,
   };
 
   if (command === 'deploy') {
@@ -175,7 +210,22 @@ export async function runDeploy(options) {
   }
 
   if (command === 'rollback') {
-    const result = await rollbackRelease(context);
+    const record = await readReleaseRecord(runTransport, cfg.DEPLOY_PATH, { locks: context.locks, log });
+    if (!record.current || !record.previous) {
+      log.warn(`there is nothing to roll back to: the record names ${record.current?.id ?? 'no release'}`);
+      return 4;
+    }
+    log.info(`rollback: ${record.current.id} → ${record.previous.id}`);
+    const result = await rollbackRelease({
+      ...context,
+      // The release it came from, and the facts the rollback needs about it: the
+      // verified backup that deploy took, and whether that deploy migrated.
+      previousRelease: record.previous.id,
+      previousCommit: record.previous.commit,
+      previousRecord: record.previous,
+      backupName: record.current.backup ?? null,
+      needsDb: record.current.migrated === true && Boolean(record.current.backup),
+    });
     log.info(`rollback ${result.ok ? 'ok' : 'failed'} (exit ${result.exitCode ?? 0})`);
     return result.exitCode ?? 0;
   }
@@ -184,23 +234,53 @@ export async function runDeploy(options) {
   return 2;
 }
 
+/** The remote directory, for the one script the orchestrator reads directly. */
+const REMOTE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'remote');
+
+/**
+ * The release record as the host has it, for the `rollback` command: it needs the
+ * release that is running (whose backup and migration fact it carries) *and* the
+ * one to go back to. A host with no record has nothing to roll back.
+ *
+ * @param {{run: Function}} transport
+ * @param {string} deployPath
+ */
+async function readReleaseRecord(transport, deployPath, { locks = [], log = null } = {}) {
+  for (const dir of locks) {
+    try { writeFileSync(`${dir}/heartbeat`, `${new Date().toISOString()} state\n`); } catch { /* a lock that vanished is the wrapper's business */ }
+  }
+  const answer = await transport.run(path.join(REMOTE_DIR, 'state.sh'), [deployPath, 'read']);
+  if (answer.code !== 0) return { current: null, previous: null, history: [] };
+  try {
+    const state = JSON.parse(String(answer.stdout).trim() || 'null');
+    state.history ??= [];
+    return state;
+  } catch {
+    log?.warn('the release record is not readable — nothing to roll back to');
+    return { current: null, previous: null, history: [] };
+  }
+}
+
 /**
  * The smoke as the deployed stack is asked to prove itself: the Phase 3 suite, read-only,
  * against the live URL, with the commit pinned.
  *
  * `SMOKE_EXPECT_COMMIT` is what turns a wrong release red: the stack would otherwise answer
  * "healthy" while running the previous images, which is the failure a rollback must catch.
+ * The caller says *which* commit must answer, because a rollback smokes a different release
+ * than the deploy it undoes — pinning nothing there would pass the very failure the smoke
+ * exists to catch (OPS1 phase 5).
  *
  * @param {string} e2eDir — the worktree's `e2e/`.
- * @param {string} expectCommit — the commit that must answer.
  * @param {string} url — the deployed base URL.
+ * @returns {({expectedCommit: string}) => Promise<{ok: boolean, stdout: string}>}
  */
-export function smokeRunner(e2eDir, expectCommit, url) {
-  return async ({ previous = false }) => {
+export function smokeRunner(e2eDir, url) {
+  return async ({ expectedCommit = '' } = {}) => {
     const env = {
       ...process.env,
       E2E_BASE_URL: url,
-      SMOKE_EXPECT_COMMIT: previous ? '' : expectCommit,
+      SMOKE_EXPECT_COMMIT: expectedCommit,
     };
     const run = spawnSync('npm', ['run', 'smoke'], { cwd: e2eDir, env, encoding: 'utf8' });
     const stdout = `${run.stdout ?? ''}${run.stderr ?? ''}`.trim();
@@ -251,6 +331,14 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     return 2;
   }
 
+  // The rehearsal's root: the same scripts with the same arguments, run here, so
+  // every script sees `--local-root` as its DEPLOY_PATH. Parsed here and then
+  // dropped was the first form of that flag (OPS1 phase 5), and nothing about it
+  // was provable until it moved this line.
+  if (localRoot && (kind === 'local' || env.VL_TRANSPORT === 'local')) {
+    cfg = { ...cfg, DEPLOY_PATH: localRoot };
+  }
+
   const transport = dryRun
     ? dryRunTransport(line => process.stdout.write(`${line}\n`))
     : (kind === 'local' ? localTransport() : sshTransport(cfg, String(flags['known-hosts'] ?? `${env.HOME}/.ssh/known_hosts`)));
@@ -267,10 +355,13 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     locks,
     transport,
     project,
-    composeFiles,
+    // The compose list is derived from the release and the extras the caller
+    // added (`--compose-file`, repeatable) — never passed in pre-joined, because
+    // the separator belongs to the host the scripts run on.
+    composeFiles: null,
     extra: extras,
     bundlePath: flags.bundle ? path.resolve(String(flags.bundle)) : null,
-    smoke: smokeRunner(e2eDir, String(flags['smoke-expect-commit'] ?? ''), `http://127.0.0.1:${cfg.FRONTEND_PORT ?? 80}`),
+    smoke: smokeRunner(e2eDir, `http://127.0.0.1:${cfg.FRONTEND_PORT ?? 80}`),
   });
 }
 

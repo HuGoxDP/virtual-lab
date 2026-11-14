@@ -9,7 +9,7 @@
 // rather than leave a half-deployed stack, and what makes the database come
 // back only when the deploy migrated (D-10).
 
-import { createReadStream, existsSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
+import { createReadStream, existsSync, writeFileSync, mkdirSync, cpSync, rmSync, renameSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ import { Readable } from 'node:stream';
 
 import { deployWindow } from './window.mjs';
 import { needsDbRestore } from './rollback.mjs';
-import { composeFiles as releaseComposeFiles, releaseId, bundleFiles, nextState, keepForPrune, tagOf } from './release.mjs';
+import { composeFiles as releaseComposeFiles, releaseId, bundleFiles, nextState, keepTags, tagOf } from './release.mjs';
 import { UPLOAD_BUNDLE_COMMAND } from './transport.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -110,11 +110,21 @@ export function writeBundle(repoRoot, release, { out = null } = {}) {
     writeFileSync(path.join(stage, 'release.env'),
       releaseEnvContents({ ...release, composeFiles: files }));
     const target = out ?? path.join(os.tmpdir(), `vl-bundle-${release.vlTag.slice(0, 8)}.tar.gz`);
-    const tar = spawnSync('tar', ['-czf', target, '-C', stage, '.'], { stdio: ['ignore', 'ignore', 'inherit'] });
+    // A *relative* archive name beside the stage, then a move: this machine's
+    // `tar` (bsdtar) reads a `C:\…` argument as a remote host and exits 128
+    // before writing anything, and `-C <drive path>` is the same failure. The
+    // Linux host the production deploy runs on accepts either form, so this is
+    // the shape that works on both (OPS1 phase 5).
+    const archive = `vl-bundle-${release.vlTag.slice(0, 8)}.tar.gz`;
+    const tar = spawnSync('tar', ['-czf', `../${archive}`, '.'], {
+      cwd: stage, stdio: ['ignore', 'ignore', 'inherit'],
+    });
     if (tar.status !== 0) throw new Error(`tar of the release bundle exited ${tar.status}`);
+    renameSync(path.join(path.dirname(stage), archive), target);
     return { path: target, files };
   } finally {
     rmSync(stage, { recursive: true, force: true });
+    rmSync(path.join(path.dirname(stage), `vl-bundle-${release.vlTag.slice(0, 8)}.tar.gz`), { force: true });
   }
 }
 
@@ -161,10 +171,29 @@ export function composeFilesFor(context) {
   return (context.composeFiles ? list : list.filter(file => /\.ya?ml$/.test(file))).join(separator);
 }
 
+/**
+ * A file opened for a transport that streams it.
+ *
+ * `createReadStream` opens the file asynchronously, so a bundle that is missing
+ * or unreadable surfaces as an `error` event on a stream that may already have
+ * been handed over — and an unhandled `error` takes the process down. A deploy
+ * that crashes on a file it cannot read is worse than one that refuses the step,
+ * so the error is handled here: the stream ends, the step fails, and the run
+ * stops where it stands instead of dying mid-deploy.
+ *
+ * @param {string} file
+ * @returns {import('node:fs').ReadStream}
+ */
+function readStreamOf(file) {
+  const stream = createReadStream(file);
+  stream.on('error', () => stream.destroy());
+  return stream;
+}
+
 /** The release record as the host has it: what is current, what to go back to. */
 async function readState(transport, deployPath, { locks = [], log = null } = {}) {
   await beat(locks, 'state');
-  const answer = await transport.run(script('state.sh'), [deployPath, 'read']);
+  const answer = await transport.run(script('state'), [deployPath, 'read']);
   if (answer.code !== 0) {
     log?.warn('state.sh read failed — the release record is unreadable');
     return { ok: false, state: null };
@@ -180,7 +209,7 @@ async function readState(transport, deployPath, { locks = [], log = null } = {})
 /** Writes the release record: what is running now, and what to go back to. */
 async function writeState(transport, deployPath, record, { locks = [], log = null } = {}) {
   await beat(locks, 'state');
-  const answer = await transport.run(script('state.sh'), [
+  const answer = await transport.run(script('state'), [
     deployPath, 'write', record.id, record.tag ?? '', record.commit,
     String(record.migrated === true), record.backup ?? '',
   ]);
@@ -303,14 +332,16 @@ export async function deployPlatform(context) {
 
   // The bundle is the release: if it was never written, there is nothing to
   // upload and no release to name afterwards — a refusal here, not a crash on a
-  // stream that cannot be opened.
+  // stream that cannot be opened. A dry run has nothing on disk to stream, so it
+  // *describes* the upload instead (the one step it cannot perform for real).
   const bundlePath = context.bundlePath;
-  if (!bundlePath || !existsSync(bundlePath)) {
+  const dry = transport.kind === 'dry-run';
+  if (!dry && (!bundlePath || !existsSync(bundlePath))) {
     return refusal('upload-bundle', done, 4, { reason: 'the release bundle is missing' });
   }
 
   const upload = await transport.pipeIn(
-    createReadStream(bundlePath),
+    dry ? Readable.from([]) : readStreamOf(bundlePath),
     context.uploadCommand ?? UPLOAD_BUNDLE_COMMAND,
     [path.join(config.DEPLOY_PATH, 'releases'), release],
   );
@@ -353,7 +384,7 @@ export async function deployPlatform(context) {
     const state = nextState(before.state ?? { current: null, previous: null, history: [] }, {
       id: release, tag: tagOf(commits.vl), commit: commits.vl, migrated, backup: backup.backup_name ?? null,
     });
-    const prune = await step('prune', transport, ['dry', keepForPrune(state).join(','), ...images], { locks, log });
+    const prune = await step('prune', transport, ['dry', keepTags(state).join(','), ...images], { locks, log });
     done.push(prune.name);
     return { ok: true, steps: done, release, backupName: backup.backup_name ?? null, migrated };
   }
