@@ -167,13 +167,21 @@ describe('DW-2.5 buildCommands', () => {
     // A `-f Dockerfile ./backend` looks for the Dockerfile beside the command, not
     // inside the context — which is what the rehearsal's first build proved by
     // failing with "no such file or directory" (OPS1 phase 5).
-    for (const command of buildCommands({ vlRepo: REPO, edRepo: REPO, vl: VL, ed: ED, editor: true })) {
+    // The platform's Dockerfiles live inside this repository; the editor's lives in
+    // its own checkout, which is a different repository (and has no Dockerfile here).
+    for (const command of buildCommands({ vlRepo: REPO, edRepo: '/ed', vl: VL, ed: ED, editor: true })) {
       const index = command.argv.indexOf('-f');
       const dockerfile = command.argv[index + 1];
       assert.ok(!dockerfile.includes('\\') && !dockerfile.startsWith('./'),
         `${command.service}'s -f is forward-slashed and not context-relative: ${dockerfile}`);
-      assert.ok(existsSync(path.join(REPO, dockerfile)) || existsSync(dockerfile),
-        `${command.service}'s -f ${dockerfile} exists`);
+      if (command.service === 'editor') {
+        // The editor's Dockerfile is inside its own checkout, which is a different
+        // repository — there is none in this one to find.
+        assert.equal(dockerfile, '/ed/Dockerfile');
+      } else {
+        assert.ok(existsSync(path.join(REPO, dockerfile)),
+          `${command.service}'s -f ${dockerfile} exists in this repository`);
+      }
     }
   });
 
