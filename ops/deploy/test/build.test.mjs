@@ -8,7 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -156,12 +156,25 @@ describe('DW-2.5 buildCommands', () => {
     assert.deepEqual(commands[0].argv, [
       'build', '-t', `virtual-lab/backend:${VL}`,
       '--label', `org.opencontainers.image.revision=${VL}`,
-      '-f', 'Dockerfile', './backend',
+      '-f', 'backend/Dockerfile', './backend',
     ]);
     // Dockerfile paths are forward-slashed even on Windows.
-    assert.equal(commands[0].argv.at(-2), 'Dockerfile');
     assert.equal(commands[1].argv.at(-2), 'Dockerfile.frontend');
     assert.equal(commands[1].argv.at(-1), '.');
+  });
+
+  it('every -f path exists, because the build runs from the repository root', () => {
+    // A `-f Dockerfile ./backend` looks for the Dockerfile beside the command, not
+    // inside the context — which is what the rehearsal's first build proved by
+    // failing with "no such file or directory" (OPS1 phase 5).
+    for (const command of buildCommands({ vlRepo: REPO, edRepo: REPO, vl: VL, ed: ED, editor: true })) {
+      const index = command.argv.indexOf('-f');
+      const dockerfile = command.argv[index + 1];
+      assert.ok(!dockerfile.includes('\\') && !dockerfile.startsWith('./'),
+        `${command.service}'s -f is forward-slashed and not context-relative: ${dockerfile}`);
+      assert.ok(existsSync(path.join(REPO, dockerfile)) || existsSync(dockerfile),
+        `${command.service}'s -f ${dockerfile} exists`);
+    }
   });
 
   it('the editor image is built from its own checkout, and only when it ships', () => {

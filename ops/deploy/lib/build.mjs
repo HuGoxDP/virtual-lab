@@ -12,12 +12,19 @@
 // which is the one property the whole tagging scheme exists to give.
 
 import { execFileSync } from 'node:child_process';
+import path from 'node:path';
+import { existsSync } from 'node:fs';
 
-/** The three platform images and the editor, as `docker build` arguments. */
+/** The three platform images and the editor, as `docker build` arguments.
+ *
+ * A build runs from the repository's root, so a `-f` path is *repo-relative*:
+ * `-f Dockerfile ./backend` looks for `Dockerfile` beside the command and fails
+ * with "no such file or directory" — which is exactly what the rehearsal's first
+ * build did before this (OPS1 phase 5). */
 const SPECS = {
-  backend: { dir: './backend', dockerfile: 'Dockerfile' },
+  backend: { dir: './backend', dockerfile: 'backend/Dockerfile' },
   frontend: { dir: '.', dockerfile: 'Dockerfile.frontend' },
-  backup: { dir: './backup', dockerfile: 'Dockerfile' },
+  backup: { dir: './backup', dockerfile: 'backup/Dockerfile' },
 };
 
 /**
@@ -45,7 +52,7 @@ export function buildCommands({ vlRepo, edRepo, vl, ed, editor }) {
     push('editor', `webengine-editor/editor:${ed}`, [
       'build', '-t', `webengine-editor/editor:${ed}`,
       '--label', `org.opencontainers.image.revision=${ed}`,
-      '-f', 'Dockerfile',
+      '-f', path.posix.join(edRepo.replace(/\\/g, '/'), 'Dockerfile'),
       // The editor's own checkout, never docker-compose.editor.yml's build
       // context: that one resolves against a sibling directory a production
       // host does not have (research F-8).
