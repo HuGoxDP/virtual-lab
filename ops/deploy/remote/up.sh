@@ -18,6 +18,12 @@ COMPOSE_FILES="$4"
 
 RELEASE_DIR="$DEPLOY_PATH/releases/$RELEASE_ID"
 cd "$RELEASE_DIR" || { echo "error=no-release" >&2; exit 1; }
+# The services declare `env_file: .env`, which compose resolves against the
+# compose file's directory — the release directory, where there is no `.env`:
+# the secrets live in `shared/.env` (D-12). So the release's compose override
+# points each service at the shared file, and this variable is that path
+# (OPS1 phase 5: without it `up` answers "env file …/releases/<id>/.env not found").
+export VL_SHARED_ENV="$DEPLOY_PATH/shared/.env"
 COMPOSE_FILE="$COMPOSE_FILES" docker compose --project-name "$PROJECT" \
   --env-file "$DEPLOY_PATH/shared/.env" \
   --env-file "$RELEASE_DIR/release.env" \

@@ -13,6 +13,11 @@
 
 services:
 
+  # `env_file` is resolved by the *base* compose file, as a variable
+  # (`${VL_SHARED_ENV:-.env}`): a release directory has no `.env` of its own, and
+  # compose merges `env_file` across files, so an override here would only have
+  # added the shared one on top of the missing local one (OPS1 phase 5). The
+  # deploy passes `VL_SHARED_ENV` — see `remote/up.sh`.
   database:
     image: postgres:16-alpine
     pull_policy: never

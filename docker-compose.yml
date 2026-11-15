@@ -11,7 +11,7 @@ services:
     image: postgres:16-alpine
     container_name: VirtualLabDatabase
     restart: unless-stopped
-    env_file: .env
+    env_file: ${VL_SHARED_ENV:-.env}
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
@@ -35,7 +35,7 @@ services:
     build: ./backend
     container_name: VirtualLabBackend
     restart: unless-stopped
-    env_file: .env
+    env_file: ${VL_SHARED_ENV:-.env}
     environment:
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
@@ -117,7 +117,7 @@ services:
     build: ./backup
     container_name: VirtualLabBackup
     restart: unless-stopped
-    env_file: .env
+    env_file: ${VL_SHARED_ENV:-.env}
     environment:
       DB_HOST: database
       DB_PORT: 5432
