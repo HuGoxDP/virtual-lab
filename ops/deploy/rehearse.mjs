@@ -545,28 +545,45 @@ async function main(argv = process.argv.slice(2)) {
       // The release is cut from A, so the worktree is at A: the bundle the deploy
       // uploads is read from there.
       sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.A]);
-      await step('R-1 deploy A on an empty root', 0, 'deploy');
+      // Exit 10, not the plan's 0: a fresh install has an empty catalog, and the
+      // smoke's own contract ("catalog is empty — publish the release first")
+      // makes that a red smoke — so the deploy rolls back, and a rollback of a
+      // fresh install has no database to restore (DW-5.1's expectation, recorded
+      // as a deviation in the notes). R-2 is what makes a green smoke possible.
+      await step('R-1 deploy A on an empty root', 10, 'deploy');
       const record = readRecord(localRoot);
       process.stdout.write(`     backup: ${record.current?.backup ?? 'none (fresh install)'}`
         + `\n     release: ${record.current?.id ?? 'none'}\n`);
     }
 
-    // R-2 — the catalog the smoke reads, and the marker row a rollback must not lose.
+    // R-2 — the catalog the smoke reads, and the marker row a rollback must not
+    // lose. The stack is brought back up first, because R-1's red smoke took it
+    // down: a fresh host has nothing published, and publishing needs the stack.
     if (want('R-2')) {
-      const publish = run('npm', ['run', 'publish:release', '--', '--base-url', `http://127.0.0.1:${PORT}`], {
-        cwd: path.join(VL_REPO, 'backend'),
-        env: {
-          ...process.env, ADMIN_TOKEN: envValue(stackEnv(localRoot), 'ADMIN_TOKEN'),
-          PUBLISH_BASE_URL: `http://127.0.0.1:${PORT}`, MSYS_NO_PATHCONV: '1',
-        },
-      });
-      log.push('npm run publish:release', publish);
-      const marker = query(localRoot, COMPOSE_FILES, envFile,
-        "insert into scenarios (id, title, description, version, created_at, updated_at) values "
-        + "('rehearsal-marker', 'Rehearsal marker', 'a row a rollback must not lose', '1.0', now(), now()) "
-        + 'on conflict (id) do update set title = excluded.title');
-      process.stdout.write(`     catalog: ${publish.status === 0 ? 'seeded' : 'publish FAILED'}`
-        + `\n     marker row: ${marker === 'INSERT 0 1' ? 'inserted' : marker}\n`);
+      const releaseA = `vl-${SHORT_(commits.A)}`;
+      const up = run('bash', [path.join(HERE, 'remote', 'up.sh'),
+        localRoot, releaseA, PROJECT, COMPOSE_FILES, // the release R-1 uploaded
+      ], { env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+      log.push('node ops/deploy/remote/up.sh (bring A back)', up);
+      const healthy = up.status === 0 ? healthCommit() : null;
+      process.stdout.write(`     A up again: ${up.status === 0 ? 'ok' : `exit ${up.status}`}`
+        + `\n     health: ${healthy === commits.A ? 'A' : healthy}\n`);
+      if (up.status === 0) {
+        const publish = run('npm', ['run', 'publish:release', '--', '--base-url', `http://127.0.0.1:${PORT}`], {
+          cwd: path.join(VL_REPO, 'backend'),
+          env: {
+            ...process.env, ADMIN_TOKEN: envValue(stackEnv(localRoot), 'ADMIN_TOKEN'),
+            PUBLISH_BASE_URL: `http://127.0.0.1:${PORT}`, MSYS_NO_PATHCONV: '1',
+          },
+        });
+        log.push('npm run publish:release', publish);
+        const marker = query(localRoot, COMPOSE_FILES, envFile,
+          "insert into scenarios (id, title, description, version, created_at, updated_at) values "
+          + "('rehearsal-marker', 'Rehearsal marker', 'a row a rollback must not lose', '1.0', now(), now()) "
+          + 'on conflict (id) do update set title = excluded.title');
+        process.stdout.write(`     catalog: ${publish.status === 0 ? 'seeded' : 'publish FAILED'}`
+          + `\n     marker row: ${marker === 'INSERT 0 1' ? 'inserted' : marker}\n`);
+      }
     }
 
     // R-3 — a second release: the backup is verified, nothing migrated, and the
