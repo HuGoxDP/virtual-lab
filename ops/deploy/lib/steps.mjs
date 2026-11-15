@@ -321,12 +321,22 @@ export async function deployPlatform(context) {
   const release = releaseId(commits);
   const before = await readState(transport, config.DEPLOY_PATH, { locks, log });
   done.push('state(read)');
-  const current = before.state?.current ?? null;
-  const fresh = !current;
 
   const inspect = await step('inspect', transport, [config.DEPLOY_PATH], { locks, log });
   done.push(inspect.name);
   if (!inspect.ok) return refusal(inspect.name, done, 4);
+
+  // A fresh install is the *host's* answer, not the record the pipeline keeps for
+  // itself: a hand-made deployment (or a release someone brought up by hand) has no
+  // record and is still a host that already runs something, with a database worth
+  // backing up (OPS1 phase 5 — the first rehearsal treated such a host as fresh
+  // and never took a backup).
+  const fresh = !inspect.current || inspect.current === 'none';
+  // The release to go *back to* is the one that was running before, which the
+  // record names — and, when the record is empty but the host is running one, the
+  // host's own `releases/current`.
+  const current = before.state?.current
+    ?? (fresh ? null : { id: inspect.current, commit: '' });
 
   const ship = await step('have-images', transport, images, { locks, log });
   done.push(ship.name);

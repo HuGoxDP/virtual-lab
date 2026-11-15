@@ -28,8 +28,13 @@ const hasDocker = (() => {
   }
 })();
 
-describe('DW-2.1 the release compose runs images, not builds', t => {
-  if (!hasDocker) return t.skip('no docker on PATH — the compose assertions run where Docker is');
+/** Skipped with a message when Docker is absent — never silently, so a machine
+ * without Docker gets a gray box that says why rather than a green run that
+ * proved nothing. (A `describe` callback has no `t.skip`; the object form is the
+ * one that works, which is what a Docker-less run used to break on.) */
+const dockerSuite = (name, fn) => describe(name, { skip: hasDocker ? false : 'no docker on PATH — these assertions run where Docker is' }, fn);
+
+dockerSuite('DW-2.1 the release compose runs images, not builds', () => {
 
   it('shows the three platform images with the required tag and pull_policy', () => {
     const json = execFileSync('docker', [
@@ -51,8 +56,7 @@ describe('DW-2.1 the release compose runs images, not builds', t => {
   });
 });
 
-describe('DW-2.2 the backup service writes inside the container and mounts the host directory', t => {
-  if (!hasDocker) return t.skip('no docker on PATH — the compose assertions run where Docker is');
+dockerSuite('DW-2.2 the backup service writes inside the container and mounts the host directory', () => {
 
   const config = extra => JSON.parse(execFileSync('docker', [
     'compose', '-f', 'docker-compose.yml', '-f', 'ops/deploy/compose.release.yml',
@@ -203,8 +207,7 @@ describe('DW-2.5 buildCommands', () => {
   });
 });
 
-describe('imageIds', t => {
-  if (!hasDocker) return t.skip('no docker on PATH — image inspection runs where Docker is');
+dockerSuite('imageIds', () => {
 
   it('returns one id per named image, in order', () => {
     // hello-world is not present by default; a deliberately absent name must

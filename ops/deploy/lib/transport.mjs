@@ -161,7 +161,10 @@ export const UPLOAD_BUNDLE_COMMAND = 'set -euo pipefail; D="$1"; I="$2"; T="$D/$
  * values are placeholders — a dry run contacts nothing, so nothing is real.
  */
 const DRY_RUN_ANSWERS = {
-  'inspect.sh': 'os=linux\narch=x86_64\ndocker=present\nuser_docker=true\n',
+  // A dry run describes the *general* case — a host that already runs a release
+  // (which is every deploy except the first) — so `inspect` answers with one
+  // running. The fresh-install path is what the rehearsal proves.
+  'inspect.sh': 'os=linux\narch=x86_64\ndocker=present\nuser_docker=true\ncurrent=vl-dryrun1\n',
   'backup.sh': 'backup_name=<stub>\nbackup_path=<stub>\nbackup_ok=1\n',
   'verify-backup.sh': 'verified=1\ntables=0\nverify_ok=1\n',
   'migrations.sh': 'migrations=<stub>\nmigrations_ok=1\n',

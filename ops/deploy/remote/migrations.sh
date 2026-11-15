@@ -13,9 +13,11 @@ COMPOSE_FILES="$3"
 # file, not a symlink — see `up.sh`).
 CURRENT_RELEASE=$(cat "$DEPLOY_PATH/releases/current" 2>/dev/null || true)
 [ -n "$CURRENT_RELEASE" ] || { echo "migrations_error=no-current-release" >&2; exit 1; }
-cd "$DEPLOY_PATH/releases/$CURRENT_RELEASE" || { echo "migrations_error=no-current-release" >&2; exit 1; }
+RELEASE_DIR="$DEPLOY_PATH/releases/$CURRENT_RELEASE"
+cd "$RELEASE_DIR" || { echo "migrations_error=no-current-release" >&2; exit 1; }
 SET=$(COMPOSE_FILE="$COMPOSE_FILES" \
   docker compose --project-name "$PROJECT" --env-file "$DEPLOY_PATH/shared/.env" \
+  --env-file "$RELEASE_DIR/release.env" \
   exec -T database \
   psql -U "$(grep -m1 '^DB_USER=' "$DEPLOY_PATH/shared/.env" | cut -d= -f2)" \
        -d "$(grep -m1 '^DB_NAME=' "$DEPLOY_PATH/shared/.env" | cut -d= -f2)" \

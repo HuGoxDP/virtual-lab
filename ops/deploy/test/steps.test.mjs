@@ -82,6 +82,14 @@ function transportFor(options = {}) {
   const transport = recordingTransport((script, args) => {
     const name = script.split(/[\\/]/).pop();
     if (name === 'state.sh' && args[1] === 'read') return { code: 0, stdout: `${state}\n` };
+    // The host's own answer about what is running: a fresh host has no
+    // `releases/current`, a host that already runs something does — and the
+    // deploy's "fresh install" decision is the host's, not the record's
+    // (OPS1 phase 5).
+    if (name === 'inspect.sh') {
+      const running = state === EMPTY ? 'none' : 'vl-bbbb222';
+      return { code: 0, stdout: `current=${running}\ninspect_ok=1\n` };
+    }
     if (name === 'backup.sh') return {
       code: 0,
       stdout: 'backup_name=2026-11-12T23-00-00Z\nbackup_path=/srv/backups/2026-11-12T23-00-00Z\n',

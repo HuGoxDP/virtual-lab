@@ -15,6 +15,12 @@ if docker info >/dev/null 2>&1; then echo "user_docker=true"; fi
 echo "free_disk_kb=$(df -Pk "$DEPLOY_PATH" 2>/dev/null | awk 'NR==2{print $4}')"
 echo "env_present=false"
 if [ -f "$DEPLOY_PATH/shared/.env" ]; then echo "env_present=true"; fi
+# The release the host is running now, by the id `up` recorded. A host with none
+# is a fresh install — and this is the host's own answer, not the record the
+# pipeline keeps for itself (a hand-made deployment has no record and is still
+# not fresh: OPS1 phase 5).
+CURRENT=$(cat "$DEPLOY_PATH/releases/current" 2>/dev/null || true)
+echo "current=${CURRENT:-none}"
 echo "releases=$(ls -1 "$DEPLOY_PATH/releases" 2>/dev/null | wc -l)"
 echo "containers=$(docker ps --format '{{.Names}}' 2>/dev/null | wc -l)"
 echo "projects=$(docker ps --format '{{.Label \"com.docker.compose.project\"}}' 2>/dev/null | sort -u | tr '\n' ',' || true)"

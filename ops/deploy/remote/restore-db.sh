@@ -21,10 +21,12 @@ fi
 # release, so this names the one to restore *from*.
 CURRENT_RELEASE=$(cat "$DEPLOY_PATH/releases/current" 2>/dev/null || true)
 [ -n "$CURRENT_RELEASE" ] || { echo "error=no-current-release" >&2; exit 1; }
-cd "$DEPLOY_PATH/releases/$CURRENT_RELEASE" || { echo "error=no-current-release" >&2; exit 1; }
+RELEASE_DIR="$DEPLOY_PATH/releases/$CURRENT_RELEASE"
+cd "$RELEASE_DIR" || { echo "error=no-current-release" >&2; exit 1; }
 COMPOSE_FILE="$COMPOSE_FILES" \
 docker compose --project-name "$PROJECT" \
   --env-file "$DEPLOY_PATH/shared/.env" \
+  --env-file "$RELEASE_DIR/release.env" \
   run --rm --entrypoint node \
   -e BACKUP_DIR=/backups -v "$BACKUP_PATH:/backups" \
   backup restore.mjs "$BACKUP_NAME" --yes >/dev/null
