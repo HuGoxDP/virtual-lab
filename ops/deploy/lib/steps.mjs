@@ -61,7 +61,13 @@ async function step(name, transport, args, { locks = [], log = null } = {}) {
   await beat(locks, name);
   const answer = await transport.run(script(name), args);
   const fields = parseFields(answer.stdout);
-  log?.info(`${name} → ${answer.code === 0 ? 'ok' : 'EXIT ' + answer.code}`);
+  // What the step answered, not only whether: `prepare → ok` without `env=created`
+  // is how a fresh install can look fine and still have no `.env` (OPS1 phase 5).
+  const said = Object.keys(fields)
+    .filter(key => key !== `${name}_ok` && !key.endsWith('_ok'))
+    .map(key => `${key}=${fields[key]}`)
+    .join(' ');
+  log?.info(`${name} → ${answer.code === 0 ? 'ok' : 'EXIT ' + answer.code}${said ? ` (${said})` : ''}`);
   // A failing step's stderr is the answer: `up → EXIT 1` without the compose error
   // under it is a line nobody can act on (OPS1 phase 5).
   if (answer.code !== 0 && answer.stderr?.trim()) log?.warn(`  ${answer.stderr.trim()}`);
