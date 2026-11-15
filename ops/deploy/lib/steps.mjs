@@ -351,7 +351,10 @@ export async function deployPlatform(context) {
   const upload = await transport.pipeIn(
     dry ? Readable.from([]) : readStreamOf(bundlePath),
     context.uploadCommand ?? UPLOAD_BUNDLE_COMMAND,
-    [path.join(config.DEPLOY_PATH, 'releases'), release],
+    // A POSIX join on a POSIX base: `path.join` on this machine uses `\`, which
+    // turns `/c/Users/…` into `/c/Users/…\releases` — a path with two separators,
+    // which is what made the rehearsal's upload answer exit 2 (OPS1 phase 5).
+    [path.posix.join(config.DEPLOY_PATH, 'releases'), release],
   );
   done.push('upload-bundle');
   log?.info(`upload-bundle → ${upload.code === 0 ? 'ok' : 'EXIT ' + upload.code}`);

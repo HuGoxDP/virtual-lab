@@ -173,7 +173,7 @@ export function deployCommand({ envFile, localRoot, repo = VL_REPO }, command, e
  * which is precisely what makes it a different case (R-7).
  */
 export function composeCommand(root, composeFiles, args, { envFile, cwd, project = PROJECT } = {}) {
-  const from = cwd ?? path.join(posix(root), 'releases', 'current');
+  const from = cwd ?? path.posix.join(posix(root), 'releases', 'current');
   return run('bash', ['-c',
     `cd "${from}" && COMPOSE_FILE="${composeFiles}" `
     + `docker compose --project-name ${project} --env-file "${posix(envFile)}" "$@"`,
@@ -298,7 +298,10 @@ export function writeEnv(localRoot, port = PORT) {
     '# nothing here reaches a server: the local transport runs the same scripts',
     '# on this machine with DEPLOY_PATH as its root.',
     'DEPLOY_HOST=127.0.0.1',
-    'DEPLOY_USER=rehearsal',
+    // Not the word the temp root uses: the pipeline's redactor replaces every
+    // configured value, so a user named `rehearsal` would rewrite the rehearsal's
+    // own paths out of its logs (OPS1 phase 5).
+    'DEPLOY_USER=localuser',
     'DEPLOY_KEY=/dev/null',
     'DEPLOY_DOMAIN=rehearsal.invalid',
     `DEPLOY_PATH=${posix(localRoot)}`,

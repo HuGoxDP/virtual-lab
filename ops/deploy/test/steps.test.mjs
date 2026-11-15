@@ -199,7 +199,8 @@ describe('DW-4.1 the happy deploy runs the steps in the gate order', () => {
     assert.equal(loads.length, 2, 'the two missing images are shipped');
     const upload = piped.find(p => p.fixedCommand !== 'gunzip | docker load');
     assert.ok(upload, 'the bundle is streamed, not named as a path');
-    assert.deepEqual(upload.args, [path.join(CFG.DEPLOY_PATH, 'releases'), RELEASE_A]);
+    assert.deepEqual(upload.args, [path.posix.join(CFG.DEPLOY_PATH, 'releases'), RELEASE_A],
+      'the POSIX form: the scripts get one separator, not two');
   });
 
   it('an image the local Docker does not have refuses the ship, naming it', async () => {

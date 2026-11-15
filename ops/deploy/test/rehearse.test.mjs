@@ -136,6 +136,27 @@ describe('DW-5.4 the rehearsal driver', () => {
     }
   });
 
+  it('writes a deploy.env whose values cannot rewrite its own paths', () => {
+    // The pipeline's redactor replaces every configured value in every log line, so
+    // a value that also appears in a path makes that path unreadable in the log —
+    // a `rehearsal` user turned `vl-rehearsal-XXX` into `vl-<DEPLOY_USER>-XXX`
+    // (OPS1 phase 5). The rehearsal's own words are chosen not to collide.
+    const root = mkdtemp('vl-rehearsal-');
+    let file = null;
+    try {
+      file = writeEnv(root);
+      for (const key of ['DEPLOY_USER', 'DEPLOY_HOST', 'DEPLOY_DOMAIN']) {
+        const value = envValue(file, key);
+        assert.equal(root.includes(value), false,
+          `${key}'s value ${value} is not part of the rehearsal's own paths`);
+      }
+      assert.equal(envValue(file, 'DEPLOY_PATH'), posix(root));
+    } finally {
+      if (file) rmSync(path.dirname(file), { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('writes a deploy.env with no secret and a POSIX DEPLOY_PATH', () => {
     const root = mkdtemp('vl-env-');
     let file = null;
