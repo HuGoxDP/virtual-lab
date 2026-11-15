@@ -481,7 +481,10 @@ export async function deployPlatform(context) {
     return {
       ok: false, failed: 'migrations', steps: done, exitCode: 11,
       reason: migrationFailure, rollback: true,
-      needsDbRestore: Boolean(backup.backup_name),
+      // `needsDb`, the name `rollbackRelease` reads: a differently-named field
+      // there defaulted the rollback to `true` and restored a database that was
+      // never backed up (OPS1 phase 5).
+      needsDb: Boolean(backup.backup_name),
       backupName: backup.backup_name ?? null,
       previousRelease: current?.id ?? null,
       previousCommit: current?.commit ?? null,
@@ -495,7 +498,7 @@ export async function deployPlatform(context) {
   return {
     ok: false, failed: waitHealthy.ok ? 'smoke' : 'wait-healthy', steps: done, exitCode: 10,
     rollback: true,
-    needsDbRestore: mayHaveMigrated && Boolean(backup.backup_name),
+    needsDb: mayHaveMigrated && Boolean(backup.backup_name),
     backupName: backup.backup_name ?? null,
     // The release to go *back to* is the one that was running before, not the one
     // that just failed: `previous` in the record, never the release we deployed.

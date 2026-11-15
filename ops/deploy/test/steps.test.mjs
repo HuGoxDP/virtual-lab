@@ -253,12 +253,12 @@ describe('DW-4.1 the happy deploy runs the steps in the gate order', () => {
     assert.equal(result.rollback, true, 'the stack was replaced, so it has to come back');
     // No "after" migration read is possible, so the database comes back: the
     // backend applies migrations at start and it may have applied some.
-    assert.equal(result.needsDbRestore, true);
+    assert.equal(result.needsDb, true, 'the deploy migrated, so the database comes back');
 
     const back = await rollbackRelease({
       ...contextFor(transport), previousRelease: result.previousRelease,
       previousCommit: result.previousCommit,
-      backupName: result.backupName, needsDb: result.needsDbRestore,
+      backupName: result.backupName, needsDb: result.needsDb,
     });
     assert.ok(back.ok, 'the rollback finished');
     assert.ok(transport.calls.some(c => c.script.includes('restore-db.sh')), 'the database was restored');
@@ -310,7 +310,7 @@ describe('DW-4.3 a fresh install has nothing to back up', () => {
     const transport = transportFor({ state: EMPTY });
     const result = await deployPlatform({ ...contextFor(transport), red: 'smoke' });
     assert.equal(result.exitCode, 10);
-    assert.equal(result.needsDbRestore, false, 'there is no older database to come back to');
+    assert.equal(result.needsDb, false, 'there is no older database to come back to');
     assert.equal(result.previousRelease, null);
   });
 
@@ -335,7 +335,7 @@ describe('DW-4.2 a red smoke rolls back', () => {
     assert.equal(result.failed, 'smoke');
     assert.equal(result.exitCode, 10);
     assert.equal(result.rollback, true);
-    assert.equal(result.needsDbRestore, true, 'the deploy migrated, so the database comes back');
+    assert.equal(result.needsDb, true, 'the deploy migrated, so the database comes back');
     // The rollback goes back to what was running, never to the release that failed.
     assert.equal(result.previousRelease, 'vl-bbbb222');
     assert.equal(result.previousCommit, B, 'the smoke of the rolled-back release pins its commit');
@@ -343,21 +343,39 @@ describe('DW-4.2 a red smoke rolls back', () => {
     const back = await rollbackRelease({
       ...contextFor(transport), previousRelease: result.previousRelease,
       previousCommit: result.previousCommit,
-      backupName: result.backupName, needsDb: result.needsDbRestore,
+      backupName: result.backupName, needsDb: result.needsDb,
     });
     assert.ok(back.ok, 'the rollback finished');
     assert.ok(transport.calls.some(c => c.script.includes('restore-db.sh')), 'the database was restored');
+  });
+
+  it('a red smoke on a fresh install rolls back without restoring anything', async () => {
+    // A fresh install has no backup, so there is no database to come back to — and
+    // the field that says so must be the one `rollbackRelease` reads. Passing it
+    // by hand (as the tests below do) is what hid the name mismatch: the deploy
+    // returned `needsDbRestore` while the rollback read `needsDb`, so the rollback
+    // defaulted to `true` and tried to restore a backup that never existed
+    // (OPS1 phase 5).
+    const transport = transportFor({ state: EMPTY });
+    const result = await deployPlatform({ ...contextFor(transport), red: 'smoke' });
+    assert.equal(result.exitCode, 10);
+    assert.equal(result.needsDb, false, 'a fresh install has nothing older to return to');
+    // The same glue `runDeploy` uses: the result is spread, nothing renamed.
+    const back = await rollbackRelease({ ...contextFor(transport), ...result });
+    assert.ok(back.ok, 'the stack came back down');
+    assert.equal(transport.calls.filter(c => c.script.includes('restore-db.sh')).length, 0,
+      'no restore-db was called');
   });
 
   it('without migration change there is no restore, still exit 10', async () => {
     const transport = transportFor();
     const result = await deployPlatform({ ...contextFor(transport), red: 'smoke' });
     assert.equal(result.exitCode, 10);
-    assert.equal(result.needsDbRestore, false);
+    assert.equal(result.needsDb, false);
     const back = await rollbackRelease({
       ...contextFor(transport), previousRelease: result.previousRelease,
       previousCommit: result.previousCommit,
-      backupName: result.backupName, needsDb: result.needsDbRestore,
+      backupName: result.backupName, needsDb: result.needsDb,
     });
     assert.ok(back.ok);
     assert.equal(transport.calls.filter(c => c.script.includes('restore-db.sh')).length, 0,
@@ -399,12 +417,12 @@ describe('DW-4.2 a red smoke rolls back', () => {
     assert.equal(result.failed, 'migrations');
     assert.match(result.reason, /migration set shrank/);
     assert.equal(result.rollback, true);
-    assert.equal(result.needsDbRestore, true);
+    assert.equal(result.needsDb, true, 'the deploy migrated, so the database comes back');
 
     const back = await rollbackRelease({
       ...contextFor(transport), previousRelease: result.previousRelease,
       previousCommit: result.previousCommit,
-      backupName: result.backupName, needsDb: result.needsDbRestore,
+      backupName: result.backupName, needsDb: result.needsDb,
     });
     assert.ok(back.ok, 'the stack came back');
     assert.ok(transport.calls.some(c => c.script.includes('restore-db.sh')), 'the database was restored');
