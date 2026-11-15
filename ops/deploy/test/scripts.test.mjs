@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
@@ -152,7 +153,13 @@ describe('DW-5.5 the scripts the rehearsal would have hit', () => {
     }
   });
 
-it('prepare.sh generates a .env from the template and never overwrites one', () => {
+/** A bundle tar uploaded through the script, exactly as the pipeline does it. */
+  const uploadViaScript = (releases, release, tarFile) => execFileSync('bash',
+    [path.join(ROOT, 'remote', 'upload-bundle.sh'), releases, release], {
+      encoding: 'utf8', input: readFileSync(tarFile), maxBuffer: 1 << 20,
+    });
+
+  it('prepare.sh generates a .env from the template and never overwrites one', () => {
     const dir = mkdtemp('vl-prepare-');
     try {
       mkdirSync(path.join(dir, 'releases'), { recursive: true });
@@ -218,14 +225,63 @@ it('prepare.sh generates a .env from the template and never overwrites one', () 
       writeFileSync(path.join(stage, 'docker-compose.yml'), 'services: {}\n');
       execFileSync('tar', ['-czf', '../vl-upload.tar.gz', '.'], { cwd: stage, maxBuffer: 1 << 20 });
       const tarFile = path.join(path.dirname(stage), 'vl-upload.tar.gz');
-      assert.throws(() => execFileSync('bash', [path.join(ROOT, 'remote', 'upload-bundle.sh'), posix(releases), 'vl-aaaa111'], {
-        encoding: 'utf8', input: readFileSync(tarFile), maxBuffer: 1 << 20,
-      }), /no-shared-env-template/);
+      assert.throws(() => uploadViaScript(posix(releases), 'vl-aaaa111', tarFile), /no-shared-env-template/);
       assert.equal(existsSync(path.join(releases, 'vl-aaaa111')), false, 'nothing was left behind');
       rmSync(stage, { recursive: true, force: true });
       rmSync(tarFile, { force: true });
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the fixed upload command and the script are the same procedure', async () => {
+    // The pipeline runs the fixed one-liner (D-14: one procedure for both
+    // transports), and the script is the same steps in file form. They must not
+    // drift: a one-liner that forgot the `.env` template would leave every fresh
+    // install without one, which is how the rehearsal's first runs failed
+    // (OPS1 phase 5).
+    const { localTransport, UPLOAD_BUNDLE_COMMAND } = await import('../lib/transport.mjs');
+    const stage = mkdtemp('vl-upload-src-');
+    const nested = path.join(stage, 'ops', 'deploy');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(path.join(stage, 'docker-compose.yml'), 'services: {}\n');
+    writeFileSync(path.join(stage, 'release.env'), 'VL_TAG=vl-aaaa111\n');
+    writeFileSync(path.join(nested, 'shared.env.template'), 'DB_PASSWORD=${GENERATED}\n');
+    execFileSync('tar', ['-czf', '../vl-upload.tar.gz', '.'], { cwd: stage, maxBuffer: 1 << 20 });
+    const tarFile = path.join(path.dirname(stage), 'vl-upload.tar.gz');
+    const tar = readFileSync(tarFile);
+
+    // The script, in one root; the fixed command, in another.
+    const viaScript = mkdtemp('vl-upload-');
+    const viaCommand = mkdtemp('vl-upload-');
+    try {
+      uploadViaScript(posix(path.join(viaScript, 'releases')), 'vl-aaaa111', tarFile);
+      mkdirSync(path.join(viaCommand, 'releases'), { recursive: true });
+      const transport = localTransport();
+      const answer = await transport.pipeIn(
+        Readable.from([tar]),
+        UPLOAD_BUNDLE_COMMAND,
+        [posix(path.join(viaCommand, 'releases')), 'vl-aaaa111'],
+      );
+      assert.equal(answer.code, 0, answer.stderr);
+      const members = root => {
+        const walk = (dir, prefix = '') => readdirSync(dir, { withFileTypes: true })
+          .flatMap(entry => (entry.isDirectory()
+            ? walk(path.join(dir, entry.name), `${prefix}${entry.name}/`)
+            : [`${prefix}${entry.name}`]))
+          .filter(name => name !== 'releases/');
+        return walk(root).sort();
+      };
+      // The same files, in the same places: the release, the release env, and the
+      // template beside the releases.
+      assert.deepEqual(members(viaScript), members(viaCommand));
+      assert.ok(members(viaScript).includes('releases/shared.env.template'),
+        'and both put the template where prepare finds it');
+    } finally {
+      rmSync(stage, { recursive: true, force: true });
+      rmSync(tarFile, { force: true });
+      rmSync(viaScript, { recursive: true, force: true });
+      rmSync(viaCommand, { recursive: true, force: true });
     }
   });
 

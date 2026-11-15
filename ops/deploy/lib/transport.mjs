@@ -139,13 +139,21 @@ export function localTransport() {
  * transports run *the same procedure* rather than a local shortcut — which is
  * what makes a rehearsal a proof of the production upload (D-14).
  *
+ * The equivalence is pinned by a test that runs both on the same tarball, so the
+ * line and the script cannot drift: a step that forgot the `.env` template would
+ * leave every fresh install without one (OPS1 phase 5).
+ *
  * `$1` and `$2` are inside single quotes on the way through the shell, so they
  * reach `bash -c` as positional parameters and never as a substituted command
  * (D-13).
  */
-export const UPLOAD_BUNDLE_COMMAND = 'set -euo pipefail; D="$1"; I="$2"; T="$D/$I.tmp"; ' +
-  'rm -rf "$T"; mkdir -p "$T"; tar -xzf - -C "$T"; mv "$T" "$D/$I"; ' +
-  'echo "release_dir=$D/$I"; echo "upload_ok=1"';
+export const UPLOAD_BUNDLE_COMMAND = 'set -euo pipefail; D="$1"; I="$2"; T="$D/$I.tmp"; '
+  + 'rm -rf "$T"; mkdir -p "$T"; tar -xzf - -C "$T"; '
+  + '[ -f "$T/ops/deploy/shared.env.template" ] || '
+  + '{ echo "error=no-shared-env-template" >&2; rm -rf "$T"; exit 1; }; '
+  + 'mv "$T" "$D/$I"; '
+  + 'cp -f "$D/$I/ops/deploy/shared.env.template" "$D/shared.env.template"; '
+  + 'echo "template=shared.env.template"; echo "release_dir=$D/$I"; echo "upload_ok=1"';
 
 /**
  * What each script would answer on a real run, so a dry run walks the whole

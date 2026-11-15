@@ -204,9 +204,14 @@ describe('DW-1.8 the local transport hands bash raw arguments', () => {
     try {
       mkdirSync(releases, { recursive: true });
       writeFileSync(path.join(stage, 'release.env'), expected);
-      // A relative operand, not `-C <drive path>`: this machine's `tar` reads a drive
-      // letter as a remote host (the same rule the bundle writer follows).
-      const tar = execFileSync('tar', ['-czf', '-', 'release.env'], { cwd: stage, maxBuffer: 1 << 26 });
+      // The template every release carries, or the upload refuses it: a fresh
+      // host has no `.env` and this is where one comes from (OPS1 phase 5).
+      mkdirSync(path.join(stage, 'ops', 'deploy'), { recursive: true });
+      writeFileSync(path.join(stage, 'ops', 'deploy', 'shared.env.template'), 'DB_PASSWORD=x\n');
+      // The whole stage, not one file: the release carries its compose files *and* the
+      // template a fresh host needs (OPS1 phase 5). A relative operand, not
+      // `-C <drive path>`: this machine's `tar` reads a drive letter as a remote host.
+      const tar = execFileSync('tar', ['-czf', '-', '.'], { cwd: stage, maxBuffer: 1 << 26 });
       const transport = localTransport();
       // The POSIX form, because that is what the scripts get on this machine
       // (`C:\…` is a remote host to this `tar`).
