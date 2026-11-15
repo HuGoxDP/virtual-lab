@@ -187,12 +187,26 @@ export function deployCommand(options, command, extra = []) {
  * which is precisely what makes it a different case (R-7).
  */
 export function composeCommand(root, composeFiles, args, { envFile, cwd, project = PROJECT } = {}) {
-  const from = cwd ?? path.posix.join(root, 'releases', 'current');
+  // `releases/current` is a FILE naming the running release (see `remote/up.sh`),
+  // not a directory to cd into.
+  const from = cwd ?? path.posix.join(root, 'releases', currentRelease(root) ?? 'current');
   return run('bash', ['-c',
     `cd "${from}" && COMPOSE_FILE="${composeFiles}" `
     + `docker compose --project-name ${project} --env-file "${envFile}" "$@"`,
     '_', ...args,
   ], { env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+}
+
+/** The release id `up` recorded as running, or null before the first deploy. */
+export function currentRelease(root) {
+  const file = path.join(root, 'releases', 'current');
+  if (!existsSync(file)) return null;
+  try {
+    const id = readFileSync(file, 'utf8').trim();
+    return id === '' ? null : id;
+  } catch {
+    return null;
+  }
 }
 
 /** A read-only SQL query against the rehearsal database. */

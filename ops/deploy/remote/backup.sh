@@ -8,7 +8,11 @@ DEPLOY_PATH="$1"
 PROJECT="$2"
 COMPOSE_FILES="$3"
 
-cd "$DEPLOY_PATH/releases/current" 2>/dev/null || { echo "error=no-current-release" >&2; exit 1; }
+# The release that is running now: `up` records its id in `releases/current` (a
+# file, not a symlink — see `up.sh`). Nothing else on the host knows it.
+CURRENT_RELEASE=$(cat "$DEPLOY_PATH/releases/current" 2>/dev/null || true)
+[ -n "$CURRENT_RELEASE" ] || { echo "error=no-current-release" >&2; exit 1; }
+cd "$DEPLOY_PATH/releases/$CURRENT_RELEASE" || { echo "error=no-current-release" >&2; exit 1; }
 NAME=$(BACKUP_HOST_DIR="$DEPLOY_PATH/backups" BACKUP_RUN_ONCE=1 \
   COMPOSE_FILE="$COMPOSE_FILES" \
   docker compose --project-name "$PROJECT" --env-file "$DEPLOY_PATH/shared/.env" \

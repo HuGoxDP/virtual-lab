@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PROJECT, REHEARSAL_COMPOSE, SCRATCH_BRANCH, COMPOSE_FILES, PORT,
   posix, sha256, teardownGuard, createRecorder, createLog, envValue, readRecord,
-  scratchCommits, writeEnv, mkdtemp, deployArgv,
+  scratchCommits, writeEnv, mkdtemp, deployArgv, currentRelease,
 } from '../rehearse.mjs';
 
 /** A temporary git repo with one commit and an `origin/main` pointing at it. */
@@ -207,10 +207,15 @@ describe('DW-5.4 the rehearsal driver', () => {
     const root = mkdtemp('vl-record-');
     try {
       assert.equal(readRecord(root).current, null, 'an empty root has no release');
+      assert.equal(currentRelease(root), null, 'and no running release');
       mkdirSync(path.join(root, 'releases'), { recursive: true });
       writeFileSync(path.join(root, 'releases', 'state.json'),
         JSON.stringify({ current: { id: 'vl-bbbb222', commit: 'b'.repeat(40), backup: 'b1' }, previous: null, history: [] }));
       assert.equal(readRecord(root).current.id, 'vl-bbbb222');
+      // `releases/current` is a file with the id in it, not a symlink: this
+      // machine's `ln -s` copies, which is how the first runs failed.
+      writeFileSync(path.join(root, 'releases', 'current'), 'vl-bbbb222\n');
+      assert.equal(currentRelease(root), 'vl-bbbb222');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

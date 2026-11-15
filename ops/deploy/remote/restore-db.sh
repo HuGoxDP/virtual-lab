@@ -16,7 +16,12 @@ if [ ! -f "$BACKUP_PATH/verified" ]; then
   echo "error=backup-not-verified" >&2
   exit 1
 fi
-cd "$DEPLOY_PATH/releases/current" || { echo "error=no-current-release" >&2; exit 1; }
+# The release that is running now: `up` records its id in `releases/current` (a
+# file, not a symlink — see `up.sh`). The rollback has already stopped the new
+# release, so this names the one to restore *from*.
+CURRENT_RELEASE=$(cat "$DEPLOY_PATH/releases/current" 2>/dev/null || true)
+[ -n "$CURRENT_RELEASE" ] || { echo "error=no-current-release" >&2; exit 1; }
+cd "$DEPLOY_PATH/releases/$CURRENT_RELEASE" || { echo "error=no-current-release" >&2; exit 1; }
 COMPOSE_FILE="$COMPOSE_FILES" \
 docker compose --project-name "$PROJECT" \
   --env-file "$DEPLOY_PATH/shared/.env" \

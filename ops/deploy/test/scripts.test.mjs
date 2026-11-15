@@ -8,7 +8,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -128,6 +128,37 @@ describe('DW-5.5 the scripts the rehearsal would have hit', () => {
    * Desktop resolves it the same way.
    */
   const posix = file => file.replace(/^([A-Za-z]):/, '/$1').split(path.sep).join('/');
+
+  it('a script that needs the running release reads it from the current file', () => {
+    // `releases/current` is a FILE with the release id in it, not a symlink: this
+    // machine's `ln -s` *copies* (MSYS without winsymlinks), so a symlink swap
+    // answered "cannot move current.tmp to current: Directory not empty" and every
+    // deploy after the first failed at `up` (OPS1 phase 5).
+    const dir = mkdtemp('vl-current-');
+    try {
+      mkdirSync(path.join(dir, 'releases'), { recursive: true });
+      // Before any deploy there is no running release, and the scripts say so by
+      // name rather than asking docker about a directory that is not there.
+      for (const [script, marker] of [['migrations.sh', 'no-current-release'], ['backup.sh', 'no-current-release']]) {
+        const answer = spawnSync('bash', [path.join(ROOT, 'remote', script), posix(dir), 'vlprobe', 'docker-compose.yml'], {
+          encoding: 'utf8',
+        });
+        assert.equal(answer.status, 1, `${script} refuses`);
+        assert.match(answer.stderr, new RegExp(marker), `${script} names it`);
+      }
+      // With the file written, the same scripts proceed past that gate — and then
+      // fail for want of the release directory it names, which is a different,
+      // equally honest refusal.
+      writeFileSync(path.join(dir, 'releases', 'current'), 'vl-aaaa111\n');
+      const withCurrent = spawnSync('bash', [path.join(ROOT, 'remote', 'migrations.sh'), posix(dir), 'vlprobe', 'docker-compose.yml'], {
+        encoding: 'utf8',
+      });
+      assert.equal(withCurrent.status, 1);
+      assert.match(withCurrent.stderr, /no-current-release/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it('state.sh writes the record a rollback reads back, atomically', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'vl-state-'));
