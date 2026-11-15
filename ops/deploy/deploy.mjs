@@ -314,7 +314,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 
   const dryRun = flags['dry-run'] === true;
   const kind = flags.transport ?? env.VL_TRANSPORT ?? 'ssh';
-  const localRoot = flags['local-root'] ? path.resolve(String(flags['local-root'])) : null;
+  // Not resolved: the rehearsal hands this flag in the POSIX form its scripts need,
+  // and `path.resolve` on this machine would turn `/c/Users/…` into `C:\c\Users\…` —
+  // which is what made `up` fail with "couldn't find env file" (OPS1 phase 5).
+  const localRoot = flags['local-root'] ? String(flags['local-root']) : null;
   const project = flags.project ? String(flags.project) : 'virtual-lab';
   const repo = flags.repo ? path.resolve(String(flags.repo)) : null;
   const haltFile = flags.halt ? path.resolve(String(flags.halt)) : null;
