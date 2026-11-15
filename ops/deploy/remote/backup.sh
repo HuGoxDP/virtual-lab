@@ -23,11 +23,16 @@ cd "$RELEASE_DIR" || { echo "error=no-current-release" >&2; exit 1; }
 # has no `.env` of its own, and the secrets live in `shared/.env` (D-12). Every
 # script that runs compose sets it (OPS1 phase 5).
 export VL_SHARED_ENV="$DEPLOY_PATH/shared/.env"
-OUT=$(BACKUP_HOST_DIR="$DEPLOY_PATH/backups" BACKUP_RUN_ONCE=1 \
+# `-e`, not a variable in front of the command: `BACKUP_RUN_ONCE=1 docker compose
+# run …` sets it for the *compose CLI*, where compose only interpolates with it —
+# the container never sees it, runs its 24-hour schedule loop, and the run never
+# ends (OPS1 phase 5: the rehearsal hung for minutes on exactly that). `-e` puts
+# it in the container's environment, where the script reads it.
+OUT=$(BACKUP_HOST_DIR="$DEPLOY_PATH/backups" \
   COMPOSE_FILE="$COMPOSE_FILES" \
   docker compose --project-name "$PROJECT" --env-file "$DEPLOY_PATH/shared/.env" \
   --env-file "$RELEASE_DIR/release.env" \
-  run --rm backup 2>&1 || true)
+  run --rm -e BACKUP_RUN_ONCE=1 backup 2>&1 || true)
 NAME=$(printf '%s\n' "$OUT" | grep -o '[0-9T:.-]*Z' | head -1 || true)
 if [ -z "$NAME" ]; then
   echo "error=backup-not-created" >&2
