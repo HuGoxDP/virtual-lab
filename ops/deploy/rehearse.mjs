@@ -567,6 +567,7 @@ async function main(argv = process.argv.slice(2)) {
       log.push('node ops/deploy/remote/up.sh (bring A back)', up);
       const healthy = up.status === 0 ? healthCommit() : null;
       process.stdout.write(`     A up again: ${up.status === 0 ? 'ok' : `exit ${up.status}`}`
+        + `${up.status === 0 ? '' : ` ${up.stderr.trim().split('\n').slice(-2).join(' | ')}`}`
         + `\n     health: ${healthy === commits.A ? 'A' : healthy}\n`);
       if (up.status === 0) {
         const publish = run('npm', ['run', 'publish:release', '--', '--base-url', `http://127.0.0.1:${PORT}`], {
@@ -589,7 +590,7 @@ async function main(argv = process.argv.slice(2)) {
     // R-3 — a second release: the backup is verified, nothing migrated, and the
     // health commit is B. The pin is what makes the second release real.
     if (want('R-3')) {
-      sh('git', ['-C', VL_REPO, 'switch', '-q', commits.B]);
+      sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.B]);
       await step('R-3 deploy B (a no-op that still deploys)', 0, 'deploy');
       const record = readRecord(localRoot);
       const health = healthCommit();
@@ -601,7 +602,7 @@ async function main(argv = process.argv.slice(2)) {
     // R-4 — a migration the smoke refuses. The rollout goes back, the schema with
     // it, and the marker row survives: that is the whole of D-10 in one row.
     if (want('R-4')) {
-      sh('git', ['-C', VL_REPO, 'switch', '-q', commits.C]);
+      sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.C]);
       await step('R-4 deploy C with the smoke pinned to a wrong commit', 10, 'deploy',
         ['--smoke-expect-commit', '0'.repeat(40)]);
       const probe = query(localRoot, COMPOSE_FILES, envFile,
@@ -620,7 +621,7 @@ async function main(argv = process.argv.slice(2)) {
     // database is not, because this deploy added no migration and there is no
     // "after" to compare against — "it may have migrated" is the safe answer.
     if (want('R-5')) {
-      sh('git', ['-C', VL_REPO, 'switch', '-q', commits.D]);
+      sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.D]);
       const answer = await step('R-5 deploy D (backend exits at start)', 10, 'deploy');
       const restored = answer.stdout.includes('restore-db.sh');
       const marker = query(localRoot, COMPOSE_FILES, envFile,
@@ -633,7 +634,7 @@ async function main(argv = process.argv.slice(2)) {
 
     // R-6 — the rollback command, from B back to A.
     if (want('R-6')) {
-      sh('git', ['-C', VL_REPO, 'switch', '-q', commits.B]);
+      sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.B]);
       await step('R-6 rollback (B -> A)', 0, 'rollback');
       const health = healthCommit();
       process.stdout.write(`     health commit: ${health === commits.A ? 'A' : health}\n`);

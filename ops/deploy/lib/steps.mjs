@@ -536,6 +536,16 @@ export async function rollbackRelease(context) {
   const stop = await step('stop', transport, [config.DEPLOY_PATH, projectOf(context), previousRelease, composeFiles], { locks, log });
   done.push(stop.name);
 
+  // Nothing to go back to — a fresh install's red smoke, or a host whose record
+  // is empty. The new stack is stopped (above) and the rollback finishes: an
+  // empty target would otherwise run `up` with an empty release id and answer
+  // "couldn't find env file …/releases/release.env", which is a failure nobody
+  // asked for (OPS1 phase 5).
+  if (!previousRelease) {
+    log?.warn('there is no release to roll back to — the new stack is stopped');
+    return { ok: true, steps: done, previousRelease: null, nothing: true };
+  }
+
   if (needsDb) {
     const restore = await step('restore-db', transport, [config.DEPLOY_PATH, backupName, projectOf(context), composeFiles], { locks, log });
     done.push(restore.name);

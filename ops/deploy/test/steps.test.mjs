@@ -367,6 +367,22 @@ describe('DW-4.2 a red smoke rolls back', () => {
       'no restore-db was called');
   });
 
+  it('a rollback with nothing to go back to stops the stack and finishes', async () => {
+    // A fresh install's red smoke: the record is empty, so there is no previous
+    // release. Running `up` with an empty id answered "couldn't find env file
+    // …/releases/release.env" and turned a stopped stack into a failed rollback
+    // (OPS1 phase 5).
+    const transport = transportFor();
+    const back = await rollbackRelease({
+      ...contextFor(transport), previousRelease: null, backupName: null, needsDb: false,
+    });
+    assert.ok(back.ok, 'the rollback finished');
+    assert.equal(back.previousRelease, null);
+    assert.ok(transport.calls.some(c => c.script.includes('stop.sh')), 'the new stack was stopped');
+    assert.equal(transport.calls.some(c => c.script.includes('up.sh')), false,
+      'and nothing was brought up');
+  });
+
   it('without migration change there is no restore, still exit 10', async () => {
     const transport = transportFor();
     const result = await deployPlatform({ ...contextFor(transport), red: 'smoke' });
