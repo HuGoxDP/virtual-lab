@@ -354,9 +354,10 @@ export async function deployPlatform(context) {
   const upload = await transport.pipeIn(
     dry ? Readable.from([]) : readStreamOf(bundlePath),
     context.uploadCommand ?? UPLOAD_BUNDLE_COMMAND,
-    // A POSIX join on a POSIX base: `path.join` on this machine uses `\`, which
-    // turns `/c/Users/…` into `/c/Users/…\releases` — a path with two separators,
-    // which is what made the rehearsal's upload answer exit 2 (OPS1 phase 5).
+    // A POSIX join on a POSIX base: `path.join` on a Windows host uses `\`, which
+    // turns `C:/Users/…` into `C:/Users/…\releases` — a path with two separators,
+    // which is what made the rehearsal's upload answer exit 2 (OPS1 phase 5). On
+    // the Linux host both joins are the same thing.
     [path.posix.join(config.DEPLOY_PATH, 'releases'), release],
   );
   done.push('upload-bundle');
