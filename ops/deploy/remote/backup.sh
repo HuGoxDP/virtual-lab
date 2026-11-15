@@ -13,12 +13,19 @@ COMPOSE_FILES="$3"
 CURRENT_RELEASE=$(cat "$DEPLOY_PATH/releases/current" 2>/dev/null || true)
 [ -n "$CURRENT_RELEASE" ] || { echo "error=no-current-release" >&2; exit 1; }
 cd "$DEPLOY_PATH/releases/$CURRENT_RELEASE" || { echo "error=no-current-release" >&2; exit 1; }
-NAME=$(BACKUP_HOST_DIR="$DEPLOY_PATH/backups" BACKUP_RUN_ONCE=1 \
+# The one-off backup prints `backup -> <dir>`, and the dir's name is the backup's
+# name. Everything the container says is kept: a backup that fails has already
+# removed its own partial directory, so the container's last words are the only
+# evidence there is (OPS1 phase 5 — a bare "error=backup-not-created" made R-4
+# undiagnosable).
+OUT=$(BACKUP_HOST_DIR="$DEPLOY_PATH/backups" BACKUP_RUN_ONCE=1 \
   COMPOSE_FILE="$COMPOSE_FILES" \
   docker compose --project-name "$PROJECT" --env-file "$DEPLOY_PATH/shared/.env" \
-  run --rm backup 2>/dev/null | grep -o '[0-9T:.-]*Z' | head -1 || true)
+  run --rm backup 2>&1 || true)
+NAME=$(printf '%s\n' "$OUT" | grep -o '[0-9T:.-]*Z' | head -1 || true)
 if [ -z "$NAME" ]; then
   echo "error=backup-not-created" >&2
+  printf '%s\n' "$OUT" | tail -6 >&2
   exit 1
 fi
 echo "backup_name=$NAME"

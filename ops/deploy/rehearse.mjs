@@ -48,6 +48,14 @@ export const SCRATCH_BRANCH = 'OPS1-rehearsal-scratch';
 /** A short sha, for the table. */
 const SHORT_ = sha => String(sha).slice(0, 7);
 
+/** A row the rehearsal can tell apart from a published one: the NOT NULL columns
+ * `scenarios` carries get real values, or the insert fails on them and the
+ * rehearsal cannot tell what survived (OPS1 phase 5). */
+const MARKER = "insert into scenarios (id, title, description, category, category_label, version, created_at, updated_at) "
+  + "values ('rehearsal-marker', 'Rehearsal marker', 'a row a rollback must not lose', 'test', 'Rehearsal', '1.0', now(), now()) "
+  + 'on conflict (id) do update set title = excluded.title';
+const MARKER_COUNT = MARKER_COUNT;
+
 /**
  * A path in the form the scripts get: POSIX (`/c/…`). This machine's `tar` reads
  * a drive letter as a remote host and exits 128, Docker Desktop resolves the
@@ -592,11 +600,12 @@ async function main(argv = process.argv.slice(2)) {
           },
         });
         log.push('npm run publish:release', publish);
-        const marker = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
-          "insert into scenarios (id, title, description, version, created_at, updated_at) values "
-          + "('rehearsal-marker', 'Rehearsal marker', 'a row a rollback must not lose', '1.0', now(), now()) "
-          + 'on conflict (id) do update set title = excluded.title');
-        process.stdout.write(`     catalog: ${publish.status === 0 ? 'seeded' : 'publish FAILED'}`
+        // The publish reports every archive it could not classify and then exits
+        // non-zero, while still publishing the ones it could: `created` (or
+        // `approved`) rows are what a seeded catalog means (OPS1 phase 5).
+        const created = (publish.stdout.match(/^\s+(created|updated)\s*$/gm) ?? []).length;
+        const marker = query(localRoot, COMPOSE_FILES, stackEnv(localRoot), MARKER);
+        process.stdout.write(`     catalog: ${created > 0 ? `${created} archived(s) published` : 'publish FAILED'}`
           + `\n     marker row: ${marker === 'INSERT 0 1' ? 'inserted' : marker}\n`);
       }
     }
@@ -622,7 +631,7 @@ async function main(argv = process.argv.slice(2)) {
       const probe = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
         "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'rehearsal_probe'");
       const marker = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
-        "select count(*) from scenarios where id = 'rehearsal-marker'");
+        MARKER_COUNT);
       const health = healthCommit();
       const record = readRecord(localRoot);
       process.stdout.write(`     rehearsal_probe exists: ${probe}`
@@ -639,7 +648,7 @@ async function main(argv = process.argv.slice(2)) {
       const answer = await step('R-5 deploy D (backend exits at start)', 10, 'deploy');
       const restored = answer.stdout.includes('restore-db.sh');
       const marker = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
-        "select count(*) from scenarios where id = 'rehearsal-marker'");
+        MARKER_COUNT);
       const health = healthCommit();
       process.stdout.write(`     restore-db in the log: ${restored}`
         + `\n     marker row present: ${marker}`
@@ -676,10 +685,7 @@ async function main(argv = process.argv.slice(2)) {
         });
         log.push('docker compose -p vlhand up -d --build', up);
         if (up.status !== 0) return up.status;
-        const marker = query(handRepo, COMPOSE_FILES, handEnv,
-          "insert into scenarios (id, title, description, version, created_at, updated_at) values "
-          + "('rehearsal-marker', 'Rehearsal marker', 'a row adoption must not lose', '1.0', now(), now()) "
-          + 'on conflict (id) do update set title = excluded.title', { cwd: handRepo });
+        const marker = query(handRepo, COMPOSE_FILES, handEnv, MARKER.replace('a rollback must not lose', 'adoption must not lose'), { cwd: handRepo });
         process.stdout.write(`     marker row in the hand stack: ${marker === 'INSERT 0 1' ? 'inserted' : marker}\n`);
         return 0;
       });
@@ -696,7 +702,7 @@ async function main(argv = process.argv.slice(2)) {
         envFile = writeEnv(localRoot);
         await step('R-7 adopt and deploy', 0, 'deploy');
         const marker = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
-          "select count(*) from scenarios where id = 'rehearsal-marker'");
+          MARKER_COUNT);
         process.stdout.write(`     .env byte-identical: ${sha256(handEnv) === before}`
           + `\n     marker row present: ${marker}\n`);
       }
