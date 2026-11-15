@@ -32,6 +32,6 @@ docker compose --project-name "$PROJECT" \
   --env-file "$RELEASE_DIR/release.env" \
   run --rm --entrypoint node \
   -e BACKUP_DIR=/backups -v "$BACKUP_PATH:/backups" \
-  backup restore.mjs "$BACKUP_NAME" --yes >/dev/null
+  backup restore.mjs "$BACKUP_NAME" --yes < /dev/null >/dev/null
 echo "restored=$BACKUP_NAME"
 echo "restore_ok=1"

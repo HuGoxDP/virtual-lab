@@ -27,7 +27,7 @@ export VL_SHARED_ENV="$DEPLOY_PATH/shared/.env"
 COMPOSE_FILE="$COMPOSE_FILES" docker compose --project-name "$PROJECT" \
   --env-file "$DEPLOY_PATH/shared/.env" \
   --env-file "$RELEASE_DIR/release.env" \
-  up -d --no-build --remove-orphans
+  up -d --no-build --remove-orphans < /dev/null
 
 # `releases/current` names the release that is running now. It is a FILE with the
 # release id in it, not a symlink: this machine's `ln -s` (MSYS without

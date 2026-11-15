@@ -24,8 +24,10 @@ cd "$RELEASE_DIR"
 # The base compose reads its `env_file` from this variable: a release directory
 # has no `.env` of its own, and the secrets live in `shared/.env` (D-12).
 export VL_SHARED_ENV="$DEPLOY_PATH/shared/.env"
+# `< /dev/null`: the script travels on stdin (`bash -s --`, decision D-14), and a
+# child that inherits it can read the rest of the script.
 COMPOSE_FILE="$COMPOSE_FILES" docker compose --project-name "$PROJECT" \
   --env-file "$DEPLOY_PATH/shared/.env" \
-  down --remove-orphans >/dev/null 2>&1 || true
+  down --remove-orphans < /dev/null >/dev/null 2>&1 || true
 echo "stopped=1"
 echo "stop_ok=1"

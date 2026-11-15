@@ -28,11 +28,16 @@ export VL_SHARED_ENV="$DEPLOY_PATH/shared/.env"
 # the container never sees it, runs its 24-hour schedule loop, and the run never
 # ends (OPS1 phase 5: the rehearsal hung for minutes on exactly that). `-e` puts
 # it in the container's environment, where the script reads it.
+#
+# `< /dev/null`: the script itself travels on stdin (`bash -s --`, decision D-14),
+# and a child that inherits that stdin reads the *rest of the script* — which is
+# how this step answered `ok` while its own `backup_name=` line never arrived
+# (OPS1 phase 5). Nothing here reads stdin, so nothing here inherits it.
 OUT=$(BACKUP_HOST_DIR="$DEPLOY_PATH/backups" \
   COMPOSE_FILE="$COMPOSE_FILES" \
   docker compose --project-name "$PROJECT" --env-file "$DEPLOY_PATH/shared/.env" \
   --env-file "$RELEASE_DIR/release.env" \
-  run --rm -e BACKUP_RUN_ONCE=1 backup 2>&1 || true)
+  run --rm -e BACKUP_RUN_ONCE=1 backup 2>&1 < /dev/null || true)
 NAME=$(printf '%s\n' "$OUT" | grep -o '[0-9T:.-]*Z' | head -1 || true)
 if [ -z "$NAME" ]; then
   echo "error=backup-not-created" >&2

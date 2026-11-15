@@ -6,7 +6,9 @@ set -euo pipefail
 
 i=0
 for name in "$@"; do
-  id=$(docker image inspect --format '{{.Id}}' "$name" 2>/dev/null || true)
+  # `< /dev/null`: the script travels on stdin (`bash -s --`, decision D-14), and a
+  # child that inherits it can read the rest of the script.
+  id=$(docker image inspect --format '{{.Id}}' "$name" 2>/dev/null < /dev/null || true)
   present=false
   if [ -n "$id" ]; then present=true; fi
   echo "image_${i}_name=${name}"

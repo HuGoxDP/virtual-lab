@@ -95,6 +95,23 @@ it('every script that runs the stack points compose at the shared env', () => {
     }
   });
 
+  it('no child inside a command substitution can eat the script it came in on', () => {
+    // A remote script travels on stdin (`bash -s --`, decision D-14), and a child
+    // that inherits that stdin reads the *rest of the script*: the rehearsal's
+    // backup answered `ok` while its own `backup_name=` line never arrived, so the
+    // next step could not find the backup (OPS1 phase 5). Nothing in these scripts
+    // reads stdin, so every such child gets `< /dev/null`.
+    for (const file of allFiles().filter(f => f.endsWith('.sh'))) {
+      const text = readFileSync(file, 'utf8');
+      for (const [index, substitution] of [...text.matchAll(/\$\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].entries()) {
+        const body = substitution[1];
+        if (!/docker|node|npm/.test(body)) continue;
+        assert.ok(/<\s*\/dev\/null/.test(body),
+          `${path.relative(ROOT, file)} runs a child inside $( ) #${index + 1} that can read the script's stdin`);
+      }
+    }
+  });
+
   it('nothing under ops/deploy/ contains a forbidden construct', () => {
     for (const file of codeFiles()) {
       const text = readFileSync(file, 'utf8');
