@@ -116,6 +116,9 @@ describe('DW-5.5 the scripts the rehearsal would have hit', () => {
 
   const A = 'a'.repeat(40);
 
+  /** A temp directory in the form *this process* can use. */
+  const mkdtemp = prefix => mkdtempSync(path.join(tmpdir(), prefix)).split(path.sep).join('/');
+
   /**
    * A path in the form the scripts get on this machine: POSIX (`/c/…`), because
    * this `tar` reads a drive letter as a remote host and exits 128 before doing
@@ -149,12 +152,12 @@ describe('DW-5.5 the scripts the rehearsal would have hit', () => {
     }
   });
 
-  it('prepare.sh generates a .env from the template and never overwrites one', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'vl-prepare-'));
+it('prepare.sh generates a .env from the template and never overwrites one', () => {
+    const dir = mkdtemp('vl-prepare-');
     try {
       mkdirSync(path.join(dir, 'releases'), { recursive: true });
       cpSync(path.join(ROOT, 'shared.env.template'), path.join(dir, 'releases', 'shared.env.template'));
-      bash('prepare.sh', [dir]);
+      bash('prepare.sh', [posix(dir)]);
       const env = readFileSync(path.join(dir, 'shared', '.env'), 'utf8');
       // The placeholders are gone, and the secrets are 64 hex characters.
       assert.equal(env.includes('${GENERATED}'), false, 'no placeholder survives');
@@ -164,8 +167,63 @@ describe('DW-5.5 the scripts the rehearsal would have hit', () => {
       assert.notEqual(password[1], token[1], 'and they are not the same secret');
       // A host that already has one keeps it byte for byte (D-12).
       writeFileSync(path.join(dir, 'shared', '.env'), 'DB_PASSWORD=kept\n');
-      bash('prepare.sh', [dir]);
+      bash('prepare.sh', [posix(dir)]);
       assert.equal(readFileSync(path.join(dir, 'shared', '.env'), 'utf8'), 'DB_PASSWORD=kept\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the upload puts the template beside the releases, where prepare finds it', () => {
+    // A fresh host has no `.env`, and `prepare` runs before `up` — so
+    // `releases/current` does not exist yet and the template has to be at the
+    // stable `releases/` path. Inside the release directory it was invisible, and
+    // every first deploy answered `env=absent` (OPS1 phase 5).
+    const dir = mkdtemp('vl-upload-');
+    const releases = path.join(dir, 'releases');
+    const stage = mkdtemp('vl-upload-src-');
+    const nested = path.join(stage, 'ops', 'deploy');
+    try {
+      mkdirSync(releases, { recursive: true });
+      mkdirSync(nested, { recursive: true });
+      writeFileSync(path.join(stage, 'docker-compose.yml'), 'services: {}\n');
+      writeFileSync(path.join(stage, 'release.env'), 'VL_TAG=vl-aaaa111\n');
+      writeFileSync(path.join(nested, 'shared.env.template'), 'DB_PASSWORD=${GENERATED}\n');
+      execFileSync('tar', ['-czf', '../vl-upload.tar.gz', '.'], { cwd: stage, maxBuffer: 1 << 20 });
+      const tarFile = path.join(path.dirname(stage), 'vl-upload.tar.gz');
+      const out = execFileSync('bash', [path.join(ROOT, 'remote', 'upload-bundle.sh'), posix(releases), 'vl-aaaa111'], {
+        encoding: 'utf8', input: readFileSync(tarFile), maxBuffer: 1 << 20,
+      });
+      assert.match(out, /template=shared\.env\.template/);
+      assert.equal(readFileSync(path.join(releases, 'shared.env.template'), 'utf8'), 'DB_PASSWORD=${GENERATED}\n');
+      assert.equal(readFileSync(path.join(releases, 'vl-aaaa111', 'release.env'), 'utf8'), 'VL_TAG=vl-aaaa111\n');
+      // And `prepare` then finds it, without anyone putting it there by hand.
+      const prepared = execFileSync('bash', [path.join(ROOT, 'remote', 'prepare.sh'), posix(dir)], { encoding: 'utf8' });
+      assert.match(prepared, /env=created/);
+      assert.match(readFileSync(path.join(dir, 'shared', '.env'), 'utf8'), /DB_PASSWORD=[0-9a-f]{64}/);
+      rmSync(stage, { recursive: true, force: true });
+      rmSync(tarFile, { force: true });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a bundle without the template refuses the upload', () => {
+    // A release that cannot start a fresh host must not be uploaded as one.
+    const dir = mkdtemp('vl-upload-');
+    const releases = path.join(dir, 'releases');
+    const stage = mkdtemp('vl-upload-src-');
+    try {
+      mkdirSync(releases, { recursive: true });
+      writeFileSync(path.join(stage, 'docker-compose.yml'), 'services: {}\n');
+      execFileSync('tar', ['-czf', '../vl-upload.tar.gz', '.'], { cwd: stage, maxBuffer: 1 << 20 });
+      const tarFile = path.join(path.dirname(stage), 'vl-upload.tar.gz');
+      assert.throws(() => execFileSync('bash', [path.join(ROOT, 'remote', 'upload-bundle.sh'), posix(releases), 'vl-aaaa111'], {
+        encoding: 'utf8', input: readFileSync(tarFile), maxBuffer: 1 << 20,
+      }), /no-shared-env-template/);
+      assert.equal(existsSync(path.join(releases, 'vl-aaaa111')), false, 'nothing was left behind');
+      rmSync(stage, { recursive: true, force: true });
+      rmSync(tarFile, { force: true });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -208,14 +266,18 @@ describe('DW-5.5 the scripts the rehearsal would have hit', () => {
     assert.doesNotMatch(out, new RegExp(`would_remove=virtual-lab/backend:${A}`));
   });
 
-  it('upload-bundle.sh unpacks the tar from stdin and renames when complete', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'vl-upload-'));
+it('upload-bundle.sh unpacks the tar from stdin and renames when complete', () => {
+    const dir = mkdtemp('vl-upload-');
     const releases = path.join(dir, 'releases');
     try {
       mkdirSync(releases, { recursive: true });
-      const stage = mkdtempSync(path.join(tmpdir(), 'vl-upload-src-'));
+      const stage = mkdtemp('vl-upload-src-');
       writeFileSync(path.join(stage, 'docker-compose.yml'), 'services: {}\n');
       writeFileSync(path.join(stage, 'release.env'), `VL_TAG=${A}\n`);
+      // The template the bundle has to carry, or `prepare` on a fresh host could
+      // never make an `.env` (OPS1 phase 5).
+      mkdirSync(path.join(stage, 'ops', 'deploy'), { recursive: true });
+      writeFileSync(path.join(stage, 'ops', 'deploy', 'shared.env.template'), 'DB_PASSWORD=${GENERATED}\n');
       // A relative archive name beside the stage, then read from there: this
       // machine's `tar` reads a drive-letter path as a remote host (see
       // `writeBundle`), which is the whole reason the bundle writer is shaped
