@@ -80,13 +80,16 @@ const refusal = (failed, steps, exitCode, extra = {}) => ({
   ok: false, failed, steps, exitCode, ...extra,
 });
 
-/** The release env written beside the compose files: tag, commit, the file list. No secret. */
-export function releaseEnvContents({ vlTag, vlCommit, composeFiles: files, edTag = null }) {
-  const lines = [
-    `VL_TAG=${vlTag}`,
-    `VL_COMMIT=${vlCommit}`,
-    `COMPOSE_FILE=${files.join(',')}`,
-  ];
+/**
+ * The release env, written beside the compose files: the tag and the commit this
+ * release runs, and the editor's tag when it ships. No secret — and no
+ * `COMPOSE_FILE`, which is the *deploy's* list and not the release's: an env file
+ * that names one overrides the list the script passes on the command line, and
+ * the stack then reads a path that is not a compose file (OPS1 phase 5 — the
+ * rehearsal's `up` step failed on exactly that).
+ */
+export function releaseEnvContents({ vlTag, vlCommit, edTag = null }) {
+  const lines = [`VL_TAG=${vlTag}`, `VL_COMMIT=${vlCommit}`];
   if (edTag) lines.push(`ED_TAG=${edTag}`);
   return `${lines.join('\n')}\n`;
 }
@@ -121,7 +124,7 @@ export function writeBundle(repoRoot, release, { out = null } = {}) {
       cpSync(from, to);
     }
     writeFileSync(path.join(stage, 'release.env'),
-      releaseEnvContents({ ...release, composeFiles: files }));
+      releaseEnvContents({ ...release }));
     const target = out ?? path.join(os.tmpdir(), `vl-bundle-${release.vlTag.slice(0, 8)}.tar.gz`);
     // A *relative* archive name beside the stage, then a move: this machine's
     // `tar` (bsdtar) reads a `C:\…` argument as a remote host and exits 128

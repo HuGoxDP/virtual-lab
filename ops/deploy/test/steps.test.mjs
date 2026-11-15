@@ -442,9 +442,12 @@ describe('the field parser and the bundle manifest', () => {
       assert.ok(members.includes('release.env'), 'the release env is in the bundle');
       assert.ok(members.includes('docker-compose.yml'), 'and so are the compose files');
       assert.ok(members.includes('ops/deploy/compose.release.yml'));
-      // The env names the release, and never a secret.
+      // The env names the release, and never a secret — and never the compose
+      // list, which is the deploy's and would override the one the script passes
+      // (OPS1 phase 5).
       const contents = spawnSync('tar', ['-xzOf', listed, './release.env'], { encoding: 'utf8' });
       assert.match(contents.stdout, new RegExp(`VL_TAG=${A}`));
+      assert.equal(contents.stdout.includes('COMPOSE_FILE'), false);
       assert.doesNotMatch(contents.stdout, /PASSWORD|TOKEN/);
     } finally {
       rmSync(bundle.path, { force: true });
