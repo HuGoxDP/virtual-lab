@@ -548,6 +548,13 @@ async function main(argv = process.argv.slice(2)) {
     // Only the directories this run actually created: a step that threw before a root
     // exists must not turn into a second failure during the teardown.
     for (const dir of [localRoot, handRepo, path.dirname(envFile)].filter(Boolean)) {
+      // `--keep` leaves the roots behind for inspection: a rehearsal that failed
+      // at the backup is a failure whose evidence is on the host, not in the log
+      // (OPS1 phase 5).
+      if (flags.keep) {
+        process.stdout.write(`kept: ${dir}\n`);
+        continue;
+      }
       rmSync(dir, { recursive: true, force: true });
     }
     return true;
