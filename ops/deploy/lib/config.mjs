@@ -20,7 +20,10 @@ const KEYS = new Set([...REQUIRED, ...Object.keys(OPTIONAL)]);
 
 const HOST = /^[A-Za-z0-9.-]+$/;
 const USER = /^[a-z_][a-z0-9_-]*$/;
-const ABSPATH = /^\//;
+/** Absolute in either form this project runs on: POSIX (`/srv/…`) on the Linux
+ * host, and a drive path (`C:/…`) on a Windows one — the scripts are handed the
+ * host's own form, so the parser has to accept it (OPS1 phase 5). */
+const ABSPATH = /^(\/|[A-Za-z]:\/)/;
 const BADPATH = /[\s'";`$&|<>(){}[\]!#*?~]/;
 
 /** An IPv4 literal in dot-quad form, which passes HOST but should not be mistaken for a name. */
@@ -86,9 +89,12 @@ export function parseDeployEnv(text) {
     throw fail('DEPLOY_USER', 'must be a POSIX user name');
   }
 
-  const path = raw.DEPLOY_PATH;
+  // Forward slashes, always: a backslashed path is a quoting hazard inside the
+  // scripts (bash would read it as escapes), so the parser normalises instead of
+  // trusting what was typed.
+  const path = raw.DEPLOY_PATH.replace(/\\/g, '/');
   if (!ABSPATH.test(path) || path.includes('..') || BADPATH.test(path)) {
-    throw fail('DEPLOY_PATH', 'must be an absolute POSIX path without spaces, `..` or metacharacters');
+    throw fail('DEPLOY_PATH', 'must be an absolute path without spaces, `..` or metacharacters');
   }
 
   return {

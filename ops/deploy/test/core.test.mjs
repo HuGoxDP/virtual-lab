@@ -49,6 +49,20 @@ describe('DW-1.1 parseDeployEnv', () => {
     assert.equal(fromLf.DEPLOY_HOSTKEY.includes('='), true);
   });
 
+  it('accepts the host\'s own path form, POSIX or drive, and normalises it', () => {
+    const text = fixture('deploy.env.sample');
+    // The Linux host: a POSIX path, unchanged.
+    assert.equal(parseDeployEnv(text).DEPLOY_PATH, '/srv/virtual-lab');
+    // A Windows host: a drive path with forward slashes, as the rehearsal passes it
+    // — docker's `--env-file` resolves a POSIX path through the current directory.
+    assert.equal(parseDeployEnv(text.replace('DEPLOY_PATH=/srv/virtual-lab',
+      'DEPLOY_PATH=C:/srv/virtual-lab')).DEPLOY_PATH, 'C:/srv/virtual-lab');
+    // Backslashes are normalised rather than trusted: bash would read them as
+    // escapes inside the scripts (OPS1 phase 5).
+    assert.equal(parseDeployEnv(text.replace('DEPLOY_PATH=/srv/virtual-lab',
+      'DEPLOY_PATH=C:\\srv\\virtual-lab')).DEPLOY_PATH, 'C:/srv/virtual-lab');
+  });
+
   it('rejects each bad input, naming the key and never the value', () => {
     const bad = [
       ['a missing required key', text => text.replace(/^DEPLOY_DOMAIN=.*$/m, ''), 'DEPLOY_DOMAIN'],
