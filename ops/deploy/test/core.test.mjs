@@ -10,10 +10,12 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
 import { parseDeployEnv } from '../lib/config.mjs';
 import { deployWindow } from '../lib/window.mjs';
@@ -172,6 +174,41 @@ describe('DW-1.4 shq', () => {
     // "here is a string of backslashes" — the per-word round-trip above is what
     // proves the quoting itself.
     assert.deepEqual(shqArgs(['a b', 7, `'`]), ['a b', 7, `'`].map(shq));
+  });
+});
+
+describe('DW-1.8 the local transport hands bash raw arguments', () => {
+  it('a streamed step receives its arguments as themselves', async () => {
+    // `spawn` passes argv to the child as it is, so a `shq`-quoted word arrives
+    // with its quotes *inside* the value and `$1` would be `'/srv/…'` — not a
+    // path. That is what made the rehearsal's bundle upload answer exit 2
+    // (OPS1 phase 5), and it is why `pipeIn` does not quote and `run` does.
+    const { localTransport, UPLOAD_BUNDLE_COMMAND } = await import('../lib/transport.mjs');
+    const stage = mkdtempSync(path.join(tmpdir(), 'vl-local-'));
+    const releases = path.join(stage, 'releases');
+    const expected = 'release-arg\n';
+    try {
+      mkdirSync(releases, { recursive: true });
+      writeFileSync(path.join(stage, 'release.env'), expected);
+      // A relative operand, not `-C <drive path>`: this machine's `tar` reads a drive
+      // letter as a remote host (the same rule the bundle writer follows).
+      const tar = execFileSync('tar', ['-czf', '-', 'release.env'], { cwd: stage, maxBuffer: 1 << 26 });
+      const transport = localTransport();
+      // The POSIX form, because that is what the scripts get on this machine
+      // (`C:\…` is a remote host to this `tar`).
+      const posixReleases = releases.replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`)
+        .split(path.sep).join('/');
+      const answer = await transport.pipeIn(
+        Readable.from([tar]),
+        UPLOAD_BUNDLE_COMMAND,
+        [posixReleases, 'vl-probe'],
+      );
+      assert.equal(answer.code, 0, answer.stderr);
+      assert.match(answer.stdout, /upload_ok=1/);
+      assert.equal(readFileSync(path.join(releases, 'vl-probe', 'release.env'), 'utf8'), expected);
+    } finally {
+      rmSync(stage, { recursive: true, force: true });
+    }
   });
 });
 

@@ -355,7 +355,13 @@ export async function deployPlatform(context) {
   );
   done.push('upload-bundle');
   log?.info(`upload-bundle → ${upload.code === 0 ? 'ok' : 'EXIT ' + upload.code}`);
-  if (upload.code !== 0) return refusal('upload-bundle', done, 4);
+  if (upload.code !== 0) {
+    // The script's own stderr is the answer: a bundle upload that fails with a
+    // bare exit code is a refusal nobody can act on.
+    return refusal('upload-bundle', done, 4, {
+      reason: `unpacking the bundle failed: ${String(upload.stderr ?? '').trim() || `exit ${upload.code}`}`,
+    });
+  }
 
   // `prepare` runs *after* the upload, because a fresh host has no `.env` and the
   // template that makes one travels in the bundle: generating it before the upload

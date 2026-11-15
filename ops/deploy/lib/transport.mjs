@@ -122,7 +122,12 @@ export function localTransport() {
       return runChild('bash', ['-s', '--', ...shqArgs(args)], Readable.from([script]), MSYS_GUARD);
     },
     async pipeIn(readable, fixedCommand = 'gunzip | docker load', args = []) {
-      return runChild('bash', ['-c', fixedCommand, '_', ...shqArgs(args)], readable, MSYS_GUARD);
+      // Raw arguments, never `shq`-quoted: `spawn` hands argv to the child as it
+      // is, so a quoted word arrives with its quotes *in* the value — and
+      // `$1` would be `'/srv/…'`, which is not a path (OPS1 phase 5). The ssh
+      // transport quotes because its command string *is* parsed by the remote
+      // shell; here nothing parses it.
+      return runChild('bash', ['-c', fixedCommand, '_', ...args], readable, MSYS_GUARD);
     },
     describe: () => 'local (this machine)',
   };
