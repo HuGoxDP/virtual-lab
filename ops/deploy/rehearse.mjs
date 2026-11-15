@@ -144,24 +144,38 @@ export function createLog() {
  * @param {string} command — `deploy` or `rollback`.
  * @param {string[]} extra — further flags.
  */
-export function deployCommand({ envFile, localRoot, repo = VL_REPO }, command, extra = []) {
-  // Three forms of path, one reason each (the plan's phase-5 edge case, recorded):
-  //   `--env-file`  is read by Node — a Windows path;
-  //   `--repo`      is where `git` runs — a Windows path;
-  //   `--local-root` becomes DEPLOY_PATH for the scripts — POSIX, because this
-  //                 machine's `tar` reads a drive letter as a remote host and
-  //                 Docker Desktop resolves the POSIX form.
-  return run('node', [
+/**
+ * The deploy command's argv, as three forms of path with one reason each (the
+ * plan's phase-5 edge case, recorded here so a test can pin them):
+ *
+ *   `--env-file`   is read by Node — the host's own form (the Windows one here);
+ *   `--repo`       is where `git` runs — the host's own form;
+ *   `--local-root` becomes DEPLOY_PATH for the scripts — the host's own form too:
+ *                  docker's `--env-file` resolves a POSIX (`/c/…`) path through the
+ *                  current directory and answers `C:\c\…`, which does not exist.
+ *
+ * The one place a POSIX path is required is `tar` reading a *path*, and that is a
+ * conversion inside `remote/verify-backup.sh`, not a different flag here.
+ */
+export function deployArgv({ envFile, localRoot, repo = VL_REPO }, command, extra = []) {
+  return [
     DEPLOY, command, 'platform',
     '--env-file', envFile,
     '--transport', 'local',
-    '--local-root', posix(localRoot),
+    '--local-root', localRoot,
     '--project', PROJECT,
     '--compose-file', REHEARSAL_COMPOSE,
     '--repo', repo,
     '--rehearsal',
     ...extra,
-  ], { cwd: repo, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+  ];
+}
+
+/** The deploy command, run. */
+export function deployCommand(options, command, extra = []) {
+  const { envFile, localRoot, repo = VL_REPO } = options;
+  return run('node', deployArgv(options, command, extra),
+    { cwd: repo, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
 }
 
 /**
@@ -173,10 +187,10 @@ export function deployCommand({ envFile, localRoot, repo = VL_REPO }, command, e
  * which is precisely what makes it a different case (R-7).
  */
 export function composeCommand(root, composeFiles, args, { envFile, cwd, project = PROJECT } = {}) {
-  const from = cwd ?? path.posix.join(posix(root), 'releases', 'current');
+  const from = cwd ?? path.posix.join(root, 'releases', 'current');
   return run('bash', ['-c',
     `cd "${from}" && COMPOSE_FILE="${composeFiles}" `
-    + `docker compose --project-name ${project} --env-file "${posix(envFile)}" "$@"`,
+    + `docker compose --project-name ${project} --env-file "${envFile}" "$@"`,
     '_', ...args,
   ], { env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
 }
@@ -291,6 +305,9 @@ export function scratchCommits(base = 'OPS1-deploy-pipeline', repo = VL_REPO) {
 /** The rehearsal's `deploy.env`: no secret, and none of it reaches a server.
  * The path the scripts see is the POSIX form, because that is what they need. */
 export function writeEnv(localRoot, port = PORT) {
+  // `localRoot` is the host's own form (see `deployCommand`): docker's `--env-file`
+  // accepts it, and a POSIX (`/c/…`) path would be resolved through the current
+  // directory into a `C:\c\…` that does not exist.
   const dir = mkdtemp('vl-env-');
   const file = path.join(dir, 'deploy.env');
   writeFileSync(file, [
@@ -304,7 +321,7 @@ export function writeEnv(localRoot, port = PORT) {
     'DEPLOY_USER=localuser',
     'DEPLOY_KEY=/dev/null',
     'DEPLOY_DOMAIN=rehearsal.invalid',
-    `DEPLOY_PATH=${posix(localRoot)}`,
+    `DEPLOY_PATH=${localRoot}`,
     'DEPLOY_PORT=22',
     `FRONTEND_PORT=${port}`,
   ].join('\n') + '\n');

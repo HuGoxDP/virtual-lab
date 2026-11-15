@@ -8,6 +8,18 @@ set -euo pipefail
 BACKUP_PATH="$1"
 fail() { echo "verify_error=$1" >&2; exit 1; }
 
+# A path this machine's `tar` can read. The pipeline hands the scripts the *host's*
+# own path form — a POSIX path on the Linux host, a drive path (`C:/…`) on a Windows
+# one — and `tar` here reads a drive letter as a remote host and exits 128. So the
+# volume archives are checked through their POSIX form; on a Linux host the path is
+# already POSIX and this passes it through untouched (OPS1 phase 5).
+tar_path() {
+  case "$1" in
+    [A-Za-z]:/*) printf '/%s' "$(printf '%s' "$1" | tr 'A-Z' 'a')" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 [ -f "$BACKUP_PATH/db.sql.gz" ] || fail "db.sql.gz missing"
 gzip -t "$BACKUP_PATH/db.sql.gz" 2>/dev/null || fail "db.sql.gz is not a valid gzip"
 TABLES=$(gzip -dc "$BACKUP_PATH/db.sql.gz" | grep -c '^CREATE TABLE ' || true)
@@ -19,7 +31,8 @@ if [ -d "$BACKUP_PATH/volumes" ]; then
   for archive in "$BACKUP_PATH"/volumes/*.tar.gz; do
     [ -e "$archive" ] || continue
     gzip -t "$archive" 2>/dev/null || fail "volume archive $(basename "$archive") is truncated"
-    tar -tzf "$archive" >/dev/null 2>&1 || fail "volume archive $(basename "$archive") is unreadable"
+    tar -tzf "$(tar_path "$archive")" >/dev/null 2>&1 \
+      || fail "volume archive $(basename "$archive") is unreadable"
   done
 fi
 echo "verified=1"

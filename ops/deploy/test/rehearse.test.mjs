@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import {
   PROJECT, REHEARSAL_COMPOSE, SCRATCH_BRANCH, COMPOSE_FILES, PORT,
   posix, sha256, teardownGuard, createRecorder, createLog, envValue, readRecord,
-  scratchCommits, writeEnv, mkdtemp,
+  scratchCommits, writeEnv, mkdtemp, deployArgv,
 } from '../rehearse.mjs';
 
 /** A temporary git repo with one commit and an `origin/main` pointing at it. */
@@ -42,12 +42,37 @@ function tempRepo() {
 }
 
 describe('DW-5.4 the rehearsal driver', () => {
-  it('hands the scripts POSIX paths, and leaves a POSIX path alone', () => {
+  it('hands the scripts the host form, and converts to POSIX only for tar', () => {
     // A drive letter is a remote host to this machine's `tar` (OPS1 phase 5), and
-    // Docker Desktop resolves this form; both facts live in this one conversion.
+    // docker's `--env-file` resolves a POSIX path through the current directory:
+    // so the host form is the Windows one, and the one script that reads a tar
+    // from a path converts (see `remote/verify-backup.sh`).
     assert.equal(posix('C:\\Users\\HuGox\\AppData\\Local\\Temp\\vl-rehearsal-1'),
       '/c/Users/HuGox/AppData/Local/Temp/vl-rehearsal-1');
     assert.equal(posix('/c/Users/HuGox/x'), '/c/Users/HuGox/x');
+  });
+
+  it('commands the deploy with the host form for every path it owns', () => {
+    // `--local-root` becomes DEPLOY_PATH for the scripts, and on this machine that
+    // is the form docker accepts (`C:/…`): a POSIX path is resolved to `C:\c\…`,
+    // which does not exist (OPS1 phase 5).
+    const root = mkdtemp('vl-rehearsal-');
+    const envFile = writeEnv(root);
+    try {
+      const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+      const argv = deployArgv({ envFile, localRoot: root, repo }, 'deploy');
+      const flag = name => argv[argv.indexOf(name) + 1];
+      assert.equal(flag('--local-root'), root, 'the scripts get the host form');
+      assert.equal(flag('--env-file'), envFile, 'and so does the file Node reads');
+      assert.equal(flag('--repo'), repo, 'and the repository git runs in');
+      assert.equal(flag('--project'), PROJECT);
+      assert.deepEqual(argv.slice(argv.indexOf('--compose-file') + 1, argv.indexOf('--repo')),
+        [REHEARSAL_COMPOSE], 'the rehearsal compose file is added to the release list');
+      assert.ok(argv.includes('--rehearsal'), 'local commits are allowed');
+    } finally {
+      rmSync(path.dirname(envFile), { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('prints a digest of a file, never its contents', () => {
@@ -150,20 +175,21 @@ describe('DW-5.4 the rehearsal driver', () => {
         assert.equal(root.includes(value), false,
           `${key}'s value ${value} is not part of the rehearsal's own paths`);
       }
-      assert.equal(envValue(file, 'DEPLOY_PATH'), posix(root));
+      assert.equal(envValue(file, 'DEPLOY_PATH'), root);
     } finally {
       if (file) rmSync(path.dirname(file), { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('writes a deploy.env with no secret and a POSIX DEPLOY_PATH', () => {
+  it('writes a deploy.env with no secret and the host form of DEPLOY_PATH', () => {
     const root = mkdtemp('vl-env-');
     let file = null;
     try {
       file = writeEnv(root);
       const text = readFileSync(file, 'utf8');
-      assert.equal(envValue(file, 'DEPLOY_PATH'), posix(root));
+      // The host's own form, which on this machine is the drive form docker accepts.
+      assert.equal(envValue(file, 'DEPLOY_PATH'), root);
       assert.equal(envValue(file, 'FRONTEND_PORT'), PORT);
       assert.equal(envValue(file, 'DEPLOY_HOST'), '127.0.0.1');
       // The generated secrets are the *stack's*, never the deploy.env's: a value
