@@ -62,6 +62,9 @@ async function step(name, transport, args, { locks = [], log = null } = {}) {
   const answer = await transport.run(script(name), args);
   const fields = parseFields(answer.stdout);
   log?.info(`${name} → ${answer.code === 0 ? 'ok' : 'EXIT ' + answer.code}`);
+  // A failing step's stderr is the answer: `up → EXIT 1` without the compose error
+  // under it is a line nobody can act on (OPS1 phase 5).
+  if (answer.code !== 0 && answer.stderr?.trim()) log?.warn(`  ${answer.stderr.trim()}`);
   // The raw answer stays on the result: `state.sh` answers JSON, not fields.
   return { name, ...fields, stdout: answer.stdout, code: answer.code, ok: answer.code === 0 };
 }
