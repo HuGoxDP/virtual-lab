@@ -54,7 +54,7 @@ const SHORT_ = sha => String(sha).slice(0, 7);
 const MARKER = "insert into scenarios (id, title, description, category, category_label, version, created_at, updated_at) "
   + "values ('rehearsal-marker', 'Rehearsal marker', 'a row a rollback must not lose', 'test', 'Rehearsal', '1.0', now(), now()) "
   + 'on conflict (id) do update set title = excluded.title';
-const MARKER_COUNT = MARKER_COUNT;
+const MARKER_COUNT = "select count(*) from scenarios where id = 'rehearsal-marker'";
 
 /**
  * A path in the form the scripts get: POSIX (`/c/…`). This machine's `tar` reads
