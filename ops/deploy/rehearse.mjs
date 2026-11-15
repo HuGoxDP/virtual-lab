@@ -592,7 +592,7 @@ async function main(argv = process.argv.slice(2)) {
           },
         });
         log.push('npm run publish:release', publish);
-        const marker = query(localRoot, COMPOSE_FILES, envFile,
+        const marker = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
           "insert into scenarios (id, title, description, version, created_at, updated_at) values "
           + "('rehearsal-marker', 'Rehearsal marker', 'a row a rollback must not lose', '1.0', now(), now()) "
           + 'on conflict (id) do update set title = excluded.title');
@@ -619,9 +619,9 @@ async function main(argv = process.argv.slice(2)) {
       sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.C]);
       await step('R-4 deploy C with the smoke pinned to a wrong commit', 10, 'deploy',
         ['--smoke-expect-commit', '0'.repeat(40)]);
-      const probe = query(localRoot, COMPOSE_FILES, envFile,
+      const probe = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
         "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'rehearsal_probe'");
-      const marker = query(localRoot, COMPOSE_FILES, envFile,
+      const marker = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
         "select count(*) from scenarios where id = 'rehearsal-marker'");
       const health = healthCommit();
       const record = readRecord(localRoot);
@@ -638,7 +638,7 @@ async function main(argv = process.argv.slice(2)) {
       sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.D]);
       const answer = await step('R-5 deploy D (backend exits at start)', 10, 'deploy');
       const restored = answer.stdout.includes('restore-db.sh');
-      const marker = query(localRoot, COMPOSE_FILES, envFile,
+      const marker = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
         "select count(*) from scenarios where id = 'rehearsal-marker'");
       const health = healthCommit();
       process.stdout.write(`     restore-db in the log: ${restored}`
@@ -695,7 +695,7 @@ async function main(argv = process.argv.slice(2)) {
         localRoot = adoptedRoot;
         envFile = writeEnv(localRoot);
         await step('R-7 adopt and deploy', 0, 'deploy');
-        const marker = query(localRoot, COMPOSE_FILES, envFile,
+        const marker = query(localRoot, COMPOSE_FILES, stackEnv(localRoot),
           "select count(*) from scenarios where id = 'rehearsal-marker'");
         process.stdout.write(`     .env byte-identical: ${sha256(handEnv) === before}`
           + `\n     marker row present: ${marker}\n`);
