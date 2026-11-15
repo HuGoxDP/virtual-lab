@@ -15,6 +15,9 @@ CURRENT_RELEASE=$(cat "$DEPLOY_PATH/releases/current" 2>/dev/null || true)
 [ -n "$CURRENT_RELEASE" ] || { echo "migrations_error=no-current-release" >&2; exit 1; }
 RELEASE_DIR="$DEPLOY_PATH/releases/$CURRENT_RELEASE"
 cd "$RELEASE_DIR" || { echo "migrations_error=no-current-release" >&2; exit 1; }
+# The base compose reads its `env_file` from this variable: a release directory
+# has no `.env` of its own, and the secrets live in `shared/.env` (D-12).
+export VL_SHARED_ENV="$DEPLOY_PATH/shared/.env"
 SET=$(COMPOSE_FILE="$COMPOSE_FILES" \
   docker compose --project-name "$PROJECT" --env-file "$DEPLOY_PATH/shared/.env" \
   --env-file "$RELEASE_DIR/release.env" \

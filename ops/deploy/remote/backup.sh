@@ -19,6 +19,10 @@ cd "$RELEASE_DIR" || { echo "error=no-current-release" >&2; exit 1; }
 # removed its own partial directory, so the container's last words are the only
 # evidence there is (OPS1 phase 5 — a bare "error=backup-not-created" made R-4
 # undiagnosable).
+# The base compose reads its `env_file` from this variable: a release directory
+# has no `.env` of its own, and the secrets live in `shared/.env` (D-12). Every
+# script that runs compose sets it (OPS1 phase 5).
+export VL_SHARED_ENV="$DEPLOY_PATH/shared/.env"
 OUT=$(BACKUP_HOST_DIR="$DEPLOY_PATH/backups" BACKUP_RUN_ONCE=1 \
   COMPOSE_FILE="$COMPOSE_FILES" \
   docker compose --project-name "$PROJECT" --env-file "$DEPLOY_PATH/shared/.env" \

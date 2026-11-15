@@ -80,7 +80,22 @@ function releaseFiles() {
   ];
 }
 
-it('nothing under ops/deploy/ contains a forbidden construct', () => {
+it('every script that runs the stack points compose at the shared env', () => {
+    // The base compose reads its `env_file` from `VL_SHARED_ENV`, because a release
+    // directory has no `.env` of its own. A script that runs compose without it
+    // answers "env file …/releases/<id>/.env not found", which is how the
+    // rehearsal's backup step failed (OPS1 phase 5). `inspect` asks compose for its
+    // *version* and runs no stack, so it is not in this set.
+    const runs = /docker compose\s+--project-name/;
+    const scripts = allFiles().filter(f => f.endsWith('.sh') && runs.test(readFileSync(f, 'utf8')));
+    assert.ok(scripts.length >= 5, `expected the stack-touching scripts, found ${scripts.length}`);
+    for (const file of scripts) {
+      assert.ok(/VL_SHARED_ENV=/.test(readFileSync(file, 'utf8')),
+        `${path.relative(ROOT, file)} runs the stack but never sets VL_SHARED_ENV`);
+    }
+  });
+
+  it('nothing under ops/deploy/ contains a forbidden construct', () => {
     for (const file of codeFiles()) {
       const text = readFileSync(file, 'utf8');
       for (const [pattern, what] of FORBIDDEN) {
