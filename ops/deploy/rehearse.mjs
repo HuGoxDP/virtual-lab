@@ -773,7 +773,11 @@ async function main(argv = process.argv.slice(2)) {
           // form; a POSIX path here becomes `C:\c\…`, which does not exist
           // (OPS1 phase 5).
           '--env-file', handEnv, 'up', '-d', '--build'], {
-          cwd: handRepo, env: { ...process.env, MSYS_NO_PATHCONV: '1' },
+          cwd: handRepo,
+          // And the base compose reads its `env_file` from this variable, exactly as
+          // `remote/up.sh` sets it: the tree has no `.env` of its own, because the
+          // operator's secrets are in `root/shared/.env` (OPS1 phase 5).
+          env: { ...process.env, MSYS_NO_PATHCONV: '1', VL_SHARED_ENV: handEnv },
         });
         log.push('docker compose -p vlhand up -d --build', up);
         if (up.status !== 0) return up.status;
