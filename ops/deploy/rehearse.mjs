@@ -769,6 +769,12 @@ async function main(argv = process.argv.slice(2)) {
       ].join('\n') + '\n');
       const adoption = await recorder.row('R-7 adopt a hand-made stack', 0, async () => {
         const up = run('docker', ['compose', '-p', HAND_PROJECT,
+          // The rehearsal's own compose file, so the hand-made stack's containers and
+          // volumes are renamed (`Rehearsal*`, `rehearsal_*`): the base compose pins
+          // `VirtualLab*`, which the live local stack on 8044 is already using — and a
+          // rehearsal must never collide with it (OPS1 phase 5; the plan's R-7 says
+          // "docker compose -p vlhand with compose.rehearsal.yml").
+          '--file', 'docker-compose.yml', '--file', 'ops/deploy/compose.rehearsal.yml',
           // The docker CLI resolves `--env-file` itself, so it gets the host's own
           // form; a POSIX path here becomes `C:\c\…`, which does not exist
           // (OPS1 phase 5).
