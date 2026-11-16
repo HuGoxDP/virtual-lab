@@ -769,7 +769,10 @@ async function main(argv = process.argv.slice(2)) {
       ].join('\n') + '\n');
       const adoption = await recorder.row('R-7 adopt a hand-made stack', 0, async () => {
         const up = run('docker', ['compose', '-p', HAND_PROJECT,
-          '--env-file', posix(handEnv), 'up', '-d', '--build'], {
+          // The docker CLI resolves `--env-file` itself, so it gets the host's own
+          // form; a POSIX path here becomes `C:\c\…`, which does not exist
+          // (OPS1 phase 5).
+          '--env-file', handEnv, 'up', '-d', '--build'], {
           cwd: handRepo, env: { ...process.env, MSYS_NO_PATHCONV: '1' },
         });
         log.push('docker compose -p vlhand up -d --build', up);
