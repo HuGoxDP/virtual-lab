@@ -819,14 +819,14 @@ async function main(argv = process.argv.slice(2)) {
       const bases = ensureBaseImages();
       const shared = path.join(handRepo, 'root', 'shared');
       mkdirSync(shared, { recursive: true });
-      // The operator's own secrets, written before the pipeline ever sees the host.
+      // The operator's own secrets — a *copy* of the ones the host already runs on,
+      // not invented ones: the hand-made stack shares the volumes, and its database
+      // was initialised with the password in `shared/.env`, so a different one answers
+      // `password authentication failed for user "lab_user"` and its backend never
+      // becomes healthy (OPS1 phase 5 — that is what made R-7 red twice). Copying is
+      // also what makes the adoption byte-identical, which is the row's own check.
       handEnv = path.join(shared, '.env');
-      writeFileSync(handEnv, [
-        'DB_HOST=database', 'DB_PORT=5432', 'DB_NAME=virtual_lab', 'DB_USER=lab_user',
-        'DB_PASSWORD=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-        'API_PORT=3000', 'ADMIN_TOKEN=0123456789abcdef0123456789abcdef0123456789abcdef',
-        `FRONTEND_PORT=${HAND_PORT}`, 'TRUST_PROXY=1', 'BACKUP_KEEP_DAYS=14', 'BACKUP_SCHEDULE_HOURS=24',
-      ].join('\n') + '\n');
+      writeFileSync(handEnv, readFileSync(stackEnv(localRoot)));
       const adoption = await recorder.row('R-7 adopt a hand-made stack', 0, async () => {
         const up = run('docker', ['compose', '-p', HAND_PROJECT,
           // The rehearsal's own compose file, so the hand-made stack's containers and
