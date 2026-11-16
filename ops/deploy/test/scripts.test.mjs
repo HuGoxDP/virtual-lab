@@ -128,28 +128,21 @@ it('every script that runs the stack points compose at the shared env', () => {
     assert.equal(/string_agg\(filename/.test(script), false, 'and not filename');
   });
 
-  it('the rollback mounts the backup through the form the daemon resolves', () => {
-    // A bind-mount source is resolved by the *daemon*, and on this host it reads a
-    // `C:/…` source against its own root: the mount is empty and the restore answers
-    // "no such backup /backups/<name>" for a backup that is on disk (OPS1 phase 5).
-    // `--env-file` is the opposite — the docker CLI resolves that one, so it gets the
-    // Windows form.
+  it('the rollback mounts the backup the way the backup does', () => {
+    // A `-v` for `/backups` is *combined* with the service's own
+    // `${BACKUP_HOST_DIR:-./backup/out}:/backups` volume, so the mount pointed at a
+    // relative directory beside the release and the restore answered "no such
+    // backup /backups/<name>" for a backup that is on disk (OPS1 phase 5). The same
+    // variable the backup uses names the same host directory — which is the point.
     const script = path.join(ROOT, 'remote', 'restore-db.sh');
     const text = readFileSync(script, 'utf8');
-    assert.match(text, /-v "\$\(daemon_path "\$BACKUP_PATH"\):\/backups"/,
-      'the mount source goes through daemon_path');
-    assert.equal(text.includes('-v "$BACKUP_PATH:/backups"'), false, 'and not raw');
-
-    // And the conversion itself: `C:/rest` → `/c/rest`, a POSIX path unchanged.
-    const conversion = execFileSync('bash', ['-c',
-      `${/daemon_path\(\) \{[\s\S]*?\n\}/.exec(text)[0]}\ndaemon_path "$1"`,
-      'bash', 'C:/Users/HuGox/backups/2026-11-16T14-54-23Z',
-    ], { encoding: 'utf8' });
-    assert.equal(conversion.trim(), '/c/Users/HuGox/backups/2026-11-16T14-54-23Z');
-    assert.equal(execFileSync('bash', ['-c',
-      `${/daemon_path\(\) \{[\s\S]*?\n\}/.exec(text)[0]}\ndaemon_path "$1"`,
-      'bash', '/srv/backups/b1',
-    ], { encoding: 'utf8' }).trim(), '/srv/backups/b1', 'a POSIX path is unchanged');
+    assert.match(text, /BACKUP_HOST_DIR="\$DEPLOY_PATH\/backups"/,
+      'the restore hosts the backups where the backup wrote them');
+    assert.equal(text.split('\n').filter(l => /-v /.test(l) && !l.trim().startsWith('#')).length, 0,
+      'and mounts nothing of its own');
+    // And the backup does it the same way, so the two cannot drift apart.
+    const backup = readFileSync(path.join(ROOT, 'remote', 'backup.sh'), 'utf8');
+    assert.match(backup, /BACKUP_HOST_DIR="\$DEPLOY_PATH\/backups"/);
   });
 
   it('nothing under ops/deploy/ contains a forbidden construct', () => {
