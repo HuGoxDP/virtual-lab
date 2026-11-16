@@ -1,0 +1,25 @@
+# ops/deploy/compose.hand.yml
+#
+# The hand-made stack of the rehearsal's R-7: a deployment that exists *before* the
+# pipeline touches the host, which is what the pipeline must adopt.
+#
+# It is `compose.rehearsal.yml` with one difference — the container names
+# (`Hand*`, not `Rehearsal*`), because the rehearsal stack is still running while the
+# hand-made one is built, and compose refuses two containers with the same name. The
+# volumes are deliberately NOT renamed again: the hand-made stack's database is the
+# rehearsal's, which is how the marker row R-2 inserts is still there when the
+# pipeline deploys over it (OPS1 phase 5).
+
+services:
+
+  database:
+    container_name: HandDatabase
+  backend:
+    container_name: HandBackend
+  backup:
+    container_name: HandBackup
+  frontend:
+    container_name: HandFrontend
+    # 8049: the hand-made stack's port. 8044 is the live catalog and 8047 the
+    # rehearsal's own, so nothing here collides with either.
+    ports: !override ["8049:80"]

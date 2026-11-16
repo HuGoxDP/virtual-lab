@@ -42,6 +42,18 @@ export const PORT = '8047';
 export const HAND_PORT = '8049';
 /** The compose file that renames every volume, container and published port. */
 export const REHEARSAL_COMPOSE = 'ops/deploy/compose.rehearsal.yml';
+/** The hand-made stack's own names, so it can be built beside the rehearsal's. */
+export const HAND_COMPOSE = 'ops/deploy/compose.hand.yml';
+/** The compose files the hand-made stack is built from, in `-f` order: the release's,
+ * the rehearsal's renames, and its own container names beside them. */
+export const HAND_FILES = [
+  'docker-compose.yml', 'ops/deploy/compose.release.yml', REHEARSAL_COMPOSE, HAND_COMPOSE,
+].join(';');
+
+/** The compose file list the rehearsal stack runs with, in `-f` order. */
+export const COMPOSE_FILES = [
+  'docker-compose.yml', 'docker-compose.restore.yml', 'ops/deploy/compose.release.yml', REHEARSAL_COMPOSE,
+].join(';');
 /** The branch the four rehearsal commits live on: local-only, never pushed. */
 export const SCRATCH_BRANCH = 'OPS1-rehearsal-scratch';
 
@@ -100,11 +112,6 @@ function run(command, args, options = {}) {
 const sh = (command, args, options = {}) => execFileSync(command, args, {
   encoding: 'utf8', maxBuffer: 1 << 26, ...options,
 });
-
-/** The compose files a rehearsal runs with, in `-f` order, for `COMPOSE_FILE`. */
-export const COMPOSE_FILES = [
-  'docker-compose.yml', 'docker-compose.restore.yml', 'ops/deploy/compose.release.yml', REHEARSAL_COMPOSE,
-].join(';');
 
 /**
  * The whole run: every row's expectation and answer, whether any row failed, and
@@ -643,7 +650,7 @@ async function main(argv = process.argv.slice(2)) {
       if (!root) continue;
       // The compose list is what names the volumes; the project name is what owns
       // them. Both come from this run.
-      composeCommand(root, COMPOSE_FILES, ['down', '-v', '--remove-orphans'],
+      composeCommand(root, project === PROJECT ? COMPOSE_FILES : HAND_FILES, ['down', '-v', '--remove-orphans'],
         { envFile: project === PROJECT ? envFile : handEnv, cwd: project === PROJECT ? undefined : handRepo });
     }
     // Only the directories this run actually created: a step that threw before a root
@@ -812,7 +819,8 @@ async function main(argv = process.argv.slice(2)) {
           // `VirtualLab*`, which the live local stack on 8044 is already using — and a
           // rehearsal must never collide with it (OPS1 phase 5; the plan's R-7 says
           // "docker compose -p vlhand with compose.rehearsal.yml").
-          '--file', 'docker-compose.yml', '--file', 'ops/deploy/compose.rehearsal.yml',
+          '--file', 'docker-compose.yml', '--file', 'ops/deploy/compose.release.yml',
+          '--file', REHEARSAL_COMPOSE, '--file', HAND_COMPOSE,
           // The docker CLI resolves `--env-file` itself, so it gets the host's own
           // form; a POSIX path here becomes `C:\c\…`, which does not exist
           // (OPS1 phase 5).
@@ -826,7 +834,7 @@ async function main(argv = process.argv.slice(2)) {
         log.push('docker compose -p vlhand up -d --build', up);
         if (up.status !== 0) return up.status;
         process.stdout.write(`     hand stack built on: ${bases.join(', ')}\n`);
-        const marker = query(handRepo, COMPOSE_FILES, handEnv, MARKER.replace('a rollback must not lose', 'adoption must not lose'), { cwd: handRepo });
+        const marker = query(handRepo, HAND_FILES, handEnv, MARKER.replace('a rollback must not lose', 'adoption must not lose'), { cwd: handRepo });
         process.stdout.write(`     marker row in the hand stack: ${marker === 'INSERT 0 1' ? 'inserted' : marker}\n`);
         return 0;
       });
