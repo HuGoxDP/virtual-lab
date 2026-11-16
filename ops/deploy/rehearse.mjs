@@ -398,6 +398,26 @@ export function liveStartedAt(container = 'VirtualLabFrontend') {
   }
 }
 
+/**
+ * The base images the hand-made stack builds from, present locally.
+ *
+ * This machine has no registry access, so a `FROM` that names a tag which is not on
+ * disk fails the build: `backup/Dockerfile` says `alpine:3.20` and only `alpine:latest`
+ * is present. The rehearsal tags what it has (a local alias, recorded in the notes)
+ * rather than pulling — the hand-made stack's purpose is to prove adoption, not to
+ * exercise a registry (OPS1 phase 5).
+ */
+function ensureBaseImages(aliases = [['alpine:3.20', 'alpine:latest']]) {
+  const have = name => run('docker', ['image', 'inspect', name]).status === 0;
+  for (const [wanted, local] of aliases) {
+    if (!have(wanted) && have(local)) {
+      const tag = run('docker', ['tag', local, wanted]);
+      if (tag.status === 0) return [...aliases.map(([from]) => from), `${wanted} (from ${local})`];
+    }
+  }
+  return aliases.map(([from]) => from);
+}
+
 /** A Docker answer that is only yes when the daemon is up. */
 export function dockerUp() {
   try {
@@ -757,6 +777,8 @@ async function main(argv = process.argv.slice(2)) {
     if (want('R-7')) {
       handRepo = mkdtemp('vl-hand-');
       handTree(handRepo);
+      // The base images it builds from, on disk: this machine has no registry.
+      const bases = ensureBaseImages();
       const shared = path.join(handRepo, 'root', 'shared');
       mkdirSync(shared, { recursive: true });
       // The operator's own secrets, written before the pipeline ever sees the host.
@@ -787,6 +809,7 @@ async function main(argv = process.argv.slice(2)) {
         });
         log.push('docker compose -p vlhand up -d --build', up);
         if (up.status !== 0) return up.status;
+        process.stdout.write(`     hand stack built on: ${bases.join(', ')}\n`);
         const marker = query(handRepo, COMPOSE_FILES, handEnv, MARKER.replace('a rollback must not lose', 'adoption must not lose'), { cwd: handRepo });
         process.stdout.write(`     marker row in the hand stack: ${marker === 'INSERT 0 1' ? 'inserted' : marker}\n`);
         return 0;
