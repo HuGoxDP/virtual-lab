@@ -576,18 +576,23 @@ export async function rollbackRelease(context) {
   done.push(smoke.name);
   if (!smoke.ok) return refusal('smoke', done, 11);
 
-  // The stack is running the previous release again, so that is what the record
-  // must say — a rollback that left the record pointing at the failed release
-  // would roll the next one back into the same failure.
+  // The record is rewritten only when the target is not already what it says is
+  // current — which is the usual case, because a deploy only records a release
+  // after its smoke is green. Writing it anyway would set `previous` to the release
+  // that just failed, and the *next* rollback would then go back into it: the
+  // rehearsal's R-6 asked for A and got B, which is exactly this (OPS1 phase 5).
   if (previousRelease) {
-    const target = context.previousRecord ?? { id: previousRelease, commit: previousCommit ?? '' };
-    await writeState(transport, config.DEPLOY_PATH, {
-      id: target.id, tag: target.tag ?? '', commit: target.commit ?? '',
-      // The database was just restored, so the release running now did not
-      // migrate forward from here.
-      migrated: false, backup: backupName ?? null,
-    }, { locks, log });
-    done.push('state(write)');
+    const after = await readState(transport, config.DEPLOY_PATH, { locks, log });
+    if (after.state?.current?.id !== previousRelease) {
+      const target = context.previousRecord ?? { id: previousRelease, commit: previousCommit ?? '' };
+      await writeState(transport, config.DEPLOY_PATH, {
+        id: target.id, tag: target.tag ?? '', commit: target.commit ?? '',
+        // The database was just restored, so the release running now did not
+        // migrate forward from here.
+        migrated: false, backup: backupName ?? null,
+      }, { locks, log });
+      done.push('state(write)');
+    }
   }
   return { ok: true, steps: done, previousRelease };
 }

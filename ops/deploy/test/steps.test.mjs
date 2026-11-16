@@ -375,6 +375,22 @@ describe('DW-4.2 a red smoke rolls back', () => {
       'no restore-db was called');
   });
 
+  it('a rollback leaves the record alone when the target is already current', async () => {
+    // A deploy records a release only after its smoke is green, so the record almost
+    // always already names the rollback target. Writing it anyway would set
+    // `previous` to the release that just failed — and the next rollback would go
+    // back into it: the rehearsal's R-6 asked for A and got B, which is this bug
+    // (OPS1 phase 5).
+    const transport = transportFor();
+    await rollbackRelease({
+      ...contextFor(transport), previousRelease: 'vl-bbbb222', previousCommit: B,
+      backupName: 'b1', needsDb: false,
+    });
+    const writes = transport.calls.filter(c => callName(c) === 'state.sh' && c.args[1] === 'write');
+    assert.equal(writes.length, 0, 'the record was left alone');
+    assert.ok(transport.calls.some(c => c.script.includes('up.sh')), 'the stack still came back');
+  });
+
   it('a rollback with nothing to go back to stops the stack and finishes', async () => {
     // A fresh install's red smoke: the record is empty, so there is no previous
     // release. Running `up` with an empty id answered "couldn't find env file
@@ -406,16 +422,22 @@ describe('DW-4.2 a red smoke rolls back', () => {
       'nothing was restored');
   });
 
-  it('the rollback records the release it came back to', async () => {
-    const transport = transportFor();
+  it('a rollback records the release it came back to when the record does not name it', async () => {
+    // The record still points at the failed release (the deploy never recorded the
+    // rollback target), so the rollback writes it back — with `migrated: false`,
+    // because the database was just restored (OPS1 phase 5).
+    const transport = transportFor({ state: JSON.stringify({
+      current: { id: 'vl-cccc333', tag: 'c'.repeat(40), commit: 'c'.repeat(40), migrated: true, backup: 'c1' },
+      previous: null, history: [],
+    }) });
     const back = await rollbackRelease({
-      ...contextFor(transport), previousRelease: 'vl-bbbb222', previousCommit: B,
+      ...contextFor(transport), previousRelease: 'vl-aaaa111', previousCommit: A,
       backupName: 'b1', needsDb: false,
-      previousRecord: { id: 'vl-bbbb222', tag: B, commit: B, migrated: true },
+      previousRecord: { id: 'vl-aaaa111', tag: A, commit: A, migrated: false },
     });
     assert.ok(back.ok);
     const write = transport.calls.find(c => callName(c) === 'state.sh' && c.args[1] === 'write');
-    assert.deepEqual(write.args.slice(2), ['vl-bbbb222', B, B, 'false', 'b1'],
+    assert.deepEqual(write.args.slice(2), ['vl-aaaa111', A, A, 'false', 'b1'],
       'the record points at the release that is running again');
   });
 

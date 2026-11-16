@@ -319,9 +319,11 @@ export function scratchCommits(base = 'OPS1-deploy-pipeline', repo = VL_REPO) {
   inRepo('commit', '-qm', 'rehearsal C: a probe migration the smoke refuses');
   const C = head();
 
-  // D: the backend exits at start, so the stack comes up and never answers.
+  // D: the backend exits at start, so the stack comes up and never answers. The
+  // exit is the whole point of the row (R-5), so it is a real `process.exit` and not
+  // a comment (OPS1 phase 5 — a no-op here made D deploy and smoke green).
   writeFileSync(server, '// OPS1 rehearsal D: the backend exits at start, on purpose.\n'
-    + "process.on('exit', () => {});\n" + readFileSync(server, 'utf8').split('\n').slice(1).join('\n'));
+    + 'process.exit(1);\n');
   inRepo('commit', '-qam', 'rehearsal D: a backend that exits at start');
   const D = head();
 
@@ -655,6 +657,17 @@ async function main(argv = process.argv.slice(2)) {
       process.stdout.write(`     A up again: ${up.status === 0 ? 'ok' : `exit ${up.status}`}`
         + `${up.status === 0 ? '' : ` ${up.stderr.trim().split('\n').slice(-2).join(' | ')}`}`
         + `\n     health: ${healthy === commits.A ? 'A' : healthy}\n`);
+      if (up.status === 0) {
+        // A is now running on this host, so the record says so: the rollback chain
+        // R-6 walks (B → A) is only as long as the record, and a release brought up
+        // by hand is exactly what a record is for (OPS1 phase 5).
+        const recorded = run('bash', [path.join(HERE, 'remote', 'state.sh'),
+          localRoot, 'write', releaseA, commits.A, commits.A, 'false', '',
+        ], { env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+        log.push('node ops/deploy/remote/state.sh write (A is running)', recorded);
+        const record = readRecord(localRoot);
+        process.stdout.write(`     record current: ${record.current?.id ?? 'none'}\n`);
+      }
       if (up.status === 0) {
         const publish = run('npm', ['run', 'publish:release', '--', '--base-url', `http://127.0.0.1:${PORT}`], {
           cwd: path.join(VL_REPO, 'backend'),
