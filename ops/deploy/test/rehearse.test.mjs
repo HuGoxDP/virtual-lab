@@ -227,8 +227,12 @@ describe('DW-5.4 the rehearsal driver', () => {
     // Both projects are asked, by their own label.
     assert.ok(questions.some(q => q.includes('label=com.docker.compose.project=vlrehearsal')), 'the rehearsal project');
     assert.ok(questions.some(q => q.includes('label=com.docker.compose.project=vlhand')), 'the hand-made one');
-    // The containers go, with their volumes.
-    assert.deepEqual(actions, ['rm -f -v abc123 def456']);
+    // The containers go — the restart policy first, because `unless-stopped` brings one
+    // back moments after `rm -f` and the cleanup then removes nothing.
+    assert.deepEqual(actions, [
+      'update --restart=no abc123 def456',
+      'rm -f -v abc123 def456',
+    ]);
 
     // And the network the project created — its own default, never a foreign one.
     actions.length = 0;

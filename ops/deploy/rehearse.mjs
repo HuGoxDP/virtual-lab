@@ -419,12 +419,17 @@ export function cleanProjects(projects = [PROJECT, HAND_PROJECT], { ask = sh, do
     const containers = ask('docker', ['ps', '-aq', '--filter', label])
       .split('\n').map(name => name.trim()).filter(Boolean);
     if (containers.length > 0) {
+      // The restart policy first: `unless-stopped` brings a container back moments
+      // after `rm -f`, so a cleanup that does not disable it removes nothing and the
+      // next run collides with it (OPS1 phase 5).
+      do_('docker', ['update', '--restart=no', ...containers]);
       do_('docker', ['rm', '-f', '-v', ...containers]);
       removed.push(...containers);
     }
     // The network the project created: a container that restarts has nothing to
     // join without it, which is the ENOTFOUND above. Only its own default — a
-    // network somebody else named the same way is not the rehearsal's.
+    // network somebody else named the same way is not the rehearsal's — and only
+    // once its containers are gone, or it still has active endpoints.
     const networks = ask('docker', ['network', 'ls', '--format', '{{.Name}}'])
       .split('\n').map(name => name.trim())
       .filter(name => name === `${project}_default`);
