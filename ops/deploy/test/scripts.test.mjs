@@ -367,8 +367,9 @@ describe('DW-5.5 the scripts the rehearsal would have hit', () => {
       renameSync(path.join(path.dirname(stage), 'archives.tar.gz'),
         path.join(dir, 'volumes', 'archives.tar.gz'));
       rmSync(stage, { recursive: true, force: true });
-      // The Windows form — the form the pipeline passes.
-      const windows = posix(dir).replace(/^\/([a-z])/, (_, d) => `${d.toUpperCase()}:`);
+      // The Windows form — the form the pipeline passes on this host.
+      const windows = posix(dir).replace(/^\/([A-Za-z])\//, (_, drive) => `${drive.toUpperCase()}:/`);
+      assert.ok(/^[A-Za-z]:\//.test(windows), `a drive path, not a POSIX one: ${windows}`);
       const out = bash('verify-backup.sh', [windows]);
       assert.match(out, /verified=1/);
       assert.equal(existsSync(path.join(dir, 'verified')), true);

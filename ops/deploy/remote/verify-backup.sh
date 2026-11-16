@@ -20,7 +20,7 @@ tar_path() {
     # first Windows rehearsal answered "volume archive … is unreadable" for a backup
     # that was fine (OPS1 phase 5).
     [A-Za-z]:/*)
-      printf '/%s%s' "$(printf '%s' "${1:0:1}" | tr 'A-Z' 'a')" "${1:2}"
+      printf '/%s%s' "$(printf '%s' "${1:0:1}" | tr 'A-Z' 'a-z')" "${1:2}"
       ;;
     *)
       printf '%s' "$1"
