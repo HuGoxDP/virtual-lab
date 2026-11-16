@@ -348,6 +348,35 @@ describe('DW-5.5 the scripts the rehearsal would have hit', () => {
     }
   });
 
+  it('verify-backup.sh reads a Windows volume archive through its POSIX path', () => {
+    // The scripts get the *host's* path form; on this machine `tar` reads a drive
+    // letter as a remote host, so the volume archives are checked through their
+    // POSIX form. `C:/rest` becomes `/c/rest` — keeping the colon (`/c:/rest`) is a
+    // path nothing reads, which is how the first Windows rehearsal called a good
+    // backup unreadable (OPS1 phase 5).
+    const dir = mkdtemp('vl-verify-');
+    try {
+      mkdirSync(path.join(dir, 'volumes'), { recursive: true });
+      writeFileSync(path.join(dir, 'db.sql.gz'), gzipSync('CREATE TABLE scenarios (id int);\n'));
+      writeFileSync(path.join(dir, 'manifest.json'), '{"created":"2026-11-16"}\n');
+      const stage = mkdtemp('vl-verify-vol-');
+      writeFileSync(path.join(stage, 'a.txt'), 'assets\n');
+      mkdirSync(path.join(stage, 'sub'), { recursive: true });
+      writeFileSync(path.join(stage, 'sub', 'b.txt'), 'more\n');
+      execFileSync('tar', ['-czf', '../archives.tar.gz', '.'], { cwd: stage, maxBuffer: 1 << 20 });
+      renameSync(path.join(path.dirname(stage), 'archives.tar.gz'),
+        path.join(dir, 'volumes', 'archives.tar.gz'));
+      rmSync(stage, { recursive: true, force: true });
+      // The Windows form — the form the pipeline passes.
+      const windows = posix(dir).replace(/^\/([a-z])/, (_, d) => `${d.toUpperCase()}:`);
+      const out = bash('verify-backup.sh', [windows]);
+      assert.match(out, /verified=1/);
+      assert.equal(existsSync(path.join(dir, 'verified')), true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('verify-backup.sh writes the marker restore-db.sh refuses to work without', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'vl-verify-'));
     try {

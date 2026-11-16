@@ -15,8 +15,16 @@ fail() { echo "verify_error=$1" >&2; exit 1; }
 # already POSIX and this passes it through untouched (OPS1 phase 5).
 tar_path() {
   case "$1" in
-    [A-Za-z]:/*) printf '/%s' "$(printf '%s' "$1" | tr 'A-Z' 'a')" ;;
-    *) printf '%s' "$1" ;;
+    # `C:/rest` → `/c/rest`: the drive letter moves behind the slash and its colon
+    # goes away — keeping it (`/c:/rest`) is a path nothing reads, which is how the
+    # first Windows rehearsal answered "volume archive … is unreadable" for a backup
+    # that was fine (OPS1 phase 5).
+    [A-Za-z]:/*)
+      printf '/%s%s' "$(printf '%s' "${1:0:1}" | tr 'A-Z' 'a')" "${1:2}"
+      ;;
+    *)
+      printf '%s' "$1"
+      ;;
   esac
 }
 
