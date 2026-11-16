@@ -292,8 +292,19 @@ export function readRecord(localRoot) {
  */
 export function scratchCommits(base = 'OPS1-deploy-pipeline', repo = VL_REPO) {
   const inRepo = (...args) => sh('git', ['-C', repo, ...args]);
-  const remote = inRepo('ls-remote', '--heads', 'origin', SCRATCH_BRANCH).trim();
-  if (remote !== '') throw new Error(`${SCRATCH_BRANCH} exists on origin — the rehearsal never pushes`);
+  // The origin check: a rehearsal never pushes a ref another worker could read as a
+  // task. When the network is down the remote cannot be asked, so the last fetched
+  // state answers instead — a rehearsal that runs offline must not lose its refusal
+  // (OPS1 phase 5: an offline machine failed the `ls-remote` outright).
+  let remoteBranches;
+  try {
+    remoteBranches = inRepo('ls-remote', '--heads', 'origin').trim();
+  } catch {
+    remoteBranches = inRepo('for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin').trim();
+  }
+  if (remoteBranches.split('\n').some(name => name.trim().replace(/^origin\//, '') === SCRATCH_BRANCH)) {
+    throw new Error(`${SCRATCH_BRANCH} exists on origin — the rehearsal never pushes`);
+  }
   // The scratch branch is local-only and cut again on every run, so a leftover
   // from an interrupted one is deleted first — and a branch that is not there is
   // not an error, which is the case on the first run.
@@ -607,7 +618,12 @@ async function main(argv = process.argv.slice(2)) {
   /** Bring the branch the task was on back, and delete the scratch branch. */
   const finish = () => {
     sh('git', ['-C', VL_REPO, 'switch', '-q', base]);
-    if (!flags.keep) sh('git', ['-C', VL_REPO, 'branch', '-qD', SCRATCH_BRANCH]);
+    // The scratch branch goes only when it is really gone — `-qD` on a branch that is
+    // not there is an error, and the first run of an offline machine hits it.
+    if (!flags.keep) {
+      try { sh('git', ['-C', VL_REPO, 'branch', '-qD', SCRATCH_BRANCH]); }
+      catch { /* the run never got as far as cutting it */ }
+    }
     const left = leftovers();
     process.stdout.write(`     volumes left: ${left.volumes.length === 0 ? 'none' : left.volumes.join(', ')}\n`);
     process.stdout.write(`     containers left: ${left.containers.length === 0 ? 'none' : left.containers.join(', ')}\n`);
