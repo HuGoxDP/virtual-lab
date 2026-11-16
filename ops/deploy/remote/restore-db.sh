@@ -26,12 +26,22 @@ cd "$RELEASE_DIR" || { echo "error=no-current-release" >&2; exit 1; }
 # The base compose reads its `env_file` from this variable: a release directory
 # has no `.env` of its own, and the secrets live in `shared/.env` (D-12).
 export VL_SHARED_ENV="$DEPLOY_PATH/shared/.env"
+# A bind-mount source for the *daemon*: on a Windows host it reads a `C:/…` source
+# against its own root, so the mount is given in the MSYS form (`/c/…`), which it
+# does resolve — the same rule `verify-backup.sh` follows for `tar` (OPS1 phase 5:
+# the restore answered "no such backup /backups/<name>" for a backup on disk).
+daemon_path() {
+  case "$1" in
+    [A-Za-z]:/*) printf '/%s%s' "$(printf '%s' "${1:0:1}" | tr 'A-Z' 'a-z')" "${1:2}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
 COMPOSE_FILE="$COMPOSE_FILES" \
 docker compose --project-name "$PROJECT" \
   --env-file "$DEPLOY_PATH/shared/.env" \
   --env-file "$RELEASE_DIR/release.env" \
   run --rm --entrypoint node \
-  -e BACKUP_DIR=/backups -v "$BACKUP_PATH:/backups" \
+  -e BACKUP_DIR=/backups -v "$(daemon_path "$BACKUP_PATH"):/backups" \
   backup restore.mjs "$BACKUP_NAME" --yes < /dev/null >/dev/null
 echo "restored=$BACKUP_NAME"
 echo "restore_ok=1"

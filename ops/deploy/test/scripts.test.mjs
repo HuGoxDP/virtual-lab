@@ -128,6 +128,30 @@ it('every script that runs the stack points compose at the shared env', () => {
     assert.equal(/string_agg\(filename/.test(script), false, 'and not filename');
   });
 
+  it('the rollback mounts the backup through the form the daemon resolves', () => {
+    // A bind-mount source is resolved by the *daemon*, and on this host it reads a
+    // `C:/…` source against its own root: the mount is empty and the restore answers
+    // "no such backup /backups/<name>" for a backup that is on disk (OPS1 phase 5).
+    // `--env-file` is the opposite — the docker CLI resolves that one, so it gets the
+    // Windows form.
+    const script = path.join(ROOT, 'remote', 'restore-db.sh');
+    const text = readFileSync(script, 'utf8');
+    assert.match(text, /-v "\$\(daemon_path "\$BACKUP_PATH"\):\/backups"/,
+      'the mount source goes through daemon_path');
+    assert.equal(text.includes('-v "$BACKUP_PATH:/backups"'), false, 'and not raw');
+
+    // And the conversion itself: `C:/rest` → `/c/rest`, a POSIX path unchanged.
+    const conversion = execFileSync('bash', ['-c',
+      `${/daemon_path\(\) \{[\s\S]*?\n\}/.exec(text)[0]}\ndaemon_path "$1"`,
+      'bash', 'C:/Users/HuGox/backups/2026-11-16T14-54-23Z',
+    ], { encoding: 'utf8' });
+    assert.equal(conversion.trim(), '/c/Users/HuGox/backups/2026-11-16T14-54-23Z');
+    assert.equal(execFileSync('bash', ['-c',
+      `${/daemon_path\(\) \{[\s\S]*?\n\}/.exec(text)[0]}\ndaemon_path "$1"`,
+      'bash', '/srv/backups/b1',
+    ], { encoding: 'utf8' }).trim(), '/srv/backups/b1', 'a POSIX path is unchanged');
+  });
+
   it('nothing under ops/deploy/ contains a forbidden construct', () => {
     for (const file of codeFiles()) {
       const text = readFileSync(file, 'utf8');
