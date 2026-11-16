@@ -44,10 +44,12 @@ export const HAND_PORT = '8049';
 export const REHEARSAL_COMPOSE = 'ops/deploy/compose.rehearsal.yml';
 /** The hand-made stack's own names, so it can be built beside the rehearsal's. */
 export const HAND_COMPOSE = 'ops/deploy/compose.hand.yml';
-/** The compose files the hand-made stack is built from, in `-f` order: the release's,
- * the rehearsal's renames, and its own container names beside them. */
+/** The compose files the hand-made stack is built from, in `-f` order: the base
+ * compose, the rehearsal's renames, and its own container names beside them. No
+ * `compose.release.yml`: a hand-made deployment is what exists *before* a release —
+ * it builds, it is not run from images the pipeline tagged (OPS1 phase 5). */
 export const HAND_FILES = [
-  'docker-compose.yml', 'ops/deploy/compose.release.yml', REHEARSAL_COMPOSE, HAND_COMPOSE,
+  'docker-compose.yml', REHEARSAL_COMPOSE, HAND_COMPOSE,
 ].join(';');
 
 /** The compose file list the rehearsal stack runs with, in `-f` order. */
@@ -819,8 +821,7 @@ async function main(argv = process.argv.slice(2)) {
           // `VirtualLab*`, which the live local stack on 8044 is already using — and a
           // rehearsal must never collide with it (OPS1 phase 5; the plan's R-7 says
           // "docker compose -p vlhand with compose.rehearsal.yml").
-          '--file', 'docker-compose.yml', '--file', 'ops/deploy/compose.release.yml',
-          '--file', REHEARSAL_COMPOSE, '--file', HAND_COMPOSE,
+          '--file', 'docker-compose.yml', '--file', REHEARSAL_COMPOSE, '--file', HAND_COMPOSE,
           // The docker CLI resolves `--env-file` itself, so it gets the host's own
           // form; a POSIX path here becomes `C:\c\…`, which does not exist
           // (OPS1 phase 5).
