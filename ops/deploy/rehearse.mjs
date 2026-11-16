@@ -457,13 +457,14 @@ function handTree(destination) {
   });
   if (archive.status !== 0) throw new Error('git archive of the rehearsal tree failed');
   mkdirSync(destination, { recursive: true });
-  // A relative operand from a `cwd`, never `-C <drive path>`: this machine's `tar`
-  // reads a drive letter as a remote host (OPS1 phase 5 — R-7 never ran because of
-  // exactly this).
-  const unpack = run('tar', ['-xzf', '-', '.'], {
+  // No `-C <drive path>` (this `tar` reads a drive letter as a remote host), no `-z`
+  // (`git archive` writes an uncompressed tar) and no `.` operand (the archive lists
+  // its own files, so `tar: .: Not found in archive`) — three separate failures the
+  // first R-7 runs hit (OPS1 phase 5).
+  const unpack = run('tar', ['-xf', '-'], {
     cwd: destination, input: archive.stdout, maxBuffer: 1 << 26,
   });
-  if (unpack.status !== 0) throw new Error(unpack.stderr);
+  if (unpack.status !== 0) throw new Error(unpack.stderr || `tar exited ${unpack.status}`);
 }
 
 /**
