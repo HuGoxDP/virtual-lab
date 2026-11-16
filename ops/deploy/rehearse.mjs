@@ -48,6 +48,9 @@ export const SCRATCH_BRANCH = 'OPS1-rehearsal-scratch';
 /** A short sha, for the table. */
 const SHORT_ = sha => String(sha).slice(0, 7);
 
+/** The clock every rehearsal deploy runs against: a Saturday, inside the window. */
+export const REHEARSAL_NOW = '2026-11-14T10:00:00Z';
+
 /** A row the rehearsal can tell apart from a published one: the NOT NULL columns
  * `scenarios` carries get real values, or the insert fails on them and the
  * rehearsal cannot tell what survived (OPS1 phase 5). */
@@ -165,7 +168,7 @@ export function createLog() {
  * The one place a POSIX path is required is `tar` reading a *path*, and that is a
  * conversion inside `remote/verify-backup.sh`, not a different flag here.
  */
-export function deployArgv({ envFile, localRoot, repo = VL_REPO }, command, extra = []) {
+export function deployArgv({ envFile, localRoot, repo = VL_REPO, now = REHEARSAL_NOW }, command, extra = []) {
   return [
     DEPLOY, command, 'platform',
     '--env-file', envFile,
@@ -174,6 +177,10 @@ export function deployArgv({ envFile, localRoot, repo = VL_REPO }, command, extr
     '--project', PROJECT,
     '--compose-file', REHEARSAL_COMPOSE,
     '--repo', repo,
+    // A moment inside the deploy window: the window exists to protect production
+    // traffic, and a rehearsal on port 8047 has none. The gate is still evaluated —
+    // a wrong hour still refuses, which is what its own unit test proves.
+    '--now', now,
     '--rehearsal',
     ...extra,
   ];
@@ -181,8 +188,8 @@ export function deployArgv({ envFile, localRoot, repo = VL_REPO }, command, extr
 
 /** The deploy command, run. */
 export function deployCommand(options, command, extra = []) {
-  const { envFile, localRoot, repo = VL_REPO } = options;
-  return run('node', deployArgv(options, command, extra),
+  const { envFile, localRoot, repo = VL_REPO, now = REHEARSAL_NOW } = options;
+  return run('node', deployArgv({ envFile, localRoot, repo, now }, command, extra),
     { cwd: repo, env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
 }
 

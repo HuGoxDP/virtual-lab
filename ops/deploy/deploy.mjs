@@ -362,6 +362,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     env,
     haltFile,
     logDir,
+    // A clock of the operator's choosing, for a rehearsal that has no production
+    // traffic to protect: the window gate is evaluated against it, and a wrong hour
+    // still refuses (OPS1 phase 5).
+    now: flags.now ? () => new Date(String(flags.now)) : undefined,
     repo: repoRoot,
     locks,
     transport,

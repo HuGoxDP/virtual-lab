@@ -11,12 +11,13 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { deployWindow } from '../lib/window.mjs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  PROJECT, HAND_PROJECT, REHEARSAL_COMPOSE, SCRATCH_BRANCH, COMPOSE_FILES, PORT,
+  PROJECT, HAND_PROJECT, REHEARSAL_COMPOSE, SCRATCH_BRANCH, COMPOSE_FILES, PORT, REHEARSAL_NOW,
   posix, sha256, teardownGuard, createRecorder, createLog, envValue, readRecord,
   scratchCommits, writeEnv, mkdtemp, deployArgv, currentRelease, cleanProjects,
 } from '../rehearse.mjs';
@@ -52,7 +53,7 @@ describe('DW-5.4 the rehearsal driver', () => {
     assert.equal(posix('/c/Users/HuGox/x'), '/c/Users/HuGox/x');
   });
 
-  it('commands the deploy with the host form for every path it owns', () => {
+  it('commands the deploy with a clock inside the window, and the host form of every path', () => {
     // `--local-root` becomes DEPLOY_PATH for the scripts, and on this machine that
     // is the form docker accepts (`C:/…`): a POSIX path is resolved to `C:\c\…`,
     // which does not exist (OPS1 phase 5).
@@ -65,6 +66,11 @@ describe('DW-5.4 the rehearsal driver', () => {
       assert.equal(flag('--local-root'), root, 'the scripts get the host form');
       assert.equal(flag('--env-file'), envFile, 'and so does the file Node reads');
       assert.equal(flag('--repo'), repo, 'and the repository git runs in');
+      assert.equal(flag('--now'), REHEARSAL_NOW, 'and a clock inside the window');
+      // …and that clock really is inside the window the gate enforces: the
+      // rehearsal may not run at an hour the pipeline would refuse.
+      assert.equal(deployWindow(new Date(REHEARSAL_NOW)).allowed, true, 'the rehearsal’s hour is allowed');
+      assert.equal(deployWindow(new Date('2026-11-16T10:00:00Z')).allowed, false, 'a Monday noon is not');
       assert.equal(flag('--project'), PROJECT);
       assert.deepEqual(argv.slice(argv.indexOf('--compose-file') + 1, argv.indexOf('--repo')),
         [REHEARSAL_COMPOSE], 'the rehearsal compose file is added to the release list');
