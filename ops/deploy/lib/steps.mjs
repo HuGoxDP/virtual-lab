@@ -431,7 +431,23 @@ export async function deployPlatform(context) {
   // maps them for a human). Exit 5 is "failed before up" and nothing else.
   const up = await step('up', transport, [config.DEPLOY_PATH, release, projectOf(context), composeFiles], { locks, log });
   done.push(up.name);
-  if (!up.ok) return refusal(up.name, done, 5);
+  if (!up.ok) {
+    // `up` brings the release's containers up and *then* reports the dependency that
+    // could not start, so the host has already had its stack replaced: the previous
+    // release must come back (exit 10), not "failed before up" — a backend that never
+    // becomes healthy must not leave the host running nothing (OPS1 phase 5: R-5
+    // answered 5 for a stack that was already up).
+    return {
+      ok: false, failed: 'up', steps: done, exitCode: 10, rollback: true,
+      // The migrations-after read never happened, and the backend applies migrations
+      // at start: the safe answer is "it may have migrated".
+      needsDb: Boolean(backup.backup_name),
+      backupName: backup.backup_name ?? null,
+      previousRelease: current?.id ?? null,
+      previousCommit: current?.commit ?? null,
+      fresh,
+    };
+  }
 
   const waitHealthy = await step('wait-healthy', transport, [config.FRONTEND_PORT ?? '80', '300'], { locks, log });
   done.push(waitHealthy.name);

@@ -112,6 +112,22 @@ it('every script that runs the stack points compose at the shared env', () => {
     }
   });
 
+  it('migrations.sh asks for the column the migration runner writes', () => {
+    // The runner inserts `name` (`backend/migrations.js`); a query for `filename`
+    // answers an empty set, and every deploy then looks like it did not migrate —
+    // which is how the rehearsal's red-smoke rollback never restored the database
+    // and left the probe table behind (OPS1 phase 5).
+    const runner = path.resolve(ROOT, '..', '..', 'backend', 'migrations.js');
+    const schema = readFileSync(runner, 'utf8');
+    const written = /INSERT INTO schema_migrations \((\w+)\)/.exec(schema);
+    assert.ok(written, `${runner} inserts into schema_migrations`);
+    const column = written[1];
+    const script = readFileSync(path.join(ROOT, 'remote', 'migrations.sh'), 'utf8');
+    assert.match(script, new RegExp(`string_agg\\(${column}\\s*,`),
+      `migrations.sh aggregates ${column}, the column the runner writes`);
+    assert.equal(/string_agg\(filename/.test(script), false, 'and not filename');
+  });
+
   it('nothing under ops/deploy/ contains a forbidden construct', () => {
     for (const file of codeFiles()) {
       const text = readFileSync(file, 'utf8');

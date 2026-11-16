@@ -272,22 +272,31 @@ describe('DW-4.1 the happy deploy runs the steps in the gate order', () => {
     assert.ok(transport.calls.some(c => c.script.includes('restore-db.sh')), 'the database was restored');
   });
 
-  it('`up` itself failing is exit 5, and nothing after it runs', async () => {
+  it('`up` failing rolls back: the stack was already replaced', async () => {
+    // Compose brings the release's containers up and then reports the dependency it
+    // could not start, so the host's stack is already gone: a rollback, not "failed
+    // before up" (OPS1 phase 5 — R-5 answered 5 for a stack that was already up).
+    let failures = 0;
     const transport = transportFor();
     const answer = transport.run.bind(transport);
-    // Basename, never `endsWith`: `backup.sh` ends with `up.sh`, which is how
-    // this test first failed the backup instead of the up step.
-    transport.run = async (script, args) => (
-      callName({ script }) === 'up.sh' ? { code: 1, stdout: 'error=no-release\n' } : answer(script, args)
-    );
+    transport.run = async (script, args) => {
+      // The deploy's own up fails once; the rollback's up answers normally, or the
+      // rollback would fail for the same reason and prove nothing.
+      if (callName({ script }) === 'up.sh' && failures++ === 0) {
+        return { code: 1, stdout: 'error=unhealthy-dependency\n' };
+      }
+      return answer(script, args);
+    };
     const result = await deployPlatform(contextFor(transport));
-    assert.equal(result.exitCode, 5, 'failed before up: the running release is untouched');
+    assert.equal(result.exitCode, 10);
     assert.equal(result.failed, 'up');
-    assert.equal(result.rollback, undefined);
-    const names = transport.calls.map(callName);
-    assert.equal(names.includes('wait-healthy.sh'), false);
-    assert.equal(names.includes('state.sh' ) && names.filter(n => n === 'state.sh').length > 1, false,
-      'no state write happened');
+    assert.equal(result.rollback, true);
+    // The migrations-after read never happened, so the database comes back when
+    // there is a backup to come back from.
+    assert.equal(result.needsDb, true);
+    const back = await rollbackRelease({ ...contextFor(transport), ...result });
+    assert.ok(back.ok, 'the previous release is back');
+    assert.ok(transport.calls.some(c => c.script.includes('restore-db.sh')), 'the database was restored');
   });
 
   it('the window gate refuses before anything is contacted', async () => {

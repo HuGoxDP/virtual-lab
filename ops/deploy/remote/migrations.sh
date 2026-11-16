@@ -24,7 +24,7 @@ SET=$(COMPOSE_FILE="$COMPOSE_FILES" \
   exec -T database \
   psql -U "$(grep -m1 '^DB_USER=' "$DEPLOY_PATH/shared/.env" | cut -d= -f2)" \
        -d "$(grep -m1 '^DB_NAME=' "$DEPLOY_PATH/shared/.env" | cut -d= -f2)" \
-       -tAc "select string_agg(filename, ',' order by filename) from schema_migrations" \
+       -tAc "select string_agg(name, ',' order by name) from schema_migrations" \
   2>/dev/null < /dev/null || true)
 echo "migrations=${SET}"
 echo "migrations_ok=1"
