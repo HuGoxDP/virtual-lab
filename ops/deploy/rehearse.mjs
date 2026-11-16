@@ -802,6 +802,19 @@ async function main(argv = process.argv.slice(2)) {
     if (want('R-7')) {
       handRepo = mkdtemp('vl-hand-');
       handTree(handRepo);
+      // The rehearsal's stack comes down first (the plan's R-7 "tear down"): the
+      // hand-made stack is built on the same volumes, and two Postgres containers
+      // cannot share one pgdata — the second one answers "lock file exists" and its
+      // backend never becomes healthy (OPS1 phase 5). The *volumes* stay: the marker
+      // row R-2 inserted is in that database, which is what the deploy must find.
+      const runningRelease = currentRelease(localRoot);
+      if (runningRelease) {
+        const stopped = run('bash', [path.join(HERE, 'remote', 'stop.sh'),
+          localRoot, PROJECT, runningRelease, COMPOSE_FILES,
+        ], { env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+        log.push('node ops/deploy/remote/stop.sh (the rehearsal stack stands down)', stopped);
+        process.stdout.write(`     rehearsal stack down: ${stopped.status === 0 ? 'ok' : `exit ${stopped.status}`}\n`);
+      }
       // The base images it builds from, on disk: this machine has no registry.
       const bases = ensureBaseImages();
       const shared = path.join(handRepo, 'root', 'shared');
