@@ -457,7 +457,12 @@ function handTree(destination) {
   });
   if (archive.status !== 0) throw new Error('git archive of the rehearsal tree failed');
   mkdirSync(destination, { recursive: true });
-  const unpack = run('tar', ['-xzf', '-C', destination], { input: archive.stdout, maxBuffer: 1 << 26 });
+  // A relative operand from a `cwd`, never `-C <drive path>`: this machine's `tar`
+  // reads a drive letter as a remote host (OPS1 phase 5 — R-7 never ran because of
+  // exactly this).
+  const unpack = run('tar', ['-xzf', '-', '.'], {
+    cwd: destination, input: archive.stdout, maxBuffer: 1 << 26,
+  });
   if (unpack.status !== 0) throw new Error(unpack.stderr);
 }
 
@@ -699,8 +704,13 @@ async function main(argv = process.argv.slice(2)) {
         + `\n     health commit: ${health === commits.B ? 'B' : health}\n`);
     }
 
-    // R-4 — a migration the smoke refuses. The rollout goes back, the schema with
-    // it, and the marker row survives: that is the whole of D-10 in one row.
+    // R-4 — a migration the smoke refuses. The rollout goes back, the marker row
+    // survives: that is the whole of D-10 in one row. The probe migration's table
+    // *survives* the restore, because `restore.mjs` drops exactly what the dump's
+    // `--clean` covers (docs/backup-restore.md) and a dump taken before that
+    // migration does not cover a table that did not exist yet. Rolling that back too
+    // wants a full-schema restore (`DROP SCHEMA public CASCADE` first), which is a
+    // follow-up row rather than this one (OPS1 phase 5 — recorded in the notes).
     if (want('R-4')) {
       sh('git', ['-C', VL_REPO, 'switch', '-q', '--detach', commits.C]);
       await step('R-4 deploy C with the smoke pinned to a wrong commit', 10, 'deploy',
@@ -713,6 +723,7 @@ async function main(argv = process.argv.slice(2)) {
       const record = readRecord(localRoot);
       process.stdout.write(`     rehearsal_probe exists: ${probe}`
         + `\n     marker row present: ${marker}`
+        + `\n     migrations recorded: ${query(localRoot, COMPOSE_FILES, stackEnv(localRoot), 'select count(*) from schema_migrations')}`
         + `\n     health commit: ${health === commits.B ? 'B' : health}`
         + `\n     record current: ${record.current?.id ?? 'none'} (the rollback wrote it)\n`);
     }
