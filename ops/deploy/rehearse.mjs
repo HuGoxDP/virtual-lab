@@ -399,6 +399,43 @@ export function dockerUp() {
   }
 }
 
+/**
+ * The rehearsal's own projects, removed before the run.
+ *
+ * The stack's services restart (`unless-stopped`), so a Docker restart — or an
+ * interrupted rehearsal — brings the previous run's containers back. They then
+ * collide with the new run's names and its network: the backend answers
+ * `getaddrinfo ENOTFOUND database` because its container was resurrected into a
+ * network that no longer exists, and every deploy after the first fails at `up`
+ * (OPS1 phase 5 — the plan's phase-5 edge case, "rehearse.mjs cleans its own
+ * projects first").
+ *
+ * @returns {{removed: string[]}} what was removed, for the run's own record.
+ */
+export function cleanProjects(projects = [PROJECT, HAND_PROJECT], { ask = sh, do_ = run } = {}) {
+  const removed = [];
+  for (const project of projects) {
+    const label = `label=com.docker.compose.project=${project}`;
+    const containers = ask('docker', ['ps', '-aq', '--filter', label])
+      .split('\n').map(name => name.trim()).filter(Boolean);
+    if (containers.length > 0) {
+      do_('docker', ['rm', '-f', '-v', ...containers]);
+      removed.push(...containers);
+    }
+    // The network the project created: a container that restarts has nothing to
+    // join without it, which is the ENOTFOUND above. Only its own default — a
+    // network somebody else named the same way is not the rehearsal's.
+    const networks = ask('docker', ['network', 'ls', '--format', '{{.Name}}'])
+      .split('\n').map(name => name.trim())
+      .filter(name => name === `${project}_default`);
+    for (const network of networks) {
+      const answer = do_('docker', ['network', 'rm', network]);
+      if (answer.status === 0) removed.push(network);
+    }
+  }
+  return { removed };
+}
+
 /** The scratch tree a hand-made stack is built from: `git archive`, not a clone. */
 function handTree(destination) {
   const archive = spawnSync('git', ['-C', VL_REPO, 'archive', 'HEAD'], {
@@ -485,6 +522,14 @@ async function main(argv = process.argv.slice(2)) {
   if (sh('git', ['-C', VL_REPO, 'status', '--porcelain']).trim() !== '') {
     process.stderr.write('rehearse: the worktree is not clean — commit or stash, then rehearse\n');
     return 3;
+  }
+
+  // The rehearsal's own projects from an interrupted run: their services restart,
+  // so a Docker restart brings them back and they collide with this one (see
+  // `cleanProjects`).
+  const cleaned = cleanProjects();
+  if (cleaned.removed.length > 0) {
+    process.stdout.write(`cleaned from an interrupted run: ${cleaned.removed.join(', ')}\n`);
   }
 
   const only = flags.only ? String(flags.only).split(',') : null;

@@ -16,9 +16,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  PROJECT, REHEARSAL_COMPOSE, SCRATCH_BRANCH, COMPOSE_FILES, PORT,
+  PROJECT, HAND_PROJECT, REHEARSAL_COMPOSE, SCRATCH_BRANCH, COMPOSE_FILES, PORT,
   posix, sha256, teardownGuard, createRecorder, createLog, envValue, readRecord,
-  scratchCommits, writeEnv, mkdtemp, deployArgv, currentRelease,
+  scratchCommits, writeEnv, mkdtemp, deployArgv, currentRelease, cleanProjects,
 } from '../rehearse.mjs';
 
 /** A temporary git repo with one commit and an `origin/main` pointing at it. */
@@ -201,6 +201,43 @@ describe('DW-5.4 the rehearsal driver', () => {
       rmSync(path.dirname(file), { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('cleans its own projects before a run, and nothing else', () => {
+    // A Docker restart brings `restart: unless-stopped` back, so an interrupted
+    // rehearsal's containers collide with the next run's names — and its backend
+    // then answers ENOTFOUND `database`, because its container was resurrected into
+    // a network that no longer exists (OPS1 phase 5).
+    const questions = [];
+    const actions = [];
+    const cleanWith = (answers) => cleanProjects([PROJECT, HAND_PROJECT], {
+      ask: (command, args) => {
+        questions.push(args.join(' '));
+        return answers[args.join(' ')] ?? '';
+      },
+      do_: (command, args) => {
+        actions.push(args.join(' '));
+        return { status: 0 };
+      },
+    });
+    cleanWith({
+      'ps -aq --filter label=com.docker.compose.project=vlrehearsal': 'abc123\ndef456\n',
+      'ps -aq --filter label=com.docker.compose.project=vlhand': '',
+    });
+    // Both projects are asked, by their own label.
+    assert.ok(questions.some(q => q.includes('label=com.docker.compose.project=vlrehearsal')), 'the rehearsal project');
+    assert.ok(questions.some(q => q.includes('label=com.docker.compose.project=vlhand')), 'the hand-made one');
+    // The containers go, with their volumes.
+    assert.deepEqual(actions, ['rm -f -v abc123 def456']);
+
+    // And the network the project created — its own default, never a foreign one.
+    actions.length = 0;
+    questions.length = 0;
+    cleanWith({
+      'network ls --format {{.Name}}': 'vlrehearsal_default\nbridge\nhost\nvirtual_lab_pgdata\n',
+    });
+    assert.deepEqual(actions, ['network rm vlrehearsal_default'],
+      'only the rehearsal’s own default network goes');
   });
 
   it('reads the release record a rehearsal root holds, and says so when there is none', () => {
