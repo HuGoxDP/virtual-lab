@@ -1,0 +1,10 @@
+{
+  "name": "virtual-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted scenario platform (catalog, player, admin) — repo-level scripts. The app itself lives in backend/ and frontend/.",
+  "scripts": {
+    "selfhost-check": "node scripts/selfhost-check.mjs",
+    "test:scripts": "node --test --test-concurrency=1 \"scripts/test/*.test.mjs\""
+  }
+}
