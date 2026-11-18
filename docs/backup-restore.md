@@ -66,6 +66,12 @@ docker compose -p vlabscratch $F run --rm \
   -v "$PWD/backup/out-scratch:/backups" backup
 NAME=$(ls -1 backup/out-scratch | head -1)     # the timestamped directory
 
+# 3b. Prove the backup readable before anything is destroyed: the read-back
+#     decompresses the dump, checks the manifest and walks every volume tar,
+#     and writes the `verified` marker only when all of it passes.
+#     restore.mjs refuses a backup without that marker.
+node scripts/lib/verify-backup.mjs "backup/out-scratch/$NAME"
+
 # 4. Destroy the scratch stack and its volumes. This is the disaster.
 docker compose -p vlabscratch $F down -v
 
@@ -73,7 +79,9 @@ docker compose -p vlabscratch $F down -v
 docker compose -p vlabscratch \
   -f docker-compose.yml -f docker-compose.scratch.yml up -d
 
-# 6. Restore. The script dry-runs without --yes and says what it will do.
+# 6. Restore. The script dry-runs without --yes and says what it will do, and
+#    refuses outright if the backup has no `verified` marker (step 3b) — an
+#    unproven backup is not a restore target.
 #    Three files, not two: docker-compose.restore.yml mounts the content volumes
 #    read-WRITE (the service's own read-only mounts exist so a nightly job can
 #    never write them; a restore must), and `--entrypoint node` because the
