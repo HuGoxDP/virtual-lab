@@ -6,7 +6,7 @@
 // ADMIN_TOKEN is not required either: the one test that needs it skips itself
 // with a reason when it is unset.
 
-const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:8044';
+const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:8051';
 
 async function smokeSetup(): Promise<void> {
   let health: Response;

@@ -6,7 +6,16 @@
 // `npm run smoke` (playwright.smoke.config.ts); `npm run selfhost-check` runs it
 // against the stack it just built.
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { expect, test } from '@playwright/test';
+
+// The engine version the frontend depends on, read from the release URL in
+// frontend/package.json (A10) — the same dynamic pin the main suite uses, so
+// moving the dependency to a new tag never leaves this literal behind.
+const frontendPkg = JSON.parse(readFileSync(path.resolve('..', 'frontend', 'package.json'), 'utf8'));
+const engineVersion = /WebEngineTS-(\d[^/]*)\.tgz/.exec(frontendPkg.dependencies.WebEngineTS)?.[1];
+if (!engineVersion) throw new Error(`cannot read the engine version from ${frontendPkg.dependencies.WebEngineTS}`);
 
 test.describe('fresh-install smoke', () => {
   test('1. /api/health answers ok with the database connected and a build identity', async ({ request }) => {
@@ -34,9 +43,9 @@ test.describe('fresh-install smoke', () => {
   });
 
   test('3. the engine bundle is served with the platform CSP, nosniff and immutable cache', async ({ request }) => {
-    // The versioned path the player loads (A10). The main suite pins it against
-    // the frontend dependency; here it only has to be served, with its headers.
-    const res = await request.get('/engine/0.2.0/WebEngineTS.standalone.js');
+    // The versioned path the player loads (A10), pinned to the frontend's
+    // dependency above; here it only has to be served, with its headers.
+    const res = await request.get(`/engine/${engineVersion}/WebEngineTS.standalone.js`);
     expect(res.status()).toBe(200);
     expect(res.headers()['content-security-policy']).toContain(`default-src 'self'`);
     expect(res.headers()['x-content-type-options']).toBe('nosniff');

@@ -23,7 +23,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
@@ -145,6 +145,36 @@ export function portFree(port) {
 }
 
 /**
+ * Every variable the compose files interpolate (`${…}` in docker-compose.yml
+ * and docker-compose.selfcheck.yml). Compose gives the caller's shell env
+ * precedence over `.env`, so an exported FRONTEND_PORT=8044 or DB_PASSWORD
+ * would beat the generated `.env` — the port check would probe one port while
+ * Docker binds another. Scrubbing these from every docker child makes the
+ * generated `.env` the single source. Keep in sync with the compose files.
+ */
+export const COMPOSE_INTERPOLATED = [
+  'ADMIN_TOKEN', 'API_PORT', 'AUTHOR_PREVIEWS_PER_HOUR', 'AUTHOR_UPLOADS_PER_HOUR',
+  'AUTH_FAILURES_PER_WINDOW', 'BACKUP_DIR', 'BACKUP_KEEP_DAYS', 'BACKUP_SCHEDULE_HOURS',
+  'DB_HOST', 'DB_NAME', 'DB_PASSWORD', 'DB_PORT', 'DB_USER', 'FRONTEND_PORT',
+  'LTI_FRAME_ANCESTORS', 'LTI_PUBLIC_URL', 'LTI_REGISTRATION_SECRET',
+  'MAX_ARCHIVE_ENTRIES', 'MAX_ENTRY_BYTES', 'REQUIRE_HTTPS', 'TRUST_PROXY',
+];
+
+/**
+ * A copy of `env` with every compose-interpolated name removed (values are
+ * dropped, never printed). Everything else — PATH, SystemRoot, … — survives,
+ * and the driver's explicit `-e` flags on a compose run are unaffected.
+ *
+ * @param {Record<string, string|undefined>} env
+ * @returns {Record<string, string|undefined>}
+ */
+export function scrubComposeEnv(env) {
+  const out = { ...env };
+  for (const name of COMPOSE_INTERPOLATED) delete out[name];
+  return out;
+}
+
+/**
  * The compose invocation, one place: the base file plus the override that
  * renames volumes and containers. `-p` alone is not enough (both are pinned in
  * the base file), so the override is not optional.
@@ -260,13 +290,16 @@ export async function runCheck({
   };
 
   let workdir = null;
-  let stackUp = false;
+  let upAttempted = false;
 
   try {
     // 1. The lock the caller holds (D8). A directory that exists is the contract
     //    `wk.sh lock vl-db` provides; its content is not this script's business.
+    //    A regular file is not a lock: `wk.sh lock` creates a directory.
     if (!lock) return { ok: false, steps, failed: 'lock' };
-    if (!existsSync(lock)) { step('lock', false, `not a lock directory: ${lock}`); return { ok: false, steps, failed: 'lock' }; }
+    let lockIsDir = false;
+    try { lockIsDir = statSync(lock).isDirectory(); } catch { lockIsDir = false; }
+    if (!lockIsDir) { step('lock', false, `not a lock directory: ${lock}`); return { ok: false, steps, failed: 'lock' }; }
     step('lock', true, lock);
 
     // 2. The port has to be free before Docker takes it: a busy one produces a
@@ -293,10 +326,17 @@ export async function runCheck({
     writeFileSync(path.join(cloneDir, '.env'), text);
     step('env', changed.length === 4, `replaced ${changed.join(', ')}`);
 
-    // 5. Up. `--build` is the point: a clean clone has no images.
-    const up = exec('docker', composeArgs(['up', '-d', '--build']), { cwd: cloneDir, timeout: 30 * 60_000 });
-    stackUp = up.status === 0;
-    if (!step('up', stackUp, up.status === 0 ? '' : (up.stderr || '').trim().split('\n').slice(-3).join(' | ').slice(0, 300))) {
+    // The caller's shell env must not override the generated .env: compose
+    // gives exported vars precedence, so every docker child runs with them
+    // scrubbed (the explicit `-e` flags on `run` still apply).
+    const dockerEnv = scrubComposeEnv(process.env);
+
+    // 5. Up. `--build` is the point: a clean clone has no images. `upAttempted`
+    //    is set BEFORE the call: even a failed or timed-out `up` can leave
+    //    containers behind, and the finally block must tear them down.
+    upAttempted = true;
+    const up = exec('docker', composeArgs(['up', '-d', '--build']), { cwd: cloneDir, timeout: 30 * 60_000, env: dockerEnv });
+    if (!step('up', up.status === 0, up.status === 0 ? '' : (up.stderr || '').trim().split('\n').slice(-3).join(' | ').slice(0, 300))) {
       return { ok: false, steps, failed: 'up' };
     }
 
@@ -304,13 +344,13 @@ export async function runCheck({
     const baseUrl = `http://127.0.0.1:${port}`;
     const health = await waitHealthy(probe, { baseUrl, timeoutMs: healthTimeoutMs, sleep, log });
     if (!step('healthy', health.ok, `${health.reason} after ${Math.round(health.waitedMs / 1000)}s`)) {
-      exec('docker', composeArgs(['logs', '--tail', '40', 'backend']), { cwd: cloneDir });
+      exec('docker', composeArgs(['logs', '--tail', '40', 'backend']), { cwd: cloneDir, env: dockerEnv });
       return { ok: false, steps, failed: 'healthy' };
     }
 
     // 7. One backup, then the read-back that makes it a backup (D7, D-9).
     const backupDir = path.join(workdir, 'backups');
-    const once = exec('docker', composeArgs(['run', '--rm', '-e', 'BACKUP_RUN_ONCE=1', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup']), { cwd: cloneDir, timeout: 10 * 60_000 });
+    const once = exec('docker', composeArgs(['run', '--rm', '-e', 'BACKUP_RUN_ONCE=1', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup']), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
     if (once.status !== 0) {
       step('backup', false, (once.stderr || '').trim().slice(-200));
       return { ok: false, steps, failed: 'backup' };
@@ -350,13 +390,24 @@ export async function runCheck({
   } catch (err) {
     return { ok: false, steps, failed: `exception: ${err.message}` };
   } finally {
-    // Teardown on every exit path, including a refusal mid-way: a half-built stack
-    // would hold the volumes and the port for the next run.
+    // Teardown whenever `up` was attempted — including a failed or timed-out
+    // `up`, which can leave containers with restart:unless-stopped and a
+    // vlcheck_pgdata that poisons the next run. It runs BEFORE the clone is
+    // removed: `down` needs the compose files inside it. `--keep` skips both.
     if (workdir && !keep) {
       const cloneDir = path.join(workdir, 'app');
-      if (stackUp) for (const cmd of teardownCommands()) exec(cmd[0], cmd.slice(1), { cwd: cloneDir, timeout: 10 * 60_000 });
-      rmSync(workdir, { recursive: true, force: true });
-      log('  ok   teardown');
+      if (upAttempted && existsSync(cloneDir)) {
+        for (const cmd of teardownCommands()) exec(cmd[0], cmd.slice(1), { cwd: cloneDir, timeout: 10 * 60_000, env: scrubComposeEnv(process.env) });
+      }
+      try {
+        rmSync(workdir, { recursive: true, force: true });
+        log('  ok   teardown');
+      } catch (err) {
+        // A locked file on Windows (EBUSY) must not mask the named failure:
+        // record it and let the real result stand.
+        steps.push({ name: 'cleanup', ok: false, detail: `could not remove ${workdir}: ${err.message}` });
+        log(`  FAIL cleanup — could not remove ${workdir}: ${err.message}`);
+      }
     } else if (workdir) {
       log(`  --   kept ${workdir}`);
     }

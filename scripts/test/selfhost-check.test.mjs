@@ -6,7 +6,7 @@
 // network). `node --test`.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,8 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 import {
-  buildEnv, composeArgs, DEFAULT_PORT, generateSecrets, judgeHealth, parseArgs,
-  portFree, PROJECT, runCheck, teardownCommands, waitHealthy,
+  buildEnv, COMPOSE_INTERPOLATED, composeArgs, DEFAULT_PORT, generateSecrets, judgeHealth, parseArgs,
+  portFree, PROJECT, runCheck, scrubComposeEnv, teardownCommands, waitHealthy,
 } from '../selfhost-check.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -360,4 +360,147 @@ test('runCheck --keep leaves the clone and the stack alone', async () => {
 
   rmSync(lock, { recursive: true, force: true });
   rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+// ── D1: teardown whenever up was attempted, even when up itself failed ──
+
+test('runCheck: a failed up still tears down before the clone is removed', async () => {
+  const lock = mkdtempSync(path.join(os.tmpdir(), 'vl-lock-'));
+  const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'vl-tmp-'));
+  const seen = [];
+  let cloneDirAtTeardown = null;
+
+  const exec = (cmd, args, opts = {}) => {
+    seen.push([cmd, ...args].join(' '));
+    if (cmd === 'git' && args[0] === 'clone') {
+      const cloneDir = args[args.length - 1];
+      mkdirSync(cloneDir, { recursive: true });
+      writeFileSync(path.join(cloneDir, '.env.example'), readFileSync(path.join(HERE, '..', '..', '.env.example'), 'utf8'));
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (cmd === 'docker' && args.includes('up')) return { status: 1, stdout: '', stderr: 'build failed halfway' };
+    if (cmd === 'docker' && (args.includes('update') || args.includes('down'))) {
+      // Teardown must run while the compose files still exist inside the clone.
+      cloneDirAtTeardown = opts.cwd;
+      assert.ok(existsSync(path.join(opts.cwd, '.env.example')), 'teardown ran after the clone was removed');
+    }
+    return { status: 0, stdout: 'abc1234\n', stderr: '' };
+  };
+
+  const result = await runCheck({ lock, tmpRoot, exec, git: exec, log: () => {}, probe: async () => ({ status: 503 }) });
+  assert.equal(result.ok, false);
+  assert.equal(result.failed, 'up');
+  assert.ok(seen.some(line => line.startsWith('docker update --restart=no')), 'restart policy disabled after a failed up');
+  assert.ok(seen.some(line => line.includes('down -v')), 'down -v ran after a failed up');
+  assert.ok(cloneDirAtTeardown, 'teardown commands were issued');
+  assert.deepEqual((await import('node:fs')).readdirSync(tmpRoot), [], 'the temp clone is removed after teardown');
+
+  rmSync(lock, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+test('runCheck: an up that throws (timeout) still tears down', async () => {
+  const lock = mkdtempSync(path.join(os.tmpdir(), 'vl-lock-'));
+  const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'vl-tmp-'));
+  const seen = [];
+
+  const exec = (cmd, args) => {
+    seen.push([cmd, ...args].join(' '));
+    if (cmd === 'git' && args[0] === 'clone') {
+      const cloneDir = args[args.length - 1];
+      mkdirSync(cloneDir, { recursive: true });
+      writeFileSync(path.join(cloneDir, '.env.example'), readFileSync(path.join(HERE, '..', '..', '.env.example'), 'utf8'));
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (cmd === 'docker' && args.includes('up')) throw new Error('spawnSync docker ETIMEDOUT');
+    return { status: 0, stdout: 'abc1234\n', stderr: '' };
+  };
+
+  const result = await runCheck({ lock, tmpRoot, exec, git: exec, log: () => {} });
+  assert.equal(result.ok, false);
+  assert.match(result.failed, /ETIMEDOUT/);
+  assert.ok(seen.some(line => line.includes('down -v')), 'a timed-out up can leave containers — teardown must still run');
+
+  rmSync(lock, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+// ── D6: a regular file is not a lock directory ──
+
+test('runCheck: a regular-file lock is a refusal before anything is cloned or started', async () => {
+  const lockFile = path.join(mkdtempSync(path.join(os.tmpdir(), 'vl-lockfile-')), 'vl-db.lock');
+  writeFileSync(lockFile, 'not a directory');
+  const calls = [];
+  const result = await runCheck({
+    lock: lockFile,
+    exec: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '', stderr: '' }; },
+    log: () => {},
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.failed, 'lock');
+  assert.deepEqual(calls, []);
+  rmSync(path.dirname(lockFile), { recursive: true, force: true });
+});
+
+// ── D7: compose-interpolated vars never reach a docker child from the shell ──
+
+test('scrubComposeEnv: removes every interpolated name, keeps everything else, never mutates the input', () => {
+  const env = { PATH: '/usr/bin', SystemRoot: 'C:\\Windows', HOME: '/home/u' };
+  for (const name of COMPOSE_INTERPOLATED) env[name] = `secret-${name}`;
+  const scrubbed = scrubComposeEnv(env);
+  for (const name of COMPOSE_INTERPOLATED) assert.ok(!(name in scrubbed), `${name} survived the scrub`);
+  assert.equal(scrubbed.PATH, '/usr/bin');
+  assert.equal(scrubbed.SystemRoot, 'C:\\Windows');
+  assert.equal(scrubbed.HOME, '/home/u');
+  assert.equal(env.FRONTEND_PORT, 'secret-FRONTEND_PORT', 'the input env is not mutated');
+});
+
+test('COMPOSE_INTERPOLATED covers every ${…} the compose files interpolate', () => {
+  const text = ['docker-compose.yml', 'docker-compose.selfcheck.yml']
+    .map(file => readFileSync(path.join(HERE, '..', '..', file), 'utf8')).join('\n');
+  const interpolated = [...new Set([...text.matchAll(/\$\{([A-Z0-9_]+)/g)].map(m => m[1]))];
+  for (const name of interpolated) assert.ok(COMPOSE_INTERPOLATED.includes(name), `${name} is interpolated but not scrubbed`);
+});
+
+test('runCheck: every docker child runs with the compose vars scrubbed from its env', async () => {
+  const lock = mkdtempSync(path.join(os.tmpdir(), 'vl-lock-'));
+  const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'vl-tmp-'));
+  const dockerEnvs = [];
+  const saved = {};
+  // Poison the shell env the way an operator's exported .env would.
+  for (const name of ['FRONTEND_PORT', 'DB_PASSWORD', 'ADMIN_TOKEN']) {
+    saved[name] = process.env[name];
+    process.env[name] = `poison-${name}`;
+  }
+
+  const exec = (cmd, args, opts = {}) => {
+    if (cmd === 'git' && args[0] === 'clone') {
+      const cloneDir = args[args.length - 1];
+      mkdirSync(cloneDir, { recursive: true });
+      writeFileSync(path.join(cloneDir, '.env.example'), readFileSync(path.join(HERE, '..', '..', '.env.example'), 'utf8'));
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (cmd === 'docker') dockerEnvs.push(opts.env ?? null);
+    if (cmd === 'docker' && args.includes('up')) return { status: 1, stdout: '', stderr: 'stop after up' };
+    return { status: 0, stdout: 'abc1234\n', stderr: '' };
+  };
+
+  try {
+    const result = await runCheck({ lock, tmpRoot, exec, git: exec, log: () => {} });
+    assert.equal(result.failed, 'up');
+    assert.ok(dockerEnvs.length >= 3, 'up plus both teardown commands ran');
+    for (const env of dockerEnvs) {
+      assert.ok(env, 'a docker child ran without an explicit env');
+      for (const name of COMPOSE_INTERPOLATED) assert.ok(!(name in env), `${name} reached a docker child`);
+      assert.ok(env.PATH, 'PATH survives the scrub');
+    }
+    // The explicit -e flags on the backup run are compose args, not env: untouched.
+    assert.ok(!JSON.stringify(result).includes('poison-'), 'no scrubbed value is printed');
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+    rmSync(lock, { recursive: true, force: true });
+    rmSync(tmpRoot, { recursive: true, force: true });
+  }
 });

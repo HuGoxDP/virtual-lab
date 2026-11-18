@@ -16,9 +16,10 @@
 // validation walk, not an extractor — a bad header checksum or a truncated
 // final entry is the failure it exists to find.
 
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** The marker `restore.mjs` refuses to work without. Written last, on success only. */
 export const VERIFIED_MARKER = 'verified';
@@ -94,6 +95,15 @@ function walkTar(tar) {
     }
   }
 
+  // Anything left over is less than one block: a header or a padding block cut
+  // mid-write. A readable tar ends on a block boundary — complete zero-block
+  // padding is consumed by the loop above, so a partial remainder (even an
+  // all-zero one) is a truncated tail, not padding.
+  const remainder = tar.length - offset;
+  if (remainder > 0) {
+    return { ok: false, entries, error: `truncated tail: ${remainder} trailing byte(s) after the last full block (archive ends mid-block at ${tar.length})` };
+  }
+
   return { ok: true, entries };
 }
 
@@ -126,6 +136,10 @@ export function verifyBackup(dir) {
   const checks = [];
   const done = (name, ok, detail) => { checks.push({ name, ok, detail }); return ok; };
 
+  // A re-verification starts clean: a marker left by an earlier green run must
+  // not survive a failing one, or restore.mjs would accept a broken backup.
+  rmSync(path.join(dir, VERIFIED_MARKER), { force: true });
+
   const dump = path.join(dir, 'db.sql.gz');
   if (!existsSync(dump)) {
     done('db.sql.gz', false, 'missing');
@@ -147,13 +161,14 @@ export function verifyBackup(dir) {
     return { ok: false, checks, error: 'db.sql.gz holds no tables' };
   }
 
-  const manifest = path.join(dir, 'manifest.json');
-  if (!existsSync(manifest)) {
+  const manifestFile = path.join(dir, 'manifest.json');
+  if (!existsSync(manifestFile)) {
     done('manifest.json', false, 'missing');
     return { ok: false, checks, error: 'manifest.json missing' };
   }
+  let manifest;
   try {
-    JSON.parse(readFileSync(manifest, 'utf8'));
+    manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
   } catch (err) {
     done('manifest.json', false, err.message);
     return { ok: false, checks, error: `manifest.json is not valid JSON (${err.message})` };
@@ -161,6 +176,18 @@ export function verifyBackup(dir) {
   done('manifest.json', true, 'valid JSON');
 
   const volumes = path.join(dir, 'volumes');
+  const listed = Array.isArray(manifest.volumes) ? manifest.volumes : [];
+
+  // Every volume the manifest promises must be here as a walkable archive —
+  // the manifest is the backup's own inventory, so a name without its file is
+  // an incomplete backup, not an empty store.
+  const missing = listed.filter(v => !v || typeof v.name !== 'string' || !existsSync(path.join(volumes, `${v.name}.tar.gz`)));
+  if (missing.length > 0) {
+    const names = missing.map(v => (v && typeof v.name === 'string' ? v.name : '(unnamed volume)')).join(', ');
+    done('manifest volumes', false, `missing archive(s): ${names}`);
+    return { ok: false, checks, error: `manifest lists volume(s) without an archive in volumes/: ${names}` };
+  }
+
   if (existsSync(volumes)) {
     const archives = readdirSync(volumes).filter(name => name.endsWith('.tar.gz')).sort();
     if (!done('volume archives', archives.length > 0, `${archives.length} archive(s)`)) {
@@ -195,4 +222,20 @@ export function newestBackup(root) {
     .map(entry => entry.name)
     .sort();
   return names.length > 0 ? path.join(root, names[names.length - 1]) : null;
+}
+
+// CLI: `node scripts/lib/verify-backup.mjs <backup-dir>` — the step the restore
+// procedure in docs/backup-restore.md runs before `restore.mjs` will accept a
+// backup. One line per check, exit 0 only when the marker was written.
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  const dir = process.argv[2];
+  if (!dir) {
+    console.error('usage: node scripts/lib/verify-backup.mjs <backup-dir>');
+    process.exit(2);
+  }
+  const result = verifyBackup(dir);
+  for (const check of result.checks) console.log(`${check.ok ? 'ok  ' : 'FAIL'} ${check.name}${check.detail ? ` — ${check.detail}` : ''}`);
+  console.log(result.ok ? `verified: ${dir}` : `not verified: ${result.error}`);
+  process.exit(result.ok ? 0 : 1);
 }
