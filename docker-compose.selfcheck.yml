@@ -1,0 +1,42 @@
+# docker-compose.selfcheck.yml
+#
+# A second copy of the stack under a different project name, for
+# `npm run selfhost-check`: its own volumes and its own container names, so a
+# check run can never touch a stack that is already running.
+#
+#   docker compose -p vl-selfcheck \
+#     -f docker-compose.yml -f docker-compose.selfcheck.yml up -d --build
+#
+# Why the names and not just `-p`: the volumes are *explicitly named* and the
+# containers are pinned in docker-compose.yml, and neither is project-scoped.
+# A different `-p` alone still answers "container name VirtualLabDatabase is
+# already in use", and a `down -v` on it would delete the live stack's data.
+# Renaming both is what makes the second stack a second stack — the same
+# pattern docker-compose.scratch.yml uses for the restore exercise (P5a).
+#
+# No ports block: the base file publishes ${FRONTEND_PORT}:80, and the check
+# writes its own .env with a spare port (SELFHOST_FRONTEND_PORT). HTTPS is not
+# published here — that is P5b's `selfhost-check --https`.
+
+volumes:
+  virtual_lab_pgdata:
+    name: vlcheck_pgdata
+  virtual_lab_archives:
+    name: vlcheck_archives
+  virtual_lab_assets:
+    name: vlcheck_assets
+  virtual_lab_lti:
+    name: vlcheck_lti
+  virtual_lab_previews:
+    name: vlcheck_previews
+
+services:
+
+  database:
+    container_name: VLCheckDatabase
+  backend:
+    container_name: VLCheckBackend
+  frontend:
+    container_name: VLCheckFrontend
+  backup:
+    container_name: VLCheckBackup

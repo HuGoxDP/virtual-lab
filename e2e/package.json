@@ -5,6 +5,7 @@
   "description": "Browser tests against the composed stack — the layer the unit suites cannot reach.",
   "scripts": {
     "test": "playwright test",
+    "smoke": "playwright test -c playwright.smoke.config.ts",
     "test:headed": "playwright test --headed",
     "report": "playwright show-report",
     "install:browsers": "playwright install chromium"

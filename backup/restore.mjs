@@ -44,6 +44,17 @@ if (!existsSync(dir)) {
     process.exit(2);
 }
 
+// The read-back gate (scripts/lib/verify-backup.mjs): a backup without the
+// `verified` marker was never proven readable, and restoring one would trade an
+// outage for data loss. Refused before anything is read or spawned, dry run
+// included — the marker name is duplicated here because the backup image ships
+// only backup/*.mjs, not scripts/.
+if (!existsSync(join(dir, "verified"))) {
+    console.error(`restore: ${name} has no 'verified' marker — an unverified backup is not a restore target`);
+    console.error(`verify it first: node scripts/lib/verify-backup.mjs ${dir}`);
+    process.exit(1);
+}
+
 const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
 const dumpFile = join(dir, "db.sql.gz");
 const volumes = (manifest.volumes ?? []).map((v) => ({ ...v, file: join(dir, "volumes", `${v.name}.tar.gz`) }));

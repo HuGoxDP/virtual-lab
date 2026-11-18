@@ -24,6 +24,17 @@ npx playwright test viewer               # one file
 `global-setup.ts` checks all of this before a browser starts and says which part
 is missing, rather than letting the first test time out on a blank page.
 
+## The fresh-install smoke (`npm run smoke`)
+
+A second, smaller layer for the opposite state: a **clean install with an empty
+catalog**. Seven read-only assertions (`tests/smoke.spec.ts`, own config
+`playwright.smoke.config.ts`, health-only gate `smoke-setup.ts`): health + build
+identity, SPA boot without console errors, engine bundle headers, the player
+guard, catalog JSON with a numeric total, 401 without a credential, and the
+bootstrap moderator with `ADMIN_TOKEN` (skipped with a reason when unset). It
+writes nothing, so it runs against any stack — `npm run selfhost-check` from the
+repo root runs it against the one it just built, and it passed 7/7 there.
+
 ## Why it is not a per-PR CI gate
 
 These tests need scenarios, and scenario content lives in **ScenarioCreator** —
