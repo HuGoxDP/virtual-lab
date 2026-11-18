@@ -117,12 +117,13 @@ test('runCheck never returns either secret in its result (a check must not print
   // A clone that fails at `up`: enough to reach the .env write, with the .env.example
   // copied from this checkout.
   const exec = (cmd, args, opts = {}) => {
-    if (cmd === 'git') {
+    if (cmd === 'git' && args[0] === 'clone') {
       const cloneDir = args[args.length - 1];
       mkdirSync(cloneDir, { recursive: true });
       writeFileSync(path.join(cloneDir, '.env.example'), readFileSync(path.join(HERE, '..', '..', '.env.example'), 'utf8'));
-      return { status: 0, stdout: 'abc1234\n', stderr: '' };
+      return { status: 0, stdout: '', stderr: '' };
     }
+    if (cmd === 'git') return { status: 0, stdout: 'abc1234\n', stderr: '' };
     if (opts.cwd) {
       try { seenEnv = readFileSync(path.join(opts.cwd, '.env'), 'utf8'); } catch { /* teardown */ }
     }
