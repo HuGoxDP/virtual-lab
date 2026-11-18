@@ -101,6 +101,9 @@ virtual-lab/
 
 Скопіювати всю папку `virtual-lab/` на сервер будь-яким способом (git clone, scp, rsync, флешка).
 
+Повна інструкція для адміністратора університету (секрети, оновлення, HTTPS,
+бекапи, перевірка `npm run selfhost-check`) — **[`docs/self-host.md`](docs/self-host.md)**.
+
 ### Крок 2: Запустити
 
 ```bash
