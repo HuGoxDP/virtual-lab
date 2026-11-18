@@ -132,8 +132,8 @@ curl http://localhost:8044/api/health
 - **2026-11-11 — рушій із GitHub Release (A10):** залежність фронтенду —
   tarball релізу, тож збірці потрібна мережа.
 - **2026-10-27 — інструмент LTI 1.3 для Moodle:** реєстрація одним посиланням,
-  оцінки в журнал Moodle; налаштування — `Readme.md`, розділ «Робота як
-  LTI-інструмент (Moodle)».
+  оцінки в журнал Moodle; покрокова реєстрація — розділ «Робота як
+  LTI-інструмент (Moodle)» нижче; огляд — `Readme.md`, той самий розділ.
 - **2026-10-26 — ізоляція сценаріїв:** код сценаріїв виконується в ізольованому
   фреймі поза origin платформи й не має доступу до токена адміністратора.
 
@@ -154,6 +154,109 @@ curl -k https://127.0.0.1:8443/api/health
 очікуваний. На production-хості змонтуйте власний сертифікат у `/etc/nginx/tls/`
 і власні порти (це, разом із off-host бекапом, — задача P5b). З `REQUIRE_HTTPS`
 токени приймаються лише через TLS-слухач; публічні маршрути на :80 живі як раніше.
+
+## Робота як LTI-інструмент (Moodle)
+
+Покрокова реєстрація платформи в Moodle. Огляд — `Readme.md`, розділ «Робота
+як LTI-інструмент (Moodle)». **Кроки перевірені на Moodle 5.0.2 (локальний
+стенд lti-demo); на іншій версії Moodle назви пунктів меню можуть
+відрізнятися.** Відрепетирувати реєстрацію можна на локальному стенді
+(Moodle 5.0.2 + платформа + TLS-проксі): `docs/lti-demo.md`.
+
+### Передумова: HTTPS з обох боків
+
+**LTI не працює без HTTPS на платформі й на Moodle.** Cookies сесії —
+`SameSite=None; Secure; Partitioned`, через http браузер їх не надсилає.
+Стандартний self-host слухає http:8044: підніміть стек із розділу HTTPS вище
+(8443) або власний TLS. Поки `LTI_PUBLIC_URL` не https, усі `/api/lti` — 503.
+
+### Крок 1 — змінні в `.env`
+
+```bash
+openssl rand -hex 24   # → LTI_REGISTRATION_SECRET
+# .env:
+LTI_PUBLIC_URL=https://lab.example.edu:8443
+LTI_REGISTRATION_SECRET=<згенерований секрет>
+LTI_FRAME_ANCESTORS=https://moodle.example.edu
+```
+
+- `LTI_PUBLIC_URL` — https-origin платформи **без шляху**, з портом, якщо не
+  443; точно той, що відкривають браузери студентів.
+- `LTI_REGISTRATION_SECRET` — не коротший за 16 символів, інакше 503.
+  **Секрет їде в URL реєстрації (журнали nginx, історія браузера) — змініть
+  його одразу після реєстрації** (крок 4).
+- `LTI_FRAME_ANCESTORS` — точний origin Moodle (кілька — через пробіл). Без
+  нього «Select content» лишиться порожнім; некоректне значення — контейнер
+  frontend не стартує.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+```
+
+Ключ інструмента (RSA-2048) генерується сам при першому старті й лежить у
+томі `virtual_lab_lti` (`/srv/lti/tool-key.pem`). **Втрата тома означає
+новий ключ інструмента — найпростіше зареєструвати інструмент у Moodle
+повторно (крок 2).** Бекапи включають ключ: зберігайте їх як секрет.
+
+### Крок 2 — реєстрація одним посиланням (рекомендовано)
+
+1. Moodle, адміністратор: Site administration → Plugins → Activity modules →
+   External tool → Manage tools (`/mod/lti/toolconfigure.php`).
+2. У полі *Tool URL or registration URL* вставте
+   `https://<платформа>/api/lti/register?secret=<LTI_REGISTRATION_SECRET>`
+   і натисніть *Add LTI Advantage*.
+3. Інструмент з'явиться у статусі *Pending* — натисніть *Activate*.
+4. У налаштуваннях інструмента (олівець): *Tool configuration usage* —
+   «Show in activity chooser and as a preconfigured tool» (інакше інструмента
+   немає у виборі активностей); *Default launch container* — «New window»;
+   надсилання імені й e-mail студента — «Never» (`docs/privacy.md`).
+
+### Крок 3 — ручна реєстрація (якщо динамічна заблокована)
+
+Створіть інструмент вручну й заповніть поля; `<база>` — ваш `LTI_PUBLIC_URL`:
+
+| Поле Moodle | Значення |
+|---|---|
+| Tool URL / Target link URI / Redirection URI(s) | `<база>/api/lti/launch` |
+| Initiate login URL | `<база>/api/lti/login` |
+| Public keyset URL | `<база>/api/lti/jwks` |
+| Метод автентифікації | `private_key_jwt`, RS256 |
+| Services | AGS (`lineitem`, `result.readonly`, `score`) + Deep Linking |
+
+### Крок 4 — ротація секрету
+
+**Одразу після реєстрації змініть `LTI_REGISTRATION_SECRET` у `.env`** і
+перезапустіть backend:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d backend
+```
+
+Реєстрація збережена; секрет потрібен лише для нових реєстрацій.
+
+### Що далі: викладач і студент
+
+Викладач додає в курс активність *External tool* → *Select content* → обирає
+сценарій у пікері. Запустити можна лише **опубліковані** сценарії; оцінюваним
+сценарій робить `"graded": true` у маніфесті (прапорець — з поточної версії
+архіву). Студент відкриває активність — лабораторна стартує в новому вікні,
+оцінка після «Здати» йде в журнал Moodle (AGS). Платформа не зберігає
+оцінок, імен і пошти (`docs/privacy.md`).
+
+### Якщо щось пішло не так
+
+- **503 на `/api/lti`** — `LTI_PUBLIC_URL` не https або
+  `LTI_REGISTRATION_SECRET` коротший за 16 символів.
+- **Порожнє «Select content»** — `LTI_FRAME_ANCESTORS` не заданий чи вказує
+  інший origin; або браузер не прийняв самопідписаний сертифікат: відкрийте
+  адресу платформи напряму й прийміть його (`docs/lti-demo-cheatsheet.md`).
+- **403 при реєстрації** — невірний секрет; **401** — секрет у URL відсутній.
+- **Реєстрація зникла після `down -v`** — томи з базою платформи й ключем
+  стерті: зареєструйте інструмент повторно (крок 2).
+- **«Сесію Moodle завершено…»** — сесія запуску живе 4 години
+  (`LTI_SESSION_TTL_SECONDS`): відкрийте роботу знову з курсу в Moodle.
+- **Safari** — пікер перевірений у Chromium і Firefox, Safari не тестувався
+  (ITP, `docs/lti-demo.md`); запуск у новому вікні цього не стосується.
 
 ## Редактор сценаріїв (необов'язково)
 
