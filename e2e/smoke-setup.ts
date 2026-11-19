@@ -8,10 +8,37 @@
 
 const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:8051';
 
+/**
+ * The health fetch. Over plain HTTP (or a trusted cert) this is fetch; with the
+ * explicit E2E_INSECURE_TLS=1 opt-in (the selfcheck stack's self-signed cert,
+ * P5b D8) it is node:https with rejectUnauthorized:false — undici's fetch
+ * ignores NODE_TLS_REJECT_UNAUTHORIZED and would refuse the cert.
+ */
+async function fetchHealth(): Promise<{ ok: boolean; status: number; json: () => Promise<any> }> {
+  if (process.env.E2E_INSECURE_TLS !== '1') return fetch(`${BASE_URL}/api/health`);
+  const { request } = await import('node:https');
+  return new Promise((resolve, reject) => {
+    const req = request(`${BASE_URL}/api/health`, { rejectUnauthorized: false, timeout: 15_000 }, res => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { text += chunk; });
+      res.on('end', () => resolve({
+        ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300,
+        status: res.statusCode ?? 0,
+        json: async () => JSON.parse(text),
+      }));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('health probe timed out')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 async function smokeSetup(): Promise<void> {
-  let health: Response;
+  let health: { ok: boolean; status: number; json: () => Promise<any> };
   try {
-    health = await fetch(`${BASE_URL}/api/health`);
+    health = await fetchHealth();
   } catch (cause) {
     throw new Error(
       `Cannot reach ${BASE_URL}. Start the stack first:\n` +

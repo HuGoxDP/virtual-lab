@@ -6,7 +6,7 @@
 // network). `node --test`.
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -54,9 +54,9 @@ function makeBackup(dir) {
 }
 
 test('parseArgs: defaults, and every flag with its value', () => {
-  assert.deepEqual(parseArgs([]), { ref: 'main', source: null, port: DEFAULT_PORT, lock: null, keep: false, help: false });
+  assert.deepEqual(parseArgs([]), { ref: 'main', source: null, port: DEFAULT_PORT, https: false, lock: null, keep: false, help: false });
   assert.deepEqual(parseArgs(['--ref', 'HO1', '--source', '.', '--frontend-port', '8060', '--lock', '/l', '--keep']),
-    { ref: 'HO1', source: '.', port: 8060, lock: '/l', keep: true, help: false });
+    { ref: 'HO1', source: '.', port: 8060, https: false, lock: '/l', keep: true, help: false });
   assert.equal(parseArgs(['--help']).help, true);
 });
 
@@ -253,6 +253,13 @@ test('runCheck: a green run walks every step and tears the stack down', async ()
   const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'vl-tmp-'));
   const seen = [];
 
+  // P5b D6: the restore step's one-row database. psql INSERT seeds the draft
+  // proof row, the backup run snapshots it, DELETE removes it, and the
+  // restore.mjs run brings the snapshot back (see selfhost-restore.test.mjs
+  // for the sequence and proof assertions).
+  let rows = 0;
+  let backedUpRows = null;
+
   const exec = (cmd, args, opts = {}) => {
     seen.push([cmd, ...args].join(' '));
     if (cmd === 'git' && args[0] === 'clone') {
@@ -261,12 +268,21 @@ test('runCheck: a green run walks every step and tears the stack down', async ()
       writeFileSync(path.join(cloneDir, '.env.example'), readFileSync(path.join(HERE, '..', '..', '.env.example'), 'utf8'));
       return { status: 0, stdout: '', stderr: '' };
     }
+    if (cmd === 'docker' && args.includes('psql')) {
+      const sql = args.join(' ');
+      if (/insert/i.test(sql)) rows += 1;
+      else if (/delete/i.test(sql)) rows = 0;
+      else if (/select/i.test(sql)) return { status: 0, stdout: `${rows}\n`, stderr: '' };
+      return { status: 0, stdout: '', stderr: '' };
+    }
     if (cmd === 'docker' && args.includes('run')) {
+      if (args.includes('restore.mjs')) { rows = backedUpRows ?? 0; return { status: 0, stdout: 'restore done\n', stderr: '' }; }
       // The backup service writes into a directory the check mounts; find it in the args.
       const mount = args[args.indexOf('-v') + 1];
       const hostDir = mount.slice(0, mount.lastIndexOf(':'));
       mkdirSync(hostDir, { recursive: true });
       makeBackup(path.join(hostDir, '2026-11-18T00-00-00Z'));
+      backedUpRows = rows;
       return { status: 0, stdout: '', stderr: '' };
     }
     if (cmd === 'npm' && args[0] === 'run') return { status: 0, stdout: '7 passed (2.1s)\n', stderr: '' };
@@ -279,8 +295,10 @@ test('runCheck: a green run walks every step and tears the stack down', async ()
   });
 
   assert.equal(result.ok, true, `failed at ${result.failed}`);
+  // P5b D6: 11 steps + restore (after the marker, before the smoke — the draft
+  // proof row is deleted and restored back before the smoke ever runs).
   assert.deepEqual(result.steps.map(s => s.name), [
-    'lock', 'port', 'clone', 'env', 'up', 'healthy', 'backup', 'backup marker', 'e2e deps', 'e2e browser', 'smoke',
+    'lock', 'port', 'clone', 'env', 'up', 'healthy', 'backup', 'backup marker', 'restore', 'e2e deps', 'e2e browser', 'smoke',
   ]);
   assert.ok(result.steps.every(s => s.ok));
 
@@ -299,6 +317,9 @@ test('runCheck: a failed smoke is a named failure and still tears down', async (
   const lock = mkdtempSync(path.join(os.tmpdir(), 'vl-lock-'));
   const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'vl-tmp-'));
   const seen = [];
+  // P5b D6: the restore step's one-row database (same shape as the green run).
+  let rows = 0;
+  let backedUpRows = null;
 
   const exec = (cmd, args) => {
     seen.push([cmd, ...args].join(' '));
@@ -308,11 +329,20 @@ test('runCheck: a failed smoke is a named failure and still tears down', async (
       writeFileSync(path.join(cloneDir, '.env.example'), readFileSync(path.join(HERE, '..', '..', '.env.example'), 'utf8'));
       return { status: 0, stdout: '', stderr: '' };
     }
+    if (cmd === 'docker' && args.includes('psql')) {
+      const sql = args.join(' ');
+      if (/insert/i.test(sql)) rows += 1;
+      else if (/delete/i.test(sql)) rows = 0;
+      else if (/select/i.test(sql)) return { status: 0, stdout: `${rows}\n`, stderr: '' };
+      return { status: 0, stdout: '', stderr: '' };
+    }
     if (cmd === 'docker' && args.includes('run')) {
+      if (args.includes('restore.mjs')) { rows = backedUpRows ?? 0; return { status: 0, stdout: 'restore done\n', stderr: '' }; }
       const mount = args[args.indexOf('-v') + 1];
       const hostDir = mount.slice(0, mount.lastIndexOf(':'));
       mkdirSync(hostDir, { recursive: true });
       makeBackup(path.join(hostDir, '2026-11-18T00-00-00Z'));
+      backedUpRows = rows;
       return { status: 0, stdout: '', stderr: '' };
     }
     if (cmd === 'npm' && args[0] === 'run') return { status: 1, stdout: '1 failed\n', stderr: 'exit 1' };
@@ -503,4 +533,316 @@ test('runCheck: every docker child runs with the compose vars scrubbed from its 
     rmSync(lock, { recursive: true, force: true });
     rmSync(tmpRoot, { recursive: true, force: true });
   }
+});
+
+// ── P5b D1: --https selects the https overlay, owns HTTPS_PORT end to end ──
+
+test('parseArgs: --https is a boolean flag, default false, composes with the rest', () => {
+  assert.equal(parseArgs([]).https, false);
+  assert.equal(parseArgs(['--https']).https, true);
+  assert.deepEqual(parseArgs(['--https', '--frontend-port', '8060', '--lock', '/l']),
+    { ref: 'main', source: null, port: 8060, https: true, lock: '/l', keep: false, help: false });
+});
+
+test('composeArgs: --https adds the https overlay after base + selfcheck', () => {
+  assert.deepEqual(composeArgs(['up', '-d', '--build'], { https: true }), [
+    'compose', '-p', PROJECT, '-f', 'docker-compose.yml', '-f', 'docker-compose.selfcheck.yml',
+    '-f', 'docker-compose.https.yml', 'up', '-d', '--build',
+  ]);
+  // Plain mode is unchanged (the pinned plain array above stays the contract).
+  assert.deepEqual(composeArgs(['up'], { https: false }), composeArgs(['up']));
+});
+
+test('buildEnv: https mode owns HTTPS_PORT too — five replaced keys, appended before the final newline', () => {
+  const template = readFileSync(path.join(HERE, '..', '..', '.env.example'), 'utf8');
+  const { text, changed } = buildEnv(template, {
+    dbPassword: 'pw', adminToken: 'tok', frontendPort: 8061, backupDir: '/tmp/backups', httpsPort: 8462,
+  });
+  assert.deepEqual(changed.sort(), ['ADMIN_TOKEN', 'BACKUP_DIR', 'DB_PASSWORD', 'FRONTEND_PORT', 'HTTPS_PORT']);
+  assert.match(text, /^HTTPS_PORT=8462$/m);
+  const outLines = text.split(/\r?\n/);
+  assert.equal(outLines[outLines.length - 1], '', 'the file still ends in a newline');
+  assert.equal(outLines[outLines.length - 2], 'HTTPS_PORT=8462');
+});
+
+test('runCheck --https: the bind check holds the default 8443 too — the overlay’s own default', async () => {
+  const lock = mkdtempSync(path.join(os.tmpdir(), 'vl-lock-'));
+  const server = createServer();
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(8443, '127.0.0.1', resolve);
+    });
+  } catch {
+    // 8443 is held by something else on this host — the check cannot run on it
+    // either way; skipping keeps the suite honest without weakening anything.
+    rmSync(lock, { recursive: true, force: true });
+    return;
+  }
+  const calls = [];
+  try {
+    const result = await runCheck({
+      lock, https: true, log: () => {},
+      exec: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '', stderr: '' }; },
+      git: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '', stderr: '' }; },
+      sleep: async () => {},
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.failed, 'port');
+    assert.deepEqual(calls, [], 'nothing cloned while the https port is taken');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    rmSync(lock, { recursive: true, force: true });
+  }
+});
+
+test('COMPOSE_INTERPOLATED covers every ${…} in docker-compose.https.yml too (HTTPS_PORT, HTTPS_REDIRECT_PORT)', () => {
+  const text = readFileSync(path.join(HERE, '..', '..', 'docker-compose.https.yml'), 'utf8');
+  const interpolated = [...new Set([...text.matchAll(/\$\{([A-Z0-9_]+)/g)].map(m => m[1]))];
+  assert.ok(interpolated.includes('HTTPS_PORT'), 'the https overlay interpolates HTTPS_PORT');
+  for (const name of interpolated) assert.ok(COMPOSE_INTERPOLATED.includes(name), `${name} is interpolated but not scrubbed`);
+  // D2's redirect port is interpolated by the overlay as well.
+  assert.ok(COMPOSE_INTERPOLATED.includes('HTTPS_REDIRECT_PORT'), 'HTTPS_REDIRECT_PORT must be scrubbed');
+});
+
+test('runCheck --https: a bound HTTPS port refuses before the clone, even with the plain port free', async () => {
+  const lock = mkdtempSync(path.join(os.tmpdir(), 'vl-lock-'));
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const taken = server.address().port;
+  const calls = [];
+  try {
+    const result = await runCheck({
+      lock, https: true, httpsPort: taken, log: () => {},
+      exec: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '', stderr: '' }; },
+      git: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '', stderr: '' }; },
+      sleep: async () => {},
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.failed, 'port');
+    assert.deepEqual(calls, [], 'both ports are checked before anything is cloned');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    rmSync(lock, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The https green-run harness: same shape as the plain green run, plus the
+ * one-row database the restore step proves (psql INSERT/DELETE/SELECT), the
+ * https redirect/HSTS answers, and recording of every docker child's args/env
+ * and the smoke child's env. Returns the runCheck opts and the recorders.
+ */
+function httpsHarness() {
+  const lock = mkdtempSync(path.join(os.tmpdir(), 'vl-lock-'));
+  const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'vl-tmp-'));
+  const seen = [];
+  const dockerEnvs = [];
+  const smokeEnvs = [];
+  const probedUrls = [];
+  let envText = null;
+  let rows = 0;
+  let backedUpRows = null;
+
+  const exec = (cmd, args, opts = {}) => {
+    seen.push([cmd, ...args].join(' '));
+    if (cmd === 'git' && args[0] === 'clone') {
+      const cloneDir = args[args.length - 1];
+      mkdirSync(cloneDir, { recursive: true });
+      writeFileSync(path.join(cloneDir, '.env.example'), readFileSync(path.join(HERE, '..', '..', '.env.example'), 'utf8'));
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (cmd === 'docker') {
+      dockerEnvs.push(opts.env ?? null);
+      if (args.includes('psql')) {
+        const sql = args.join(' ');
+        if (/insert/i.test(sql)) rows += 1;
+        else if (/delete/i.test(sql)) rows = 0;
+        else if (/select/i.test(sql)) return { status: 0, stdout: `${rows}\n`, stderr: '' };
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (args.includes('run')) {
+        if (args.includes('restore.mjs')) { rows = backedUpRows ?? 0; return { status: 0, stdout: 'restore done\n', stderr: '' }; }
+        const mount = args[args.indexOf('-v') + 1];
+        const hostDir = mount.slice(0, mount.lastIndexOf(':'));
+        mkdirSync(hostDir, { recursive: true });
+        makeBackup(path.join(hostDir, '2026-11-18T00-00-00Z'));
+        backedUpRows = rows;
+        return { status: 0, stdout: '', stderr: '' };
+      }
+    }
+    if (cmd === 'npm' && args[0] === 'ci' && opts.cwd) {
+      try { envText = readFileSync(path.join(path.dirname(opts.cwd), '.env'), 'utf8'); } catch { /* teardown */ }
+    }
+    if (cmd === 'npm' && args[0] === 'run') {
+      smokeEnvs.push(opts.env ?? null);
+      return { status: 0, stdout: '7 passed (2.1s)\n', stderr: '' };
+    }
+    return { status: 0, stdout: 'abc1234\n', stderr: '' };
+  };
+
+  const probe = async url => {
+    probedUrls.push(url);
+    if (url.startsWith('https://')) {
+      return { status: 200, headers: { 'strict-transport-security': 'max-age=31536000; includeSubDomains' }, body: { status: 'ok', db: 'connected', build: { version: '1.0.0' } } };
+    }
+    // With the redirect include active EVERY plain request answers 301 —
+    // /api/health included. That is why the https-mode health wait must move
+    // to the TLS base (pinned by the probe-urls test below).
+    return { status: 301, headers: { location: url.replace(/^http:/, 'https:').replace(/:8051/, ':8462') } };
+  };
+
+  const cleanup = () => {
+    rmSync(lock, { recursive: true, force: true });
+    rmSync(tmpRoot, { recursive: true, force: true });
+  };
+  return { lock, tmpRoot, seen, dockerEnvs, smokeEnvs, probedUrls, envText: () => envText, exec, probe, cleanup };
+}
+
+test('runCheck --https: a green run walks 13 steps — https after healthy, restore after the marker', async () => {
+  const h = httpsHarness();
+  try {
+    const result = await runCheck({
+      lock: h.lock, tmpRoot: h.tmpRoot, https: true, httpsPort: 8462, healthTimeoutMs: 2000,
+      exec: h.exec, git: h.exec, log: () => {}, sleep: async () => {}, probe: h.probe,
+    });
+    assert.equal(result.ok, true, `failed at ${result.failed}`);
+    assert.deepEqual(result.steps.map(s => s.name), [
+      'lock', 'port', 'clone', 'env', 'up', 'healthy', 'https', 'backup', 'backup marker', 'restore', 'e2e deps', 'e2e browser', 'smoke',
+    ]);
+    assert.ok(result.steps.every(s => s.ok));
+    // Every docker compose child carries the https overlay.
+    for (const line of h.seen.filter(l => l.startsWith('docker compose'))) {
+      assert.ok(line.includes('-f docker-compose.https.yml'), `overlay missing from: ${line}`);
+    }
+    // Teardown still ran, temp tree gone.
+    assert.equal(h.seen.filter(l => l.startsWith('docker update') || l.includes('down -v')).length, 2);
+    assert.deepEqual((await import('node:fs')).readdirSync(h.tmpRoot), []);
+  } finally { h.cleanup(); }
+});
+
+test('runCheck --https: the env write owns HTTPS_PORT and every docker child has it scrubbed', async () => {
+  const h = httpsHarness();
+  const saved = process.env.HTTPS_PORT;
+  process.env.HTTPS_PORT = 'poison-HTTPS_PORT';
+  try {
+    const result = await runCheck({
+      lock: h.lock, tmpRoot: h.tmpRoot, https: true, httpsPort: 8462, healthTimeoutMs: 2000,
+      exec: h.exec, git: h.exec, log: () => {}, sleep: async () => {}, probe: h.probe,
+    });
+    assert.equal(result.ok, true, `failed at ${result.failed}`);
+    assert.match(h.envText(), /^HTTPS_PORT=8462$/m);
+    assert.ok(h.dockerEnvs.length >= 3);
+    for (const env of h.dockerEnvs) {
+      assert.ok(env, 'a docker child ran without an explicit env');
+      assert.ok(!('HTTPS_PORT' in env), 'HTTPS_PORT reached a docker child from the shell');
+    }
+    assert.ok(!JSON.stringify(result).includes('poison-'), 'no scrubbed value is printed');
+  } finally {
+    if (saved === undefined) delete process.env.HTTPS_PORT; else process.env.HTTPS_PORT = saved;
+    h.cleanup();
+  }
+});
+
+test('runCheck --https: the https step probes the redirect and HSTS on both listeners', async () => {
+  const h = httpsHarness();
+  try {
+    const result = await runCheck({
+      lock: h.lock, tmpRoot: h.tmpRoot, https: true, httpsPort: 8462, healthTimeoutMs: 2000,
+      exec: h.exec, git: h.exec, log: () => {}, sleep: async () => {}, probe: h.probe,
+    });
+    assert.equal(result.ok, true, `failed at ${result.failed}`);
+    const httpsStep = result.steps.find(s => s.name === 'https');
+    assert.ok(httpsStep && httpsStep.ok);
+    // Both listeners were probed: the plain one for the redirect, the TLS one
+    // for health + HSTS. With the redirect on, plain /api/health answers 301
+    // too, so in https mode the health wait itself moves to the TLS base.
+    assert.ok(h.probedUrls.some(u => u === 'https://127.0.0.1:8462/api/health'), `health wait must use the TLS base: ${h.probedUrls.join(', ')}`);
+    assert.ok(h.probedUrls.some(u => u.startsWith('http://127.0.0.1:8051')), 'the plain listener was probed for the redirect');
+  } finally { h.cleanup(); }
+});
+
+test('runCheck --https: the smoke child gets the https base URL and NODE_TLS_REJECT_UNAUTHORIZED=0 (D8)', async () => {
+  const h = httpsHarness();
+  try {
+    const result = await runCheck({
+      lock: h.lock, tmpRoot: h.tmpRoot, https: true, httpsPort: 8462, healthTimeoutMs: 2000,
+      exec: h.exec, git: h.exec, log: () => {}, sleep: async () => {}, probe: h.probe,
+    });
+    assert.equal(result.ok, true, `failed at ${result.failed}`);
+    assert.ok(h.smokeEnvs.length >= 1, 'the smoke ran');
+    for (const env of h.smokeEnvs) {
+      assert.equal(env.E2E_BASE_URL, 'https://127.0.0.1:8462');
+      assert.equal(env.NODE_TLS_REJECT_UNAUTHORIZED, '0');
+      assert.match(env.ADMIN_TOKEN, /^[0-9a-f]{64}$/);
+    }
+  } finally { h.cleanup(); }
+});
+
+test('runCheck (plain): the smoke child keeps the http base URL and no TLS override', async () => {
+  const lock = mkdtempSync(path.join(os.tmpdir(), 'vl-lock-'));
+  const tmpRoot = mkdtempSync(path.join(os.tmpdir(), 'vl-tmp-'));
+  const smokeEnvs = [];
+  let rows = 0;
+  let backedUpRows = null;
+  const exec = (cmd, args, opts = {}) => {
+    if (cmd === 'git' && args[0] === 'clone') {
+      const cloneDir = args[args.length - 1];
+      mkdirSync(cloneDir, { recursive: true });
+      writeFileSync(path.join(cloneDir, '.env.example'), readFileSync(path.join(HERE, '..', '..', '.env.example'), 'utf8'));
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (cmd === 'docker' && args.includes('psql')) {
+      const sql = args.join(' ');
+      if (/insert/i.test(sql)) rows += 1;
+      else if (/delete/i.test(sql)) rows = 0;
+      else if (/select/i.test(sql)) return { status: 0, stdout: `${rows}\n`, stderr: '' };
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (cmd === 'docker' && args.includes('run')) {
+      if (args.includes('restore.mjs')) { rows = backedUpRows ?? 0; return { status: 0, stdout: 'restore done\n', stderr: '' }; }
+      const mount = args[args.indexOf('-v') + 1];
+      const hostDir = mount.slice(0, mount.lastIndexOf(':'));
+      mkdirSync(hostDir, { recursive: true });
+      makeBackup(path.join(hostDir, '2026-11-18T00-00-00Z'));
+      backedUpRows = rows;
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (cmd === 'npm' && args[0] === 'run') { smokeEnvs.push(opts.env ?? null); return { status: 0, stdout: '7 passed\n', stderr: '' }; }
+    return { status: 0, stdout: 'abc1234\n', stderr: '' };
+  };
+  try {
+    const result = await runCheck({
+      lock, tmpRoot, exec, git: exec, log: () => {}, sleep: async () => {},
+      probe: async () => ({ status: 200, body: { status: 'ok', db: 'connected', build: { version: '1.0.0' } } }),
+    });
+    assert.equal(result.ok, true, `failed at ${result.failed}`);
+    assert.ok(smokeEnvs.length >= 1);
+    for (const env of smokeEnvs) {
+      assert.equal(env.E2E_BASE_URL, `http://127.0.0.1:${DEFAULT_PORT}`);
+      assert.equal(env.NODE_TLS_REJECT_UNAUTHORIZED, undefined, 'plain mode must not disable TLS verification');
+    }
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+    rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('runCheck --https: a stack that does not redirect fails at the https step, named', async () => {
+  const h = httpsHarness();
+  const noRedirect = async url => {
+    if (url.startsWith('https://') || url.endsWith('/api/health')) {
+      return { status: 200, headers: { 'strict-transport-security': 'max-age=31536000' }, body: { status: 'ok', db: 'connected', build: { version: '1.0.0' } } };
+    }
+    return { status: 200, body: { status: 'ok', db: 'connected', build: { version: '1.0.0' } } }; // plain answers 200, no redirect
+  };
+  try {
+    const result = await runCheck({
+      lock: h.lock, tmpRoot: h.tmpRoot, https: true, httpsPort: 8462, healthTimeoutMs: 2000,
+      exec: h.exec, git: h.exec, log: () => {}, sleep: async () => {}, probe: noRedirect,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.failed, 'https');
+    assert.ok(h.seen.some(l => l.includes('down -v')), 'teardown ran after the https failure');
+  } finally { h.cleanup(); }
 });

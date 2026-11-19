@@ -53,4 +53,8 @@ COPY --from=build /etc/nginx/tls /etc/nginx/tls
 # Which LMS origins may frame /lti/pick (Moodle's "Select content" iframe): the entrypoint runs this script, which
 # validates LTI_FRAME_ANCESTORS (unset = 'self') and renders /etc/nginx/lti-pick.conf, included by nginx.conf.
 COPY --chmod=0755 nginx/15-lti-frame-ancestors.sh /docker-entrypoint.d/15-lti-frame-ancestors.sh
+# P5b: the http→https redirect include. The entrypoint runs this script, which validates
+# HTTPS_REDIRECT_PORT (unset/blank = empty include, the plain stack is untouched) and renders
+# /etc/nginx/https-redirect.conf, included by nginx.conf in the server block.
+COPY --chmod=0755 nginx/10-https-redirect.sh /docker-entrypoint.d/10-https-redirect.sh
 EXPOSE 80 443

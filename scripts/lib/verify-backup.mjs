@@ -188,16 +188,21 @@ export function verifyBackup(dir) {
     return { ok: false, checks, error: `manifest lists volume(s) without an archive in volumes/: ${names}` };
   }
 
-  if (existsSync(volumes)) {
-    const archives = readdirSync(volumes).filter(name => name.endsWith('.tar.gz')).sort();
-    if (!done('volume archives', archives.length > 0, `${archives.length} archive(s)`)) {
-      return { ok: false, checks, error: 'volumes/ holds no archives' };
-    }
-    for (const archive of archives) {
-      const walk = checkTarGz(path.join(volumes, archive));
-      if (!done(`archive ${archive}`, walk.ok, walk.ok ? `${walk.entries} entries` : walk.error ?? 'unreadable')) {
-        return { ok: false, checks, error: `volume archive ${archive} is unreadable` };
-      }
+  // P5b D7: no volumes/ directory at all is an incomplete backup, not an empty
+  // store — the old `if (existsSync(volumes))` bypass let exactly that shape
+  // earn the marker. The directory must exist AND hold at least one archive.
+  if (!existsSync(volumes)) {
+    done('volume archives', false, 'volumes/ directory missing');
+    return { ok: false, checks, error: 'volumes/ directory is missing — the backup holds no archives' };
+  }
+  const archives = readdirSync(volumes).filter(name => name.endsWith('.tar.gz')).sort();
+  if (!done('volume archives', archives.length > 0, `${archives.length} archive(s)`)) {
+    return { ok: false, checks, error: 'volumes/ holds no archives' };
+  }
+  for (const archive of archives) {
+    const walk = checkTarGz(path.join(volumes, archive));
+    if (!done(`archive ${archive}`, walk.ok, walk.ok ? `${walk.entries} entries` : walk.error ?? 'unreadable')) {
+      return { ok: false, checks, error: `volume archive ${archive} is unreadable` };
     }
   }
 

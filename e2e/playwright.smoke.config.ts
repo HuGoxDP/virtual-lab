@@ -10,6 +10,11 @@ import { defineConfig, devices } from '@playwright/test';
 
 const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:8051';
 
+// P5b D8: the selfcheck stack's certificate is self-signed and in no trust
+// store. Only the explicit opt-in (the check sets E2E_INSECURE_TLS=1 in https
+// mode) relaxes verification; a plain run and a developer's own stack keep it.
+const INSECURE_TLS = process.env.E2E_INSECURE_TLS === '1';
+
 export default defineConfig({
   testDir: './tests',
   testMatch: /smoke\.spec\.ts$/,
@@ -32,6 +37,7 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
+    ignoreHTTPSErrors: INSECURE_TLS,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     locale: 'uk-UA',
