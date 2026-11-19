@@ -308,7 +308,7 @@ function run(cmd, args, opts = {}) {
  * not a trust decision. node:http/https rather than fetch: undici ignores
  * NODE_TLS_REJECT_UNAUTHORIZED and would reject the self-signed cert.
  */
-async function httpProbe(url, timeoutMs = 5000) {
+export async function httpProbe(url, timeoutMs = 5000) {
   const target = new URL(url);
   const request = target.protocol === 'https:' ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => {
