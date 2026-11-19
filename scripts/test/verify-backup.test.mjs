@@ -252,6 +252,27 @@ test('a real tar written by the system tar (pax/gnu/ustar) walks green', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// ── P5b D7: an empty backup is not a backup — no volumes/ dir, no archives ──
+
+test('a backup with no volumes/ directory at all fails, named, and leaves no marker', () => {
+  const dir = goodBackup(tmp());
+  rmSync(path.join(dir, 'volumes'), { recursive: true, force: true });
+  // goodBackup's manifest carries volumes: [] — today the missing-dir bypass
+  // at verify-backup.mjs:191 lets exactly this shape pass and earn the marker.
+  const result = verifyBackup(dir);
+  assert.equal(result.ok, false);
+  assert.ok(result.error, 'the failure is named');
+  assert.ok(!existsSync(path.join(dir, VERIFIED_MARKER)));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ── P5b D7: the module ends in a newline (POSIX text file) ──
+
+test('verify-backup.mjs ends with a newline', () => {
+  const text = readFileSync(new URL('../lib/verify-backup.mjs', import.meta.url), 'utf8');
+  assert.ok(text.endsWith('\n'), 'the module must end with a trailing newline');
+});
+
 // ── Re-verification: a stale marker must not survive a failing second run ──
 
 test('a failed re-verification removes the marker an earlier green run left', () => {
