@@ -21,3 +21,9 @@ services:
   frontend:
     ports:
       - "${HTTPS_PORT:-8443}:443"
+    environment:
+      # P5b D2: the entrypoint renderer (nginx/10-https-redirect.sh) turns this
+      # into the http→https 301 include. Defaults to the published TLS port, so
+      # one HTTPS_PORT owns both the binding and the redirect target; an
+      # operator behind a different external port sets HTTPS_REDIRECT_PORT.
+      HTTPS_REDIRECT_PORT: ${HTTPS_REDIRECT_PORT:-${HTTPS_PORT:-8443}}
