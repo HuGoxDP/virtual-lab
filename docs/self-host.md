@@ -109,6 +109,12 @@ curl http://localhost:8044/api/health
    docker compose up -d --build
    ```
 
+   Прості команди цих кроків зберігають HTTPS/editor-оверлеї лише якщо
+   `COMPOSE_FILE` заданий у `.env` (розділи «HTTPS» і «Редактор сценаріїв»);
+   перед оновленням TLS-стека перевірте це значення — інакше крок 3 перебудує
+   стек без оверлеїв (8443 і `REQUIRE_HTTPS` зникнуть, запуски з Moodle
+   перестануть працювати).
+
    Перша збірка після pull може тривати кілька хвилин: tarball рушія
    завантажується з GitHub Releases під час збірки — хосту потрібен інтернет.
 
@@ -145,6 +151,9 @@ curl http://localhost:8044/api/health
    docker compose up -d --build
    ```
 
+   Як і в «Як оновитися», ця проста команда зберігає оверлеї через
+   `COMPOSE_FILE` у `.env` (розділ «HTTPS»).
+
 3. Відновіть бекап кроку 1 на робочий стек. Відновлення **руйнівне за
    задумом**: воно скидає й перезаписує таблиці з дампу та вміст томів
    (ідемпотентно — повторний запуск лишає одну копію). **Бекап зроблено до
@@ -158,7 +167,9 @@ curl http://localhost:8044/api/health
      -v "$PWD/backup/out:/backups" backup restore.mjs <каталог-бекапу-кроку-1>
    ```
 
-   Коли dry run підтвердив, що це той бекап, — те саме з `--yes`.
+   Явна пара `-f` тут навмисна: вона замінює `COMPOSE_FILE` з `.env`, тож
+   відновлення завжди іде саме з парою base+restore. Коли dry run підтвердив,
+   що це той бекап, — те саме з `--yes`.
    `docker-compose.restore.yml` дає запис у томи, які нічний бекап монтує
    лише для читання; `--entrypoint node` потрібен, бо entrypoint образу —
    `backup.mjs`. Відновлення приймає лише бекап із маркером `verified`
@@ -174,6 +185,12 @@ curl http://localhost:8044/api/health
 Розділ оновлюється, коли в `origin/main` з'являються зміни, видимі
 адміністратору. Новіше — згори.
 
+- **2026-11-20 — COMPOSE_FILE у `.env` для збереження оверлеїв (M1.2r):**
+  прості команди `docker compose` (оновлення, відкат, логи, зупинка) тепер
+  документуються разом із `COMPOSE_FILE=docker-compose.yml:docker-compose.https.yml[:docker-compose.editor.yml]`
+  (Windows — роздільник `;`); без нього оновлення TLS-стека мовчки скидало
+  8443 і `REQUIRE_HTTPS`, а `/editor/` зникав. Явна пара `-f` у команді
+  відновлення лишається як є.
 - **2026-11-19 — HTTPS-перевірка та відновлення в selfhost-check (P5b):**
   `npm run selfhost-check -- --https` (редирект http→https 301, HSTS, смоук
   через TLS); крок відновлення бекапу в обох режимах перевірки; перевірка
@@ -210,6 +227,21 @@ curl http://localhost:8044/api/health
 docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
 curl -k https://127.0.0.1:8443/api/health
 ```
+
+Щоб кожна наступна **проста** команда `docker compose` (оновлення, логи,
+зупинка, бекап) лишала оверлей, задайте список файлів у `.env`:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker-compose.https.yml
+# Windows: роздільник списку шляхів — `;`, не `:`
+# COMPOSE_FILE=docker-compose.yml;docker-compose.https.yml
+```
+
+З цим значенням простий `docker compose up -d` еквівалентний парі `-f` вище.
+Без нього простий `up -d --build` (крок оновлення) перебудовує стек лише з
+`docker-compose.yml`: TLS-слухач 8443 і `REQUIRE_HTTPS` зникають — усі запуски
+з Moodle ламаються (LTI потребує https), а bearer-токени знову приймаються
+через http.
 
 Образ збирає самопідписаний сертифікат (`nginx/make-cert.mjs`, SAN —
 localhost/127.0.0.1) — `curl -k` тут очікуваний. Оверлей публікує TLS-слухач
@@ -372,6 +404,19 @@ docker compose -f docker-compose.yml -f docker-compose.editor.yml up --build -d
 (`../../WebEngineTSEditor` відносно цього репо) і з'являється на `/editor/`.
 Без нього платформа працює як раніше — студентам він не потрібен.
 
+Як і з HTTPS-оверлеєм, зафіксуйте його у `.env`, щоб прості команди оновлення
+й зупинки його не губили:
+
+```bash
+COMPOSE_FILE=docker-compose.yml:docker-compose.editor.yml
+# з HTTPS-оверлеєм разом:
+# COMPOSE_FILE=docker-compose.yml:docker-compose.https.yml:docker-compose.editor.yml
+# Windows: роздільник `;` замість `:`
+```
+
+Без цього простий `docker compose up -d --build` перебудовує стек без
+оверлею — `/editor/` зникає, контейнер `editor` лишається сиротою.
+
 ## Логи, зупинка, скидання
 
 ```bash
@@ -381,6 +426,10 @@ docker compose stop               # зупинити, дані лишаютьс�
 docker compose down               # прибрати контейнери, томи лишаються
 docker compose down -v            # ПОВНЕ скидання: томи й усі дані видаляються
 ```
+
+Ці команди теж читають `COMPOSE_FILE` з `.env` (розділи «HTTPS», «Редактор
+сценаріїв»): із ним `logs`/`stop`/`down` охоплюють і https/editor-сервіси,
+без нього `down` лишає контейнер `editor` сиротою.
 
 `down -v` — незворотна дія: спершу зробіть бекап (`docs/backup-restore.md`).
 
