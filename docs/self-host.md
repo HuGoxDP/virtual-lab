@@ -135,6 +135,10 @@ curl http://localhost:8044/api/health
    git checkout <попередній-коміт>
    ```
 
+   Цей checkout залишає репозиторій у стані detached HEAD (без гілки).
+   Перед **наступним** оновленням поверніться на гілку — `git checkout main`,
+   потім `git pull` — інакше `git pull` не спрацює.
+
 2. Перебудуйте і перезапустіть стек:
 
    ```bash
