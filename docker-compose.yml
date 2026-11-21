@@ -124,7 +124,11 @@ services:
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      BACKUP_DIR: ${BACKUP_DIR:-/backups}
+      # P5c: fixed container path — the mount below lands at /backups, so
+      # backup.mjs must always write there. BACKUP_DIR from .env/shell selects
+      # ONLY the host mount source; this literal also overrides the same key
+      # arriving via env_file (Compose precedence: environment > env_file).
+      BACKUP_DIR: /backups
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
       BACKUP_SCHEDULE_HOURS: ${BACKUP_SCHEDULE_HOURS:-24}
     volumes:
