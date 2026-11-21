@@ -32,6 +32,28 @@ on the host that runs the stack):
   and never deletes the newest one, even past the window (a schedule that never
   ran again must not leave an empty backup root).
 
+## Where backups land: `BACKUP_DIR` is the HOST folder
+
+`BACKUP_DIR` (in `.env` or the shell) names the **host** directory that is
+mounted into the backup container — nothing else. The container itself always
+writes to the fixed path `/backups` (`docker-compose.yml` pins
+`BACKUP_DIR: /backups` in the service's `environment:`, which also overrides
+the same key arriving through `env_file: .env`), and the compose mount is
+`${BACKUP_DIR:-./backup/out}:/backups`:
+
+- unset → backups land in `./backup/out` beside the checkout (the local default);
+- `BACKUP_DIR=/mnt/offsite` → the host's `/mnt/offsite` (e.g. a mounted
+  off-host target) receives every backup, while `backup.mjs` still writes to
+  `/backups` inside the container.
+
+Before P5c the environment entry interpolated the same variable
+(`BACKUP_DIR: ${BACKUP_DIR:-/backups}`), so setting it made `backup.mjs` write
+to that path *inside* the container while the mount sat at `/backups`: the
+host folder stayed empty and the backups vanished on every container recreate
+(including the update's `up -d --build`). The manual `-e BACKUP_DIR=/backups`
+in the commands below is kept as a belt-and-braces pin — it also makes the
+commands correct against a pre-P5c checkout.
+
 ## The procedure (run it on a scratch stack, never the live one)
 
 A scratch stack is the same images and configs with its own volumes, so
