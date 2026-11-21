@@ -455,6 +455,10 @@ export async function runCheck({
       step('restore', false, `seed failed: ${(seed.stderr || '').trim().slice(-200)}`);
       return { ok: false, steps, failed: 'restore' };
     }
+    // P5c: compose now pins the container env to /backups itself, but the
+    // explicit -e stays (pinned by compose-backup-dir.test.mjs and, for the
+    // restore child, selfhost-restore.test.mjs): the check clones any --ref,
+    // including pre-P5c code where the env still interpolated BACKUP_DIR.
     const once = exec('docker', composeArgs(['run', '--rm', '-e', 'BACKUP_RUN_ONCE=1', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
     if (once.status !== 0) {
       step('backup', false, (once.stderr || '').trim().slice(-200));
