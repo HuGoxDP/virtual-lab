@@ -3,7 +3,7 @@
 // P5b D2: the entrypoint-rendered redirect include. nginx/10-https-redirect.sh
 // validates HTTPS_REDIRECT_PORT and renders the include nginx.conf loads in
 // the server block: unset = empty file (the plain stack is untouched), a valid
-// port = `if ($scheme = http)` with a `return 301` (the only safe if-in-server
+// port = `if ($vl_forwarded_proto = http)` with a `return 301` (the only safe if-in-server
 // form), anything else = exit 1 and no include, so an operator typo cannot
 // start a broken or widened config. Mirrors backend/test/unit/nginx-lti-frame.
 // `node --test`.
@@ -45,9 +45,40 @@ test('redirect include: a numeric port renders the safe if-with-return 301 to th
   const { status, conf } = render('8462');
   assert.equal(status, 0);
   assert.ok(conf, 'a valid port produces an include');
-  assert.match(conf, /if \(\$scheme = http\)/, 'only plain requests redirect; the TLS listener serves');
+  assert.match(conf, /if \(\$vl_forwarded_proto = http\)/,
+    'P5d: the condition reads the forwarded-proto map, so a TLS proxy that terminates TLS is honoured');
+  assert.ok(!/\$scheme/.test(conf),
+    'P5d: `$scheme` would redirect a proxied request to itself forever — the rendered include must not test it');
   assert.match(conf, /return\s+301\s+https:\/\/\$host:8462\$request_uri;/,
     'path+query preserved, host from the request, pinned port — and `return` is the only safe if-in-server body');
+});
+
+// P5d: the redirect condition is only correct together with the map it reads. Model the map
+// (`map $http_x_forwarded_proto $vl_forwarded_proto { default $scheme; https https; }`) and the
+// rendered include, then check the four cases a real nginx would answer. A live request leg needs
+// Docker/nginx; this test pins the semantics the config states, and the https selfhost-check leg
+// (P5b) exercises a real container.
+test('redirect decision: X-Forwarded-Proto https is served, absent/plain http redirects', { skip: !hasSh }, () => {
+  const nginx = readFileSync(path.join(NGINX, 'nginx.conf'), 'utf8');
+  const map = nginx.match(/map\s+\$http_x_forwarded_proto\s+\$vl_forwarded_proto\s*\{([^}]*)\}/);
+  assert.ok(map, 'nginx.conf must build $vl_forwarded_proto from $http_x_forwarded_proto');
+  assert.match(map[1], /default\s+\$scheme/, 'no header = the connection\'s own scheme');
+
+  const { conf } = render('8443');
+  assert.ok(conf && /if \(\$vl_forwarded_proto = http\)/.test(conf), 'the include must test the map');
+
+  /** The map's answer for one request (what nginx resolves `$vl_forwarded_proto` to). */
+  const forwarded = (header, scheme) => {
+    const value = header === undefined ? scheme : (header === 'https' ? 'https' : scheme);
+    return /default\s+\$scheme/.test(map[1]) && header !== 'https' ? scheme : value;
+  };
+  const redirects = (header, scheme) => forwarded(header, scheme) === 'http';
+
+  assert.equal(redirects('https', 'http'), false,
+    'a TLS proxy forwarding plain http with X-Forwarded-Proto: https must be SERVED (200), not looped');
+  assert.equal(redirects(undefined, 'http'), true, 'a direct plain request still gets 301');
+  assert.equal(redirects('http', 'http'), true, 'an explicit http upstream still gets 301');
+  assert.equal(redirects('https', 'https'), false, 'a request already on TLS is served');
 });
 
 test('redirect include: a non-numeric or out-of-range port exits 1 and writes no include', { skip: !hasSh }, () => {
