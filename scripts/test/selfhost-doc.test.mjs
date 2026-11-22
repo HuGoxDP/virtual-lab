@@ -144,3 +144,26 @@ test('self-host doc: the rollback restore keeps -e BACKUP_DIR=/backups but no ha
   assert.ok(!/-v /.test(cmd),
     'the service mount already follows BACKUP_DIR; a hard-coded -v sends an off-host admin to the wrong folder');
 });
+
+// P5d: the redirect reads X-Forwarded-Proto, so an admin whose own TLS proxy terminates TLS and
+// forwards plain http to :8044 must be told to send that header and to raise TRUST_PROXY — and the
+// update check cannot keep telling them `curl http://…/api/health` works under the overlay.
+test('self-host doc: the HTTPS section tells a TLS-proxy admin to send X-Forwarded-Proto: https with TRUST_PROXY=2', () => {
+  const https = section('HTTPS');
+  assert.match(https, /X-Forwarded-Proto/, 'the header the redirect reads must be named');
+  assert.match(https, /TRUST_PROXY=2/, 'two proxies (theirs + nginx) must be stated');
+  assert.match(https, /301/, 'the loop the missing header causes must be explained');
+});
+
+test('self-host doc: under the overlay the health probe is the TLS one, not plain http', () => {
+  const https = section('HTTPS');
+  const update = section('Оновлення');
+  for (const [name, body] of [['HTTPS', https], ['Оновлення', update]]) {
+    const tls = body.indexOf('curl -k https://127.0.0.1:${HTTPS_PORT:-8443}/api/health');
+    assert.notEqual(tls, -1, `${name} must show the TLS health probe`);
+    if (name === 'HTTPS') {
+      assert.match(body.slice(Math.max(0, tls - 400), tls), /301|редирект/i,
+        'the plain-http 301 must be stated next to the TLS probe');
+    }
+  }
+});
