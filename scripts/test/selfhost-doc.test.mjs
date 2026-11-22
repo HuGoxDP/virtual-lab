@@ -96,3 +96,51 @@ test('self-host doc: the editor section leads with COMPOSE_FILE, not an explicit
     'COMPOSE_FILE must be introduced before any explicit -f command in the editor section');
   assert.match(editor, /без HTTPS/, 'the explicit -f form must be marked as the without-HTTPS case');
 });
+
+// P5e: «Як оновитися» step 1 runs BEFORE git pull, i.e. possibly on pre-P5c compose whose
+// container env was BACKUP_DIR: ${BACKUP_DIR:-/backups}. Without the explicit pin an admin's
+// BACKUP_DIR=/mnt/offsite sends the dump outside the mount, into the --rm container that then
+// deletes it — the one update that most needs a rollback point would have none.
+test('self-host doc: update step 1 pins BACKUP_DIR=/backups in the backup command', () => {
+  const update = section('Оновлення');
+  const step1 = update.slice(update.indexOf('1. **'), update.indexOf('2. Оновіть код'));
+  assert.ok(step1.length > 0, 'step 1 of «Як оновитися» must be locatable');
+  const backup = step1.split('\n').find((l) => /docker compose run[^\n]*\bbackup\b/.test(l));
+  assert.ok(backup, 'step 1 must carry a `docker compose run … backup` command');
+  assert.match(backup, /-e BACKUP_DIR=\/backups\b/,
+    `the pre-update backup must pin the container path: ${backup.trim()}`);
+  assert.match(backup, /BACKUP_RUN_ONCE=1/, 'the on-demand run flag must stay');
+});
+
+test('self-host doc: update step 1 verifies the HOST folder (${BACKUP_DIR:-backup/out}), not /backups', () => {
+  const update = section('Оновлення');
+  const step1 = update.slice(update.indexOf('1. **'), update.indexOf('2. Оновіть код'));
+  const verify = step1.split('\n').find((l) => l.includes('verify-backup.mjs'));
+  assert.ok(verify, 'step 1 must verify the backup it just took');
+  assert.match(verify, /\$\{BACKUP_DIR:-backup\/out\}/,
+    `verification reads the host mount source, which follows BACKUP_DIR: ${verify.trim()}`);
+  assert.ok(!/verify-backup\.mjs \/backups/.test(verify),
+    '/backups is a container path — it does not exist on the host');
+});
+
+test('self-host doc: the P5c update keeps the old container backups with docker cp before the rebuild', () => {
+  const update = section('Оновлення');
+  const cp = update.split('\n').find((l) => /docker cp VirtualLabBackup:/.test(l));
+  assert.ok(cp, 'a `docker cp VirtualLabBackup:…` rescue step must be documented');
+  assert.ok(update.indexOf(cp) < update.indexOf('3. Перебудуйте'),
+    'the rescue must come before step 3 recreates the container');
+  assert.match(section('Оновлення'), /Що нового|P5c/, 'the P5c transition must be named');
+  const whatsNew = DOC.slice(DOC.indexOf('### Що нового'));
+  assert.match(whatsNew, /docker cp VirtualLabBackup:/,
+    '«Що нового» must carry the rescue command for this one update');
+});
+
+test('self-host doc: the rollback restore keeps -e BACKUP_DIR=/backups but no hard-coded backup/out -v', () => {
+  const update = section('Оновлення');
+  const start = update.indexOf('-f docker-compose.yml -f docker-compose.restore.yml');
+  assert.notEqual(start, -1, 'the restore command must stay in the rollback section');
+  const cmd = update.slice(start, update.indexOf('```', start));
+  assert.match(cmd, /-e BACKUP_DIR=\/backups/, 'the container-path pin must stay in the restore command');
+  assert.ok(!/-v /.test(cmd),
+    'the service mount already follows BACKUP_DIR; a hard-coded -v sends an off-host admin to the wrong folder');
+});

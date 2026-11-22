@@ -8,7 +8,13 @@
 #     -f docker-compose.yml [-f docker-compose.scratch.yml] \
 #     -f docker-compose.restore.yml \
 #     run --rm --entrypoint node -e BACKUP_DIR=/backups \
-#     -v "$PWD/backup/out:/backups" backup restore.mjs <name> [--yes]
+#     backup restore.mjs <name> [--yes]
+#
+# P5e: no `-v "$PWD/backup/out:/backups"` here — the service's own mount is
+# `${BACKUP_DIR:-./backup/out}:/backups`, so it already follows BACKUP_DIR from
+# .env; a hard-coded -v pointed an off-host BACKUP_DIR admin at the wrong folder.
+# The `-e BACKUP_DIR=/backups` stays: it pins the path INSIDE the container,
+# which pre-P5c compose took from .env.
 #
 # Entries merge by target path, so these replace the service's read-only mounts
 # for the run.
