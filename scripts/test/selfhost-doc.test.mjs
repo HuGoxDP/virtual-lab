@@ -167,3 +167,30 @@ test('self-host doc: under the overlay the health probe is the TLS one, not plai
     }
   }
 });
+
+// P1d: Moodle fetches /api/lti/jwks and the AGS token server-side through PHP cURL, which by
+// default allows only 443/80, blocks private ranges and rejects an untrusted certificate. The
+// guide's own example (https://lab.example.edu:8443) launches fine but loses «Select content»
+// and every grade — the prerequisite section must say so and name the way out.
+test('self-host doc: the LTI prerequisite states Moodle\'s server-side fetches and the trusted-cert/443 requirement', () => {
+  const lti = section('Робота як LTI-інструмент');
+  const prereq = lti.slice(lti.indexOf('### Передумова'), lti.indexOf('### Крок 1'));
+  assert.ok(prereq.length > 0, 'the prerequisite section must be locatable');
+  assert.match(prereq, /\/api\/lti\/jwks/, 'the server-side keyset fetch must be named');
+  assert.match(prereq, /AGS/, 'the server-side grade token must be named');
+  assert.match(prereq, /curlsecurityallowedport/, 'the allowed-port setting must be named');
+  assert.match(prereq, /curlsecurityblockedhosts/, 'the blocked-hosts setting must be named');
+  assert.match(prereq, /curl\.cainfo/, 'the trusted-CA setting must be named');
+  assert.match(prereq, /HTTPS_PORT=443/, 'the 443 way out must be shown');
+  assert.match(prereq, /TRUST_PROXY=2/, 'a TLS-terminated proxy needs the hop count for per-client limits');
+});
+
+test('self-host doc: the LTI example URL carries no non-443 port and self-signed is demo-only', () => {
+  const lti = section('Робота як LTI-інструмент');
+  assert.ok(!/^LTI_PUBLIC_URL=https:\/\/[^\n]*:\d+/m.test(lti),
+    'an example LTI_PUBLIC_URL with a port teaches the configuration that breaks Moodle\'s server-side fetches');
+  assert.match(lti, /LTI_PUBLIC_URL=https:\/\/lab\.example\.edu\b/, 'the example must be the portless https origin');
+  const prereq = lti.slice(lti.indexOf('### Передумова'), lti.indexOf('### Крок 1'));
+  assert.match(prereq, /самопідписаний[\s\S]{0,200}демонстрац/i,
+    'accepting a self-signed certificate must be marked as demo-only');
+});
