@@ -410,7 +410,30 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml up -d backend
 
 ## Редактор сценаріїв (необов'язково)
 
+Спершу зафіксуйте оверлей у `.env` — і лише потім піднімайте стек:
+
 ```bash
+# .env; Windows: роздільник списку шляхів — `;`, не `:`
+COMPOSE_FILE=docker-compose.yml:docker-compose.https.yml:docker-compose.editor.yml
+# без HTTPS-оверлея:
+# COMPOSE_FILE=docker-compose.yml:docker-compose.editor.yml
+```
+
+Далі — проста команда, вона читає `COMPOSE_FILE` вище:
+
+```bash
+docker compose up --build -d
+```
+
+**Чому не можна почати з явної пари `-f`.** Явні `-f` замінюють `COMPOSE_FILE`
+з `.env`, тож адміністратор, який уже працює з HTTPS-оверлеєм (розділ «HTTPS»),
+скопіювавши команду з `-f docker-compose.yml -f docker-compose.editor.yml`,
+перебудує `frontend`/`backend` без `docker-compose.https.yml`: слухач 8443 і
+`REQUIRE_HTTPS` зникають — усі запуски з Moodle ламаються, токени знову
+приймаються через http. Явна пара лишається лише для стека **без HTTPS**:
+
+```bash
+# лише без HTTPS-оверлея:
 docker compose -f docker-compose.yml -f docker-compose.editor.yml up --build -d
 ```
 
@@ -418,18 +441,9 @@ docker compose -f docker-compose.yml -f docker-compose.editor.yml up --build -d
 (`../../WebEngineTSEditor` відносно цього репо) і з'являється на `/editor/`.
 Без нього платформа працює як раніше — студентам він не потрібен.
 
-Як і з HTTPS-оверлеєм, зафіксуйте його у `.env`, щоб прості команди оновлення
-й зупинки його не губили:
-
-```bash
-COMPOSE_FILE=docker-compose.yml:docker-compose.editor.yml
-# з HTTPS-оверлеєм разом:
-# COMPOSE_FILE=docker-compose.yml:docker-compose.https.yml:docker-compose.editor.yml
-# Windows: роздільник `;` замість `:`
-```
-
-Без цього простий `docker compose up -d --build` перебудовує стек без
-оверлею — `/editor/` зникає, контейнер `editor` лишається сиротою.
+Без `COMPOSE_FILE` простий `docker compose up -d --build` перебудовує стек без
+оверлею — `/editor/` зникає, контейнер `editor` лишається сиротою. Те саме
+стосується оновлення й зупинки (розділ «Логи, зупинка, скидання»).
 
 ## Логи, зупинка, скидання
 
