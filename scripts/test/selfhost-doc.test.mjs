@@ -65,3 +65,34 @@ test('self-host doc: M1.2s rollback restore keeps the explicit -f docker-compose
   assert.match(update, /-f docker-compose\.yml -f docker-compose\.restore\.yml/,
     'the restore command deliberately overrides COMPOSE_FILE with an explicit pair — keep it');
 });
+
+// M1.2u: an explicit `-f` list REPLACES COMPOSE_FILE from .env, so any `-f` command that
+// leaves docker-compose.https.yml out silently drops the 8443 listener and REQUIRE_HTTPS on
+// an admin's TLS stack (the M1.2r failure). Every `-f` command must therefore either carry the
+// https overlay, be the restore pair (base + restore, deliberately overlay-free), or stand
+// under an explicit "without HTTPS" marker.
+test('self-host doc: every docker compose -f command keeps the https overlay, is the restore pair, or says "without HTTPS"', () => {
+  const lines = DOC.split('\n');
+  const WITHOUT_HTTPS = /без\s+HTTPS/i;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.includes('docker compose') || !/-f docker-compose/.test(line)) continue;
+    const whole = lines.slice(i, i + 2).join(' '); // a command may wrap onto the next line
+    if (/docker-compose\.restore\.yml/.test(whole)) continue; // documented restore pair
+    if (/docker-compose\.https\.yml/.test(whole)) continue; // overlay kept
+    // Otherwise an explicit "without HTTPS" marker must stand within the four lines above.
+    const context = lines.slice(Math.max(0, i - 4), i).join('\n');
+    assert.ok(WITHOUT_HTTPS.test(context),
+      `a -f command without docker-compose.https.yml must be marked "без HTTPS" just above it: ${line.trim()}`);
+  }
+});
+
+test('self-host doc: the editor section leads with COMPOSE_FILE, not an explicit -f pair', () => {
+  const editor = section('Редактор сценаріїв');
+  const firstF = editor.indexOf('-f docker-compose');
+  const composeFile = editor.indexOf('COMPOSE_FILE=');
+  assert.notEqual(composeFile, -1, 'the editor section must set COMPOSE_FILE');
+  assert.ok(firstF === -1 || composeFile < firstF,
+    'COMPOSE_FILE must be introduced before any explicit -f command in the editor section');
+  assert.match(editor, /без HTTPS/, 'the explicit -f form must be marked as the without-HTTPS case');
+});
