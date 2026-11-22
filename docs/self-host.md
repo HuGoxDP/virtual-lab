@@ -398,7 +398,7 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml restart fronten
 **LTI не працює без HTTPS на платформі й на Moodle.** Cookies сесії —
 `SameSite=None; Secure; Partitioned`, через http браузер їх не надсилає.
 Стандартний self-host слухає http:8044: підніміть стек із розділу HTTPS вище
-або власний TLS. Поки `LTI_PUBLIC_URL` не https, усі `/api/lti` — 503.
+(8443) або власний TLS. Поки `LTI_PUBLIC_URL` не https, усі `/api/lti` — 503.
 
 #### Сертифікат має бути публічно довіреним, і на 443
 
