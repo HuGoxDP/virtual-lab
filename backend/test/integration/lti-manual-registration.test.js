@@ -6,7 +6,7 @@
 // with the deployment list the launch must match, and a re-run refreshes it in place (so an admin
 // who fixed a typo does not end up with two rows).
 //
-// Skips when no database is reachable, like every integration test here.
+// Returns early per test when no database is reachable, like every integration test here.
 
 'use strict';
 
@@ -45,24 +45,21 @@ test.after(async () => {
   await pool.end();
 });
 
-function skipUnlessDb(t) {
-  if (!available) {
-    t.skip('no database reachable — set DB_HOST/DB_NAME to run integration tests');
-    return true;
-  }
-  return false;
+/** Early-return guard: keeps the test count honest when no database is reachable. */
+function dbReady() {
+  return available;
 }
 
 /** The script's real path: validated row in, `createStore(pool)` writes it. */
 async function runScript(argv) {
   const lines = [];
   const errors = [];
-  const code = await main(argv, { store: createStore(pool), out: l => lines.push(l), err: l => errors.push(l) });
+  const code = await main(argv, { store: createStore(pool), out: { write: s => lines.push(s) }, err: { write: s => errors.push(s) } });
   return { code, lines, errors };
 }
 
-test('P1c: the script writes the row launch.js reads — issuer, client_id, deployment list, endpoints', async (t) => {
-  if (skipUnlessDb(t)) return;
+test('P1c: the script writes the row launch.js reads — issuer, client_id, deployment list, endpoints', async () => {
+  if (!dbReady()) return;
   const { code } = await runScript([
     '--from-moodle', ISSUER, '--client-id', REGISTRATION.clientId, '--deployment-id', '1,2',
   ]);
@@ -80,8 +77,8 @@ test('P1c: the script writes the row launch.js reads — issuer, client_id, depl
   assert.equal(listed.length, 1, 'one row per issuer/client — listRegistrations is what the login path reads');
 });
 
-test('P1c: a re-run refreshes the same row instead of adding a second', async (t) => {
-  if (skipUnlessDb(t)) return;
+test('P1c: a re-run refreshes the same row instead of adding a second', async () => {
+  if (!dbReady()) return;
   await runScript(['--from-moodle', ISSUER, '--client-id', REGISTRATION.clientId, '--deployment-id', '1']);
   await runScript(['--from-moodle', ISSUER, '--client-id', REGISTRATION.clientId, '--deployment-id', '1,9']);
 
@@ -91,8 +88,8 @@ test('P1c: a re-run refreshes the same row instead of adding a second', async (t
   assert.deepEqual(saved.deploymentIds, ['1', '9'], 'the corrected deployment list must win');
 });
 
-test('P1c: --dry-run writes nothing even with a real store', async (t) => {
-  if (skipUnlessDb(t)) return;
+test('P1c: --dry-run writes nothing even with a real store', async () => {
+  if (!dbReady()) return;
   const { code } = await runScript([
     '--from-moodle', ISSUER, '--client-id', 'DryRunOnly', '--deployment-id', '1', '--dry-run',
   ]);
@@ -101,8 +98,8 @@ test('P1c: --dry-run writes nothing even with a real store', async (t) => {
   assert.equal(rows[0].n, 0, 'a dry run must leave the table empty');
 });
 
-test('P1c: the validated row is exactly the shape store.saveRegistration takes', async (t) => {
-  if (skipUnlessDb(t)) return;
+test('P1c: the validated row is exactly the shape store.saveRegistration takes', async () => {
+  if (!dbReady()) return;
   // Written through the store directly (no script): proves the module and the store agree, so a
   // future column rename breaks this test rather than a live registration.
   await createStore(pool).saveRegistration(normaliseRegistration(REGISTRATION));

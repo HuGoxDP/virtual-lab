@@ -536,7 +536,10 @@ docker compose exec backend node scripts/lti-add-registration.js \
 
 `--from-moodle` бере три адреси платформи зі стандартних шляхів Moodle
 (`/mod/lti/auth.php`, `/mod/lti/token.php`, `/mod/lti/certs.php`) і вважає issuer
-цією ж адресою. Якщо публічна адреса Moodle інша — додайте `--issuer <Platform ID>`.
+цією ж адресою (без кінцевих скісних рисок). Якщо публічна адреса Moodle інша —
+додайте `--issuer <Platform ID>`. Issuer зберігається **саме тим рядком**, який ви
+дали: він має збігатися з Platform ID Moodle (`iss` у запуску), разом із підшляхом
+(`https://host/moodle`) — кінцева скісна риска не додається й не прибирається.
 Dry-run лише перевіряє й показує рядок; приберіть `--dry-run`, щоб записати.
 Повний перелік прапорців (усі адреси вручну) — `--help`.
 

@@ -45,17 +45,17 @@ async function run(argv, store) {
   const errors = [];
   const code = await main(argv, {
     store: store || stubStore(),
-    out: line => lines.push(line),
-    err: line => errors.push(line),
+    out: { write: s => lines.push(s) },
+    err: { write: s => errors.push(s) },
   });
   return { code, lines, errors };
 }
 
 // ── rules ────────────────────────────────────────────
 
-test('P1c: a complete registration is accepted and the issuer is normalised to its origin', () => {
+test('P1c: a complete registration is accepted and the issuer is kept exactly as given', () => {
   const row = normaliseRegistration({ ...VALID, issuer: `${ISSUER}/some/path` });
-  assert.deepEqual(row, VALID);
+  assert.deepEqual(row, { ...VALID, issuer: `${ISSUER}/some/path` });
 });
 
 test('P1c: every URL must be https and carry no credentials', () => {

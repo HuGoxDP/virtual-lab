@@ -11,10 +11,14 @@
 //
 // The rules are the ones the runtime already enforces, stated before anything is written:
 //   * every URL https, no credentials (`http.parseHttpsUrl`) — registration.js's stance;
+//   * the issuer is stored VERBATIM (trimmed input, `str(input.issuer)`), exactly like
+//     Dynamic Registration stores it (registration.js:80): store lookups are exact string
+//     matches, so a Moodle on a sub-path (https://host/moodle) must keep its path;
 //   * the three platform endpoints on the ISSUER's origin — `grades.js`'s `pinnedUrl` refuses
 //     anything else at grade time, so a row that violates it would only fail later;
-//   * at least one deployment id — `launch.js` matches the launch's `deployment_id` against
-//     this list and answers 403 for an unknown one.
+//   * at least one deployment id, each at most 255 chars — `launch.js` matches the launch's
+//     `deployment_id` (read with `str(payload, 255)`) against this list and answers 403 for
+//     an unknown one, so a longer id could never match.
 
 const { parseHttpsUrl } = require('./http');
 
@@ -26,7 +30,9 @@ const MOODLE_ENDPOINTS = {
 };
 
 /**
- * Validates and normalises one manual registration.
+ * Validates and normalises one manual registration. The issuer is kept exactly as given
+ * (trimmed), like registration.js stores it — the store's lookups are exact matches, so a
+ * sub-path issuer must not be reduced to its origin. `parseHttpsUrl` only validates it.
  *
  * @param {{issuer?: unknown, clientId?: unknown, deploymentIds?: unknown,
  *          authLoginUrl?: unknown, authTokenUrl?: unknown, jwksUri?: unknown}} input
@@ -35,7 +41,8 @@ const MOODLE_ENDPOINTS = {
  * @throws {Error} with a Ukrainian message naming the offending field
  */
 function normaliseRegistration(input) {
-  const issuerUrl = parseHttpsUrl(str(input.issuer));
+  const issuer = str(input.issuer);
+  const issuerUrl = parseHttpsUrl(issuer);
   if (!issuerUrl) throw new Error('issuer має бути https-адресою платформи без логіна й пароля');
 
   const clientId = str(input.clientId);
@@ -62,19 +69,21 @@ function normaliseRegistration(input) {
   }
 
   return {
-    issuer: issuerUrl.origin,
+    issuer,
     clientId,
     deploymentIds,
     ...endpoints,
   };
 }
 
-/** Comma/space separated string or array → trimmed, de-duplicated, non-empty ids. */
+/** Comma/space separated string or array → trimmed, de-duplicated, non-empty ids (max 255 chars). */
 function normaliseDeployments(value) {
   const list = Array.isArray(value) ? value : str(value).split(/[,\s]+/);
   const out = [];
   for (const raw of list) {
     const id = str(raw).trim();
+    // launch.js reads the claim with str(payload, 255): a longer id could never match.
+    if (id.length > 255) throw new Error('deployment_id довший за 255 символів');
     if (id && !out.includes(id)) out.push(id);
   }
   return out;
