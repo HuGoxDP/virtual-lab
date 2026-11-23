@@ -9,7 +9,7 @@ FROM alpine:3.20
 RUN apk add --no-cache nodejs postgresql16-client tar gzip
 
 WORKDIR /app
-COPY retention.mjs backup.mjs restore.mjs ./
+COPY retention.mjs backup.mjs restore.mjs verify-backup.mjs ./
 
 # One backup, then every BACKUP_SCHEDULE_HOURS (24 by default). A manual run:
 #   docker compose run --rm -e BACKUP_RUN_ONCE=1 backup

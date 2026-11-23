@@ -91,8 +91,12 @@ NAME=$(ls -1 backup/out-scratch | head -1)     # the timestamped directory
 # 3b. Prove the backup readable before anything is destroyed: the read-back
 #     decompresses the dump, checks the manifest and walks every volume tar,
 #     and writes the `verified` marker only when all of it passes.
-#     restore.mjs refuses a backup without that marker.
-node scripts/lib/verify-backup.mjs "backup/out-scratch/$NAME"
+#     restore.mjs refuses a backup without that marker. The verifier ships in
+#     the backup image, so no Node is needed on the host; --entrypoint node
+#     because the image's entrypoint is backup.mjs.
+docker compose -p vlabscratch $F run --rm --entrypoint node -v "$PWD/backup/out-scratch:/backups" backup verify-backup.mjs "/backups/$NAME"
+# Host alternative (needs Node 22+ on the host; fails on a root-owned backup dir):
+# node scripts/lib/verify-backup.mjs "backup/out-scratch/$NAME"
 
 # 4. Destroy the scratch stack and its volumes. This is the disaster.
 docker compose -p vlabscratch $F down -v
