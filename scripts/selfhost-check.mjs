@@ -271,17 +271,41 @@ export function judgeHttps(probes, { httpsBaseUrl }) {
 }
 
 /**
+ * HO1d D3: an abortable inter-attempt sleep. The injected `sleep` still runs
+ * (tests count it), but an abort resolves the wait at once instead of holding
+ * it for the rest of the second — or, in the runner, the whole health timeout.
+ * The listener is removed on BOTH exits: the per-second loop must not
+ * accumulate listeners on the signal.
+ *
+ * @param {(ms: number) => Promise<void>} sleep the injected sleep
+ * @param {number} ms
+ * @param {AbortSignal|null} signal
+ * @returns {Promise<void>}
+ */
+function sleepInterruptible(sleep, ms, signal) {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.resolve();
+  return new Promise(resolve => {
+    const finish = () => { signal.removeEventListener('abort', finish); resolve(); };
+    signal.addEventListener('abort', finish, { once: true });
+    Promise.resolve(sleep(ms)).then(finish, finish);
+  });
+}
+
+/**
  * Waits for the platform to answer, one printed attempt per second.
+ * HO1d D3: an optional `signal` — an abort stops the wait at once (before the
+ * next probe, and mid-sleep), reported as `{ok: false, reason: 'interrupted'}`.
  *
  * @param {(url: string) => Promise<{status: number, body: any}>} probe injected, so this is testable without a server
- * @param {{baseUrl: string, timeoutMs?: number, sleep?: (ms: number) => Promise<void>, log?: (line: string) => void}} opts
+ * @param {{baseUrl: string, timeoutMs?: number, sleep?: (ms: number) => Promise<void>, log?: (line: string) => void, signal?: AbortSignal}} opts
  * @returns {Promise<{ok: boolean, reason: string, waitedMs: number}>}
  */
-export async function waitHealthy(probe, { baseUrl, timeoutMs = 300_000, sleep = ms => new Promise(r => setTimeout(r, ms)), log = () => {} }) {
+export async function waitHealthy(probe, { baseUrl, timeoutMs = 300_000, sleep = ms => new Promise(r => setTimeout(r, ms)), log = () => {}, signal = null }) {
   const started = Date.now();
   let last = { ok: false, reason: 'not tried' };
   let attempt = 0;
-  while (Date.now() - started <= timeoutMs) {
+  while (!signal?.aborted && Date.now() - started <= timeoutMs) {
     attempt += 1;
     try {
       last = judgeHealth(await probe(`${baseUrl}/api/health`));
@@ -290,10 +314,59 @@ export async function waitHealthy(probe, { baseUrl, timeoutMs = 300_000, sleep =
     }
     log(`  healthy wait ${attempt}: ${last.ok ? 'ok' : 'no'} (${last.reason})`);
     if (last.ok) break;
+    if (signal?.aborted) break;
     if (Date.now() - started + 1000 > timeoutMs) break;
-    await sleep(1000);
+    await sleepInterruptible(sleep, 1000, signal);
   }
+  // An abort wins over a probe that happened to answer healthy in the same
+  // attempt: the run is interrupted, not green.
+  if (signal?.aborted) last = { ok: false, reason: 'interrupted' };
   return { ...last, waitedMs: Date.now() - started };
+}
+
+/**
+ * HO1d D5: the one command that cleans up a kept or abandoned check stack by
+ * hand — the same project name and the same `-f` files as the `up` (https
+ * overlay last when https), so `down -v` covers exactly what was started.
+ * Pure: printed on `--keep` (with the kept dir) and on the second Ctrl+C.
+ *
+ * @param {{https?: boolean, cloneDir: string}} opts
+ * @returns {string} `cd <cloneDir> && docker compose -p vl-selfcheck -f … down -v --remove-orphans`
+ */
+export function manualTeardownCommand({ https = false, cloneDir }) {
+  return `cd ${cloneDir} && docker ${composeArgs(['down', '-v', '--remove-orphans'], { https }).join(' ')}`;
+}
+
+/**
+ * HO1d D4: the CLI's Ctrl+C wiring, testable with a fake process
+ * (EventEmitter). First signal: abort the controller and print one line — the
+ * check then takes its normal teardown path. Second signal: print the manual
+ * teardown command (when there is something to tear down) and exit 130 at
+ * once, even mid-teardown. SIGINT/SIGTERM always; SIGBREAK exists only on
+ * Windows and is registered only there. Importing the module registers
+ * nothing — only the isMain block calls this.
+ *
+ * @param {{on: (event: string, handler: () => void) => void, platform?: string}} proc
+ * @param {AbortController} controller
+ * @param {{print?: (line: string) => void, exit?: (code: number) => void, command: () => string|null}} handlers
+ * @returns {void}
+ */
+export function installSignalHandlers(proc, controller, { print = line => console.log(line), exit = code => process.exit(code), command }) {
+  let interrupted = false;
+  const onSignal = () => {
+    if (!interrupted) {
+      interrupted = true;
+      controller.abort();
+      print('selfhost-check: interrupted — tearing down (press Ctrl+C again to stop now)');
+      return;
+    }
+    const manual = command();
+    if (manual) print(`selfhost-check: stopped — clean up by hand: ${manual}`);
+    exit(130);
+  };
+  proc.on('SIGINT', onSignal);
+  proc.on('SIGTERM', onSignal);
+  if ((proc.platform ?? process.platform) === 'win32') proc.on('SIGBREAK', onSignal);
 }
 
 /**
@@ -388,6 +461,9 @@ export async function httpProbe(url, timeoutMs = 5000) {
 /**
  * The whole check. Injectable so tests drive it without Docker, git or a network:
  * `exec` runs commands, `probe` answers health, `now`/`sleep` control time.
+ * HO1d D3: an optional `signal` (AbortSignal) — checked after a yield between
+ * steps; an abort ends the run `{ok:false, failed:'interrupted'}` and the
+ * normal teardown runs (except `--keep`, which still wins).
  *
  * @param {object} opts
  * @returns {Promise<{ok: boolean, steps: Array<{name: string, ok: boolean, detail: string}>, failed?: string}>}
@@ -407,6 +483,7 @@ export async function runCheck({
   tmpRoot = os.tmpdir(),
   healthTimeoutMs = 300_000,
   git = runCommand,
+  signal = null,
 } = {}) {
   const steps = [];
   const step = (name, ok, detail = '') => {
@@ -417,6 +494,18 @@ export async function runCheck({
 
   let workdir = null;
   let upAttempted = false;
+
+  // HO1d D3: yield to the event loop, then check the abort. The runner stays
+  // synchronous (spawnSync); this yield is what lets a Ctrl+C — which reaches
+  // the running child too, so it returns — be observed between steps, without
+  // an async rewrite. Called between every step; the health wait checks the
+  // signal itself. An abort is a named return, not a throw: the finally block
+  // tears down exactly as after any other failure.
+  const checkpoint = async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    return signal?.aborted === true;
+  };
+  const interrupted = () => ({ ok: false, steps, failed: 'interrupted' });
 
   try {
     // 1. The lock the caller holds (D8). A directory that exists is the contract
@@ -449,6 +538,7 @@ export async function runCheck({
     }
     const sha = git('git', ['-C', cloneDir, 'rev-parse', '--short', 'HEAD']);
     step('clone', true, `${ref}@${(sha.stdout || '').trim()}`);
+    if (await checkpoint()) return interrupted();
 
     // 4. The `.env` an admin writes by hand, written here with generated secrets.
     const { text, changed } = buildEnv(readFileSync(path.join(cloneDir, '.env.example'), 'utf8'), {
@@ -459,6 +549,7 @@ export async function runCheck({
     const dbUser = text.match(/^DB_USER=(.*)$/m)?.[1] ?? 'lab_user';
     const dbName = text.match(/^DB_NAME=(.*)$/m)?.[1] ?? 'virtual_lab';
     step('env', changed.length === (https ? 5 : 4), `replaced ${changed.join(', ')}`);
+    if (await checkpoint()) return interrupted();
 
     // The caller's shell env must not override the generated .env: compose
     // gives exported vars precedence, so every docker child runs with them
@@ -473,6 +564,7 @@ export async function runCheck({
     if (!step('up', up.status === 0, up.status === 0 ? '' : why(up).slice(0, 300))) {
       return { ok: false, steps, failed: 'up' };
     }
+    if (await checkpoint()) return interrupted();
 
     // 6. Healthy. In https mode the redirect include makes EVERY plain request
     //    answer 301 — /api/health included — so the health wait moves to the
@@ -480,11 +572,15 @@ export async function runCheck({
     const baseUrl = `http://127.0.0.1:${port}`;
     const httpsBaseUrl = `https://127.0.0.1:${httpsPort}`;
     const healthBase = https ? httpsBaseUrl : baseUrl;
-    const health = await waitHealthy(probe, { baseUrl: healthBase, timeoutMs: healthTimeoutMs, sleep, log });
+    const health = await waitHealthy(probe, { baseUrl: healthBase, timeoutMs: healthTimeoutMs, sleep, log, signal });
+    // An aborted health wait is the interruption itself, not a failed healthy
+    // step: no logs dump, the named 'interrupted' result and normal teardown.
+    if (signal?.aborted) return interrupted();
     if (!step('healthy', health.ok, `${health.reason} after ${Math.round(health.waitedMs / 1000)}s`)) {
       exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https }), { cwd: cloneDir, env: dockerEnv });
       return { ok: false, steps, failed: 'healthy' };
     }
+    if (await checkpoint()) return interrupted();
 
     // 6b. https mode: prove the redirect on the plain listener and HSTS on the
     //     TLS one (judgeHttps). A stack that serves plain 200s with the overlay
@@ -496,6 +592,7 @@ export async function runCheck({
         exec('docker', composeArgs(['logs', '--tail', '40', 'frontend'], { https }), { cwd: cloneDir, env: dockerEnv });
         return { ok: false, steps, failed: 'https' };
       }
+      if (await checkpoint()) return interrupted();
     }
 
     // 7. One backup, then the read-back that makes it a backup (D7, D-9).
@@ -528,11 +625,13 @@ export async function runCheck({
     if (!step('backup', verified.ok, verified.ok ? `${verified.checks.length} checks, ${path.basename(produced)}` : String(verified.error))) {
       return { ok: false, steps, failed: 'backup' };
     }
+    if (await checkpoint()) return interrupted();
     if (!existsSync(path.join(produced, VERIFIED_MARKER))) {
       step('backup marker', false, 'missing');
       return { ok: false, steps, failed: 'backup marker' };
     }
     step('backup marker', true);
+    if (await checkpoint()) return interrupted();
 
     // 7b. The restore (P5b D6): count what the backup held, delete the proof
     //     row, restore the verified backup inside the backup container with
@@ -557,6 +656,7 @@ export async function runCheck({
     if (!step('restore', restoreOk, restoreDetail)) {
       return { ok: false, steps, failed: 'restore' };
     }
+    if (await checkpoint()) return interrupted();
 
     // 8. The smoke (D4): the layer that can prove a fresh, empty install. In
     //    https mode it runs against the TLS base; the self-signed cert of this
@@ -573,10 +673,12 @@ export async function runCheck({
     if (!step('e2e deps', install.status === 0, install.status === 0 ? '' : why(install))) {
       return { ok: false, steps, failed: 'e2e deps' };
     }
+    if (await checkpoint()) return interrupted();
     const browsers = exec('npx', ['playwright', 'install', 'chromium'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
     if (!step('e2e browser', browsers.status === 0, browsers.status === 0 ? '' : why(browsers))) {
       return { ok: false, steps, failed: 'e2e browser' };
     }
+    if (await checkpoint()) return interrupted();
     const smoke = exec('npm', ['run', '--silent', 'smoke'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
     const smokeTail = (smoke.stdout || '').trim().split('\n').slice(-1)[0] ?? '';
     if (!step('smoke', smoke.status === 0, smoke.status === 0 ? smokeTail.slice(0, 120) : why(smoke))) {
@@ -607,6 +709,10 @@ export async function runCheck({
       }
     } else if (workdir) {
       log(`  --   kept ${workdir}`);
+      // HO1d D5: --keep wins even on an abort — nothing is torn down, so the
+      // admin gets the exact command to clean the kept stack up by hand.
+      // Only when `up` was attempted: before that there is no stack.
+      if (upAttempted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, cloneDir: path.join(workdir, 'app') })}`);
     }
   }
 }
@@ -626,8 +732,24 @@ if (isMain) {
     process.exit(0);
   }
   console.log(`selfhost-check: ref=${opts.ref} port=${opts.port}${opts.https ? ' https=8443' : ''} source=${opts.source ?? REPO_ROOT}`);
+  // HO1d D4: Ctrl+C wiring — first signal aborts and the check tears down
+  // normally; the second prints the manual command and exits 130 at once.
+  // `command()` answers null until the clone exists (nothing to tear down).
+  const controller = new AbortController();
+  let teardownTarget = null;
+  installSignalHandlers(process, controller, {
+    command: () => (teardownTarget ? manualTeardownCommand({ https: opts.https, cloneDir: teardownTarget.cloneDir }) : null),
+  });
   const result = await runCheck({
     ref: opts.ref, source: opts.source ?? REPO_ROOT, port: opts.port, https: opts.https, lock: opts.lock, keep: opts.keep,
+    signal: controller.signal,
+    // The clone dir becomes known before `up` runs (the first child that can
+    // leave containers behind), so a second Ctrl+C from then on can name the
+    // exact cleanup command even mid-teardown.
+    exec: (cmd, args, childOpts) => {
+      if (cmd === 'docker' && args.includes('up') && childOpts?.cwd) teardownTarget = { cloneDir: childOpts.cwd };
+      return runCommand(cmd, args, childOpts);
+    },
   });
   const ok = result.steps.filter(s => s.ok).length;
   console.log(`selfhost-check: steps=${result.steps.length} ok=${ok} ${result.ok ? 'GREEN' : `RED at ${result.failed}`}`);
