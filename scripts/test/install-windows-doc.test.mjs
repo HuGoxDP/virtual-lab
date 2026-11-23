@@ -3,13 +3,15 @@
 // HO1a Phase 3 (DW-3.1, DW-3.2): the Windows one-command install
 // subsection must live inside `## Встановлення`, before
 // `### Перший модератор`, and the rest of docs/self-host.md must stay
-// byte-for-byte what origin/ms/1 carries (additions only, no rewording
-// of other sections). Pattern: selfhost-doc.test.mjs - fs reads +
-// node:test, `## ` section slicing, no Docker. If git or the base ref
-// is unavailable, the base-comparison test returns early - no skip.
+// byte-for-byte the frozen pre-HO1a text (additions only, no rewording
+// of other sections). The base is the committed fixture
+// scripts/test/fixtures/self-host-pre-ho1a.md (exact bytes of
+// origin/ms/1:docs/self-host.md before HO1a), NOT a live git ref: a
+// live-ref guard breaks the moment the branch merges into its own base.
+// Pattern: selfhost-doc.test.mjs - fs reads + node:test, `## ` section
+// slicing, no Docker, no git; every test runs on every host.
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -17,9 +19,11 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DOC_PATH = path.join(ROOT, 'docs', 'self-host.md');
-// Read as bytes and decode explicitly: git show gives the index bytes
-// (LF), the worktree may be CRLF (autocrlf) - compare after normalizing
-// line endings, so the guard checks TEXT, not checkout mechanics.
+const FIXTURE_PATH = path.join(ROOT, 'scripts', 'test', 'fixtures', 'self-host-pre-ho1a.md');
+// Read as text and normalize line endings on both sides: the fixture
+// holds the index bytes (LF), the worktree may be CRLF (autocrlf) -
+// compare after normalizing, so the guard checks TEXT, not checkout
+// mechanics.
 const DOC = readFileSync(DOC_PATH, 'utf8').replace(/\r\n/g, '\n');
 const NEW_HEADING = '### Windows: встановлення однією командою (install.cmd)';
 
@@ -74,14 +78,10 @@ test('self-host doc: the Windows subsection carries the full D12 content list', 
 });
 
 // DW-3.2: everything outside the ## Встановлення slice must equal the
-// same text at origin/ms/1 - the phase may only add inside that section.
-// If git or the ref is unavailable, return early (no skip/todo).
-test('self-host doc: text outside «Встановлення» is byte-equal to origin/ms/1 (additions-only guard)', () => {
-  const probe = spawnSync('git', ['show', 'origin/ms/1:docs/self-host.md'], {
-    cwd: ROOT, encoding: 'utf8', timeout: 30000,
-  });
-  if (probe.error || probe.status !== 0) return; // no git / no base ref on this host
-  const base = probe.stdout.replace(/\r\n/g, '\n');
+// frozen pre-HO1a fixture - the phase may only add inside that section.
+// The fixture is committed, so this runs unconditionally on every host.
+test('self-host doc: text outside «Встановлення» is byte-equal to the frozen pre-HO1a fixture (additions-only guard)', () => {
+  const base = readFileSync(FIXTURE_PATH, 'utf8').replace(/\r\n/g, '\n');
   const current = slice(DOC, 'Встановлення');
   const original = slice(base, 'Встановлення');
   assert.equal(DOC.slice(0, current.start), base.slice(0, original.start),

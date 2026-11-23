@@ -35,6 +35,10 @@
     If the environment sets FRONTEND_PORT to a valid port that differs
     from the .env value (or the .env value is invalid), print a NOTE
     with that URL - compose gives the environment precedence.
+    For each secret key (DB_PASSWORD, ADMIN_TOKEN): if the process
+    environment sets it to a non-empty value, print a NOTE naming the
+    key only (never the value) - compose uses the environment value
+    instead of the .env one.
     Run docker compose up -d --build, streaming its output to the console.
     If compose exits non-zero -> fail, KEEPING the new .env (the database
     volume may already be initialised with its password).
@@ -248,6 +252,15 @@ try {
         $envPort = [int]$env:FRONTEND_PORT
         if ($null -eq $port -or $envPort -ne $port) {
             Write-Host "NOTE: FRONTEND_PORT is set in the environment ($envPort); compose uses it: http://localhost:$envPort/api/health"
+        }
+    }
+    # Compose gives the process environment precedence over .env for the
+    # secret keys too: a non-empty environment value silently wins. Name
+    # the key only - never the value, no prompt, no secret echo.
+    foreach ($key in 'DB_PASSWORD', 'ADMIN_TOKEN') {
+        $envValue = [Environment]::GetEnvironmentVariable($key)
+        if (-not [string]::IsNullOrEmpty($envValue)) {
+            Write-Host "NOTE: $key is set in the environment; compose uses it instead of the .env value."
         }
     }
 

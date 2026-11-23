@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const SYSTEM32 = path.join(process.env.SystemRoot || 'C:\Windows', 'System32');
+const SYSTEM32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
 export const POWERSHELL = path.join(SYSTEM32, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 
 /** win32 with stock Windows PowerShell 5.1 present. */
