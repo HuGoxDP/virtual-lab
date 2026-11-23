@@ -14,7 +14,10 @@
     If the daemon check exits non-zero
         -> fail "Docker is not running...", write nothing, no compose call.
     If .env exists but is a directory -> fail.
-    If .env exists as a file -> leave it byte-for-byte untouched, say so.
+    If .env exists as a file -> leave it byte-for-byte untouched, say so;
+        read it leniently and warn (by key name only, never a value) for
+        each secret key that is missing, blank or still the placeholder;
+        the run continues either way.
     Otherwise create it from .env.example:
         Read the template as bytes; remember a UTF-8 BOM if present;
         decode the rest as strict UTF-8 (invalid bytes -> fail closed).
@@ -29,6 +32,9 @@
         overwriting; always clean the temp file up.
     Read FRONTEND_PORT from .env (the last key line wins, dotenv style);
     warn if it is missing or not a port number, but never abort over it.
+    If the environment sets FRONTEND_PORT to a valid port that differs
+    from the .env value (or the .env value is invalid), print a NOTE
+    with that URL - compose gives the environment precedence.
     Run docker compose up -d --build, streaming its output to the console.
     If compose exits non-zero -> fail, KEEPING the new .env (the database
     volume may already be initialised with its password).
@@ -109,6 +115,14 @@ function Get-CleanValue([string]$raw) {
     return $value
 }
 
+# A port value is 1..65535 written as at most five digits. Anything else
+# (empty, 0, 70000, abc) is not a port; callers warn, never abort (D9).
+function Test-Port([string]$value) {
+    if ($value -notmatch '^\d{1,5}$') { return $false }
+    $number = [int]$value
+    return ($number -ge 1 -and $number -le 65535)
+}
+
 $root = $PSScriptRoot
 Push-Location -LiteralPath $root
 try {
@@ -127,10 +141,25 @@ try {
     if (Test-Path -LiteralPath $envPath -PathType Container) {
         Fail '.env exists but is a directory; move it away, then run install.cmd again'
     }
+    # One lenient read of whatever .env is in place after step 2 (D7):
+    # a BOM is honoured, invalid bytes become U+FFFD, the read never
+    # fails; the values needed here are ASCII.
+    $envText = $null
     if (Test-Path -LiteralPath $envPath -PathType Leaf) {
         # Read-only to this installer: never opened for writing, renamed
         # or deleted; bytes, timestamps and ACL stay as they are.
         Write-Host 'Found an existing .env; it was left unchanged (secrets are never regenerated).'
+        $envText = [IO.File]::ReadAllText($envPath, [Text.Encoding]::UTF8)
+        # Warn by key name only, never by value: a missing, blank or
+        # placeholder secret must be pointed out, but the run continues
+        # (compose still runs; secrets are never regenerated here).
+        foreach ($key in 'DB_PASSWORD', 'ADMIN_TOKEN') {
+            $rawSecret = Get-EnvValue $envText $key
+            $secretValue = if ($null -eq $rawSecret) { '' } else { Get-CleanValue $rawSecret }
+            if ($secretValue -eq '' -or $secretValue -eq 'change-me-before-deploying') {
+                Write-Host "WARNING: $key in .env is missing, blank or still the placeholder; set a real value before exposing the platform (see docs/self-host.md)."
+            }
+        }
     }
     else {
         $examplePath = Join-Path $root '.env.example'
@@ -192,27 +221,34 @@ try {
             Fail 'could not create .env (is the folder writable? did .env appear meanwhile?); the existing file, if any, was not overwritten'
         }
         finally {
+            # Cleanup must never mask the original outcome: a removal
+            # failure (a lock, an ACL) is tolerated, not re-thrown.
             if (Test-Path -LiteralPath $tmpPath -PathType Leaf) {
-                Remove-Item -LiteralPath $tmpPath -Force
+                Remove-Item -LiteralPath $tmpPath -Force -ErrorAction SilentlyContinue
             }
         }
         Write-Host 'Created .env with a new DB_PASSWORD and ADMIN_TOKEN (values not shown; they are stored only in .env).'
+        $envText = [IO.File]::ReadAllText($envPath, [Text.Encoding]::UTF8)
     }
 
     # --- 3. FRONTEND_PORT from .env (last key line wins) ---
-    # Lenient read: a BOM is honoured, invalid bytes become U+FFFD, the
-    # read never fails; the values needed here are ASCII.
-    $envText = [IO.File]::ReadAllText($envPath, [Text.Encoding]::UTF8)
     $port = $null
     $rawPort = Get-EnvValue $envText 'FRONTEND_PORT'
     if ($null -ne $rawPort) {
         $cleanPort = Get-CleanValue $rawPort
-        if ($cleanPort -match '^\d{1,5}$' -and [int]$cleanPort -ge 1 -and [int]$cleanPort -le 65535) {
-            $port = [int]$cleanPort
-        }
+        if (Test-Port $cleanPort) { $port = [int]$cleanPort }
     }
     if ($null -eq $port) {
         Write-Host 'WARNING: FRONTEND_PORT in .env is missing or not a port number'
+    }
+    # Compose gives a process-environment variable precedence over .env;
+    # a valid, different one deserves a NOTE with its own URL. The .env
+    # URL line is still printed whenever the .env value is valid (D9).
+    if ($env:FRONTEND_PORT -and (Test-Port $env:FRONTEND_PORT)) {
+        $envPort = [int]$env:FRONTEND_PORT
+        if ($null -eq $port -or $envPort -ne $port) {
+            Write-Host "NOTE: FRONTEND_PORT is set in the environment ($envPort); compose uses it: http://localhost:$envPort/api/health"
+        }
     }
 
     # --- 4. compose up; a failure keeps the new .env (the database ---
