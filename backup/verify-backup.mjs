@@ -126,6 +126,30 @@ function checkTarGz(file) {
 }
 
 /**
+ * The one place the marker is touched. Clearing it starts a verification clean;
+ * writing it ends a green one. A marker that cannot be removed or written is a
+ * named failure, not an exception: a stale marker must never make a broken
+ * backup look restorable, and a root-owned backup dir must not crash the CLI.
+ *
+ * @param {string} dir — the backup directory.
+ * @param {'clear'|'write'} action
+ * @returns {{check: {name: string, ok: boolean, detail: string}, error: string}|null}
+ */
+function settleMarker(dir, action) {
+  try {
+    if (action === 'clear') rmSync(path.join(dir, VERIFIED_MARKER), { force: true });
+    else writeFileSync(path.join(dir, VERIFIED_MARKER), '');
+    return null;
+  } catch (err) {
+    const what = action === 'clear' ? 'cannot remove the stale verified marker' : 'cannot write the verified marker';
+    return {
+      check: { name: 'verified marker', ok: false, detail: err.message },
+      error: `${what}: ${err.message}`,
+    };
+  }
+}
+
+/**
  * Verifies one backup directory and — only when every check passes — writes the
  * `verified` marker `restore.mjs` requires.
  *
@@ -138,7 +162,10 @@ export function verifyBackup(dir) {
 
   // A re-verification starts clean: a marker left by an earlier green run must
   // not survive a failing one, or restore.mjs would accept a broken backup.
-  rmSync(path.join(dir, VERIFIED_MARKER), { force: true });
+  // When the stale marker cannot be removed nothing else runs — the backup's
+  // state cannot be trusted while it survives.
+  const cleared = settleMarker(dir, 'clear');
+  if (cleared) return { ok: false, checks: [cleared.check], error: cleared.error };
 
   const dump = path.join(dir, 'db.sql.gz');
   if (!existsSync(dump)) {
@@ -208,7 +235,8 @@ export function verifyBackup(dir) {
 
   // Last, and only on the way out with everything green: the marker is what
   // makes the backup restorable, so a failure above never leaves it behind.
-  writeFileSync(path.join(dir, VERIFIED_MARKER), '');
+  const written = settleMarker(dir, 'write');
+  if (written) return { ok: false, checks: [...checks, written.check], error: written.error };
   return { ok: true, checks };
 }
 
@@ -229,18 +257,49 @@ export function newestBackup(root) {
   return names.length > 0 ? path.join(root, names[names.length - 1]) : null;
 }
 
-// CLI: `node scripts/lib/verify-backup.mjs <backup-dir>` — the step the restore
-// procedure in docs/backup-restore.md runs before `restore.mjs` will accept a
-// backup. One line per check, exit 0 only when the marker was written.
+/**
+ * The shared CLI body: `node verify-backup.mjs <backup-dir>` or
+ * `node verify-backup.mjs --newest <backup-root>` — the step the restore
+ * procedure runs before `restore.mjs` will accept a backup. One line per
+ * check, exit 0 only when the marker was written, 1 for a failed backup,
+ * 2 for a malformed command or a root with no backups.
+ *
+ * Async from the start so a later streaming verifier only swaps the call it
+ * awaits; both entry files (here and scripts/lib) call this one function.
+ *
+ * @param {string[]} argv — arguments without node/script (process.argv.slice(2)).
+ * @param {{out?: {write: function(string): unknown}, err?: {write: function(string): unknown}}} [io]
+ * @returns {Promise<0|1|2>} the exit code.
+ */
+export async function runCli(argv, io = {}) {
+  const out = io.out ?? process.stdout;
+  const err = io.err ?? process.stderr;
+  const usage = () => {
+    err.write('usage: node verify-backup.mjs <backup-dir> | --newest <backup-root>\n');
+    return 2;
+  };
+
+  let dir;
+  if (argv.length === 1 && argv[0] && !argv[0].startsWith('--')) {
+    dir = argv[0];
+  } else if (argv.length === 2 && argv[0] === '--newest' && argv[1] && !argv[1].startsWith('--')) {
+    dir = newestBackup(argv[1]);
+    if (!dir) {
+      err.write(`no backup directory under ${argv[1]}\n`);
+      return 2;
+    }
+    out.write(`newest backup: ${dir}\n`);
+  } else {
+    return usage();
+  }
+
+  const result = verifyBackup(dir);
+  for (const check of result.checks) out.write(`${check.ok ? 'ok  ' : 'FAIL'} ${check.name}${check.detail ? ` — ${check.detail}` : ''}\n`);
+  out.write(result.ok ? `verified: ${dir}\n` : `not verified: ${result.error}\n`);
+  return result.ok ? 0 : 1;
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const dir = process.argv[2];
-  if (!dir) {
-    console.error('usage: node scripts/lib/verify-backup.mjs <backup-dir>');
-    process.exit(2);
-  }
-  const result = verifyBackup(dir);
-  for (const check of result.checks) console.log(`${check.ok ? 'ok  ' : 'FAIL'} ${check.name}${check.detail ? ` — ${check.detail}` : ''}`);
-  console.log(result.ok ? `verified: ${dir}` : `not verified: ${result.error}`);
-  process.exit(result.ok ? 0 : 1);
+  runCli(process.argv.slice(2)).then(code => process.exit(code));
 }
