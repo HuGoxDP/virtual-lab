@@ -13,6 +13,9 @@ COPY *.js ./
 COPY routes ./routes
 COPY migrations ./migrations
 COPY lti ./lti
+# P1c: the manual-registration script (scripts/lti-add-registration.js) runs via
+# `docker compose exec backend node scripts/…` on a Moodle that blocks Dynamic Registration.
+COPY scripts ./scripts
 
 # Volume mountpoints (archives, cover images, the LTI tool key). Creating them here with the right owner means
 # the named volumes inherit that ownership on first use, so the unprivileged process can write.

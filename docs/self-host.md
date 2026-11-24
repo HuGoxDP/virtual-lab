@@ -292,6 +292,13 @@ curl http://localhost:8044/api/health
   Підказка `restore.mjs` більше не друкує контейнерний шлях у команді для
   хоста; маркер, який не вдалося записати чи прибрати, — названа помилка
   (`cannot write the verified marker: EACCES`), а не падіння зі stack trace.
+- **2026-11-22 — ручна реєстрація LTI працює (P1c):** раніше «Крок 3 — ручна
+  реєстрація» був глухим кутом: форма Moodle не створювала запис в інструменті, і
+  кожен запуск відповідав 403. Тепер є друга половина —
+  `docker compose exec backend node scripts/lti-add-registration.js` (`--dry-run`
+  для перевірки), а назви полів форми Moodle виправлено (LTI version, Public key
+  type = Keyset URL, Supports Deep Linking, IMS LTI Assignment and Grade Services,
+  Accept grades).
 - **2026-11-22 — LTI потребує публічно довіреного сертифіката на 443 (P1d):**
   Moodle сам, зі свого сервера, забирає ключі платформи й токен оцінки, а його
   cURL приймає лише 443/80, блокує приватні адреси й відхиляє недовірений
@@ -475,10 +482,11 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml restart fronten
 ## Робота як LTI-інструмент (Moodle)
 
 Покрокова реєстрація платформи в Moodle. Огляд — `Readme.md`, розділ «Робота
-як LTI-інструмент (Moodle)». **Кроки перевірені на Moodle 5.0.2 (локальний
-стенд lti-demo); на іншій версії Moodle назви пунктів меню можуть
-відрізнятися.** Відрепетирувати реєстрацію можна на локальному стенді
-(Moodle 5.0.2 + платформа + TLS-проксі): `docs/lti-demo.md`.
+як LTI-інструмент (Moodle)». **Крок 2 (реєстрація одним посиланням) перевірений на
+Moodle 5.0.2 (локальний стенд lti-demo); крок 3 (ручна реєстрація) перевірений
+тестами, не живим запуском — позначено в ньому. На іншій версії Moodle назви
+пунктів меню можуть відрізнятися.** Відрепетирувати реєстрацію можна на локальному
+стенді (Moodle 5.0.2 + платформа + TLS-проксі): `docs/lti-demo.md`.
 
 ### Передумова: HTTPS з обох боків
 
@@ -579,15 +587,58 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
 
 ### Крок 3 — ручна реєстрація (якщо динамічна заблокована)
 
-Створіть інструмент вручну й заповніть поля; `<база>` — ваш `LTI_PUBLIC_URL`:
+Ручна реєстрація — це **дві половини**: форму в Moodle заповнює адміністратор
+Moodle, а запис про платформу в сам інструмент додає скрипт нижче. Без другої
+половини кожен запуск відповідає **403 «Платформа не зареєстрована»**: інструмент
+дізнається про платформу лише з реєстрації, і сама форма Moodle його не навчає.
+
+**3a. Форма Moodle.** Site administration → Plugins → Activity modules →
+External tool → Manage tools → *configure a tool manually*. `<база>` — ваш
+`LTI_PUBLIC_URL`:
 
 | Поле Moodle | Значення |
 |---|---|
-| Tool URL / Target link URI / Redirection URI(s) | `<база>/api/lti/launch` |
+| Tool name | назва на ваш вибір, напр. «Віртуальна лабораторія» |
+| Tool URL | `<база>/api/lti/launch` |
+| LTI version | **LTI 1.3** |
+| Public key type | **Keyset URL** |
+| Public keyset | `<база>/api/lti/jwks` |
 | Initiate login URL | `<база>/api/lti/login` |
-| Public keyset URL | `<база>/api/lti/jwks` |
-| Метод автентифікації | `private_key_jwt`, RS256 |
-| Services | AGS (`lineitem`, `result.readonly`, `score`) + Deep Linking |
+| Redirection URI(s) | `<база>/api/lti/launch` |
+| Supports Deep Linking (Content-Item Message) | увімкнути |
+| Services → IMS LTI Assignment and Grade Services | «Use this service for grade sync and column management» |
+| Services → IMS LTI Names and Role Provisioning | «Do not use this service» (`docs/privacy.md`) |
+| Privacy → Accept grades from the tool | увімкнути |
+
+Збережіть інструмент, потім у списку натисніть **View configuration details** —
+звідти потрібні **Client ID**, **Deployment ID** і **Platform ID (issuer)**.
+
+**3b. Запис в інструменті.** З чекауту платформи:
+
+```bash
+docker compose exec backend node scripts/lti-add-registration.js \
+  --from-moodle https://moodle.example.edu \
+  --client-id <Client ID з Moodle> --deployment-id <Deployment ID> --dry-run
+```
+
+`--from-moodle` бере три адреси платформи зі стандартних шляхів Moodle
+(`/mod/lti/auth.php`, `/mod/lti/token.php`, `/mod/lti/certs.php`) і вважає issuer
+цією ж адресою (без кінцевих скісних рисок). Якщо публічна адреса Moodle інша —
+додайте `--issuer <Platform ID>`. Issuer зберігається **саме тим рядком**, який ви
+дали: він має збігатися з Platform ID Moodle (`iss` у запуску), разом із підшляхом
+(`https://host/moodle`) — кінцева скісна риска не додається й не прибирається.
+Dry-run лише перевіряє й показує рядок; приберіть `--dry-run`, щоб записати.
+Повний перелік прапорців (усі адреси вручну) — `--help`.
+
+Перевірка: викладач відкриває *Select content* у курсі й бачить сценарії. Якщо
+знову 403 — звірте `issuer`, `client_id` і `deployment_id` з «View configuration
+details»: розбіжність у будь-якому з них дає саме цю відповідь.
+
+> **Стан перевірки.** Крок 2 (реєстрація одним посиланням) перевірений на живому
+> стенді lti-demo (Moodle 5.0.2). **Крок 3 перевірений тестами правил і запису
+> (`backend/test/unit/lti-manual-registration.test.js`), але не живим запуском на
+> lti-demo.** Назви полів форми наведено для Moodle 5.0.2; на іншій версії вони
+> можуть відрізнятися.
 
 ### Крок 4 — ротація секрету
 
@@ -624,6 +675,12 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml up -d backend
   звертається за токеном AGS сам, і його cURL не приймає недовірений сертифікат,
   нестандартний порт чи приватну адресу. Перевірте передумову вище (443 +
   публічно довірений сертифікат), а не браузер студента.
+- **403 «Платформа не зареєстрована» при запуску** — інструмент не має запису про
+  цю платформу. Форма Moodle сама по собі його не створює: після ручної реєстрації
+  виконайте крок 3b (`scripts/lti-add-registration.js`), звіривши `issuer`,
+  `client_id` і `deployment_id` з «View configuration details».
+- **403 «Невідоме розгортання (deployment)»** — запис є, але `deployment_id`
+  інший: додайте правильний (`--deployment-id`, можна кілька через кому).
 - **403 при реєстрації** — невірний секрет; **401** — секрет у URL відсутній.
 - **Реєстрація зникла після `down -v`** — томи з базою платформи й ключем
   стерті: зареєструйте інструмент повторно (крок 2).
