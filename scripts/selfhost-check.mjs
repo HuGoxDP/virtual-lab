@@ -296,10 +296,65 @@ export async function waitHealthy(probe, { baseUrl, timeoutMs = 300_000, sleep =
   return { ...last, waitedMs: Date.now() - started };
 }
 
-/** Runs a command, returning `{status, stdout, stderr}`; never throws on a non-zero exit. */
-function run(cmd, args, opts = {}) {
-  const res = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts });
-  return { status: res.status, stdout: res.stdout ?? '', stderr: res.stderr ?? '', error: res.error };
+/**
+ * HO1c D1: where the npm-cli.js that belongs to this node lives. The npm
+ * bundled next to the node binary comes first; `npm_execpath` is only trusted
+ * when its basename is `npm-cli.js` (pnpm and yarn set it to their own CLIs).
+ * `npx-cli.js` is the sibling of the chosen `npm-cli.js` (npm ≥ 7).
+ * @returns {string|null} the bin directory, or null when neither candidate exists
+ */
+function npmBinDir() {
+  const bundled = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin');
+  if (existsSync(path.join(bundled, 'npm-cli.js'))) return bundled;
+  const execpath = process.env.npm_execpath;
+  if (execpath && path.basename(execpath) === 'npm-cli.js' && existsSync(execpath)) return path.dirname(execpath);
+  return null;
+}
+
+/**
+ * HO1c D1: the default runner (`exec` and `git`). On Windows npm/npx are .cmd
+ * shims that spawnSync refuses to run without a shell — so they run through
+ * this node itself (`<execPath> npm-cli.js …`), which works even when PATH
+ * holds only node's own directory. No npm-cli found → the plain command is
+ * spawned and its failure becomes a named ENOENT via why(), never a crash.
+ * Never `shell: true`; synchronous; never throws — a spawn failure is the
+ * returned `{status: null, error}`. Non-win32: the command is spawned unchanged.
+ *
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {import('node:child_process').SpawnSyncOptions} [opts]
+ * @returns {{status: number|null, stdout: string, stderr: string, error?: Error}}
+ */
+export function runCommand(cmd, args, opts = {}) {
+  let command = cmd;
+  let argv = args;
+  if (process.platform === 'win32' && (cmd === 'npm' || cmd === 'npx')) {
+    const bin = npmBinDir();
+    const cli = bin && path.join(bin, cmd === 'npx' ? 'npx-cli.js' : 'npm-cli.js');
+    if (cli && existsSync(cli)) { command = process.execPath; argv = [cli, ...args]; }
+  }
+  try {
+    const res = spawnSync(command, argv, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...opts, shell: false });
+    return { status: res.status, stdout: res.stdout ?? '', stderr: res.stderr ?? '', error: res.error };
+  } catch (err) {
+    // spawnSync reports spawn failures on res.error; a throw here (bad opts)
+    // must still surface as the same shape, not kill the check mid-step.
+    return { status: null, stdout: '', stderr: '', error: err };
+  }
+}
+
+/**
+ * HO1c D2: why a command step failed — the spawn error's message (ENOENT,
+ * ETIMEDOUT, …) plus the trimmed tail of stderr, or of stdout when stderr is
+ * empty. A superset of the old stderr-only detail: a `{status: null, error}`
+ * spawn failure used to print an empty line.
+ *
+ * @param {{status?: number|null, stdout?: string, stderr?: string, error?: Error}} res
+ * @returns {string}
+ */
+export function why(res) {
+  const tail = ((res.stderr ?? '').trim() || (res.stdout ?? '').trim()).slice(-200);
+  return [res.error?.message, tail].filter(Boolean).join(' | ');
 }
 
 /**
@@ -345,13 +400,13 @@ export async function runCheck({
   httpsPort = 8443,
   lock = null,
   keep = false,
-  exec = run,
+  exec = runCommand,
   probe = httpProbe,
   log = line => console.log(line),
   sleep = ms => new Promise(r => setTimeout(r, ms)),
   tmpRoot = os.tmpdir(),
   healthTimeoutMs = 300_000,
-  git = run,
+  git = runCommand,
 } = {}) {
   const steps = [];
   const step = (name, ok, detail = '') => {
@@ -415,7 +470,7 @@ export async function runCheck({
     //    containers behind, and the finally block must tear them down.
     upAttempted = true;
     const up = exec('docker', composeArgs(['up', '-d', '--build'], { https }), { cwd: cloneDir, timeout: 30 * 60_000, env: dockerEnv });
-    if (!step('up', up.status === 0, up.status === 0 ? '' : (up.stderr || '').trim().split('\n').slice(-3).join(' | ').slice(0, 300))) {
+    if (!step('up', up.status === 0, up.status === 0 ? '' : why(up).slice(0, 300))) {
       return { ok: false, steps, failed: 'up' };
     }
 
@@ -452,7 +507,7 @@ export async function runCheck({
     const psql = sql => exec('docker', composeArgs(['exec', '-T', 'database', 'psql', '-U', dbUser, '-d', dbName, '-tAc', sql], { https }), { cwd: cloneDir, timeout: 60_000, env: dockerEnv });
     const seed = psql(`INSERT INTO scenarios (id, title, category, category_label, status) VALUES ('vl-selfcheck-restore-proof', 'restore proof', 'physics', 'Фізика', 'draft')`);
     if (seed.status !== 0) {
-      step('restore', false, `seed failed: ${(seed.stderr || '').trim().slice(-200)}`);
+      step('restore', false, `seed failed: ${why(seed)}`);
       return { ok: false, steps, failed: 'restore' };
     }
     // P5c: compose now pins the container env to /backups itself, but the
@@ -461,7 +516,7 @@ export async function runCheck({
     // including pre-P5c code where the env still interpolated BACKUP_DIR.
     const once = exec('docker', composeArgs(['run', '--rm', '-e', 'BACKUP_RUN_ONCE=1', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
     if (once.status !== 0) {
-      step('backup', false, (once.stderr || '').trim().slice(-200));
+      step('backup', false, why(once));
       return { ok: false, steps, failed: 'backup' };
     }
     const produced = newestBackup(backupDir);
@@ -496,7 +551,7 @@ export async function runCheck({
     const postHealth = restore.status === 0 ? judgeHealth(await probe(`${healthBase}/api/health`)) : { ok: false, reason: 'restore failed' };
     const restoreOk = before.status === 0 && removed.status === 0 && restore.status === 0
       && after.status === 0 && Number.isInteger(heldCount) && restoredCount === heldCount && postHealth.ok;
-    const restoreDetail = restore.status !== 0 ? (restore.stderr || '').trim().slice(-200)
+    const restoreDetail = restore.status !== 0 ? why(restore)
       : !restoreOk ? `count ${restoredCount} ≠ ${heldCount} or health: ${postHealth.reason}`
       : `${path.basename(produced)} restored, proof row back (${restoredCount}), ${postHealth.reason}`;
     if (!step('restore', restoreOk, restoreDetail)) {
@@ -515,16 +570,16 @@ export async function runCheck({
       ...(https ? { NODE_TLS_REJECT_UNAUTHORIZED: '0', E2E_INSECURE_TLS: '1' } : {}),
     };
     const install = exec('npm', ['ci', '--silent'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
-    if (!step('e2e deps', install.status === 0, install.status === 0 ? '' : (install.stderr || '').trim().slice(-200))) {
+    if (!step('e2e deps', install.status === 0, install.status === 0 ? '' : why(install))) {
       return { ok: false, steps, failed: 'e2e deps' };
     }
     const browsers = exec('npx', ['playwright', 'install', 'chromium'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
-    if (!step('e2e browser', browsers.status === 0, browsers.status === 0 ? '' : (browsers.stderr || '').trim().slice(-200))) {
+    if (!step('e2e browser', browsers.status === 0, browsers.status === 0 ? '' : why(browsers))) {
       return { ok: false, steps, failed: 'e2e browser' };
     }
     const smoke = exec('npm', ['run', '--silent', 'smoke'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
-    const tail = (smoke.stdout || '').trim().split('\n').slice(-1)[0] ?? '';
-    if (!step('smoke', smoke.status === 0, smoke.status === 0 ? tail.slice(0, 120) : tail.slice(-200))) {
+    const smokeTail = (smoke.stdout || '').trim().split('\n').slice(-1)[0] ?? '';
+    if (!step('smoke', smoke.status === 0, smoke.status === 0 ? smokeTail.slice(0, 120) : why(smoke))) {
       return { ok: false, steps, failed: 'smoke' };
     }
 

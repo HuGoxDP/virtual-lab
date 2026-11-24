@@ -44,14 +44,18 @@ if (!existsSync(dir)) {
     process.exit(2);
 }
 
-// The read-back gate (scripts/lib/verify-backup.mjs): a backup without the
-// `verified` marker was never proven readable, and restoring one would trade an
-// outage for data loss. Refused before anything is read or spawned, dry run
-// included — the marker name is duplicated here because the backup image ships
-// only backup/*.mjs, not scripts/.
+// The read-back gate (verify-backup.mjs, now shipped in this image): a backup
+// without the `verified` marker was never proven readable, and restoring one
+// would trade an outage for data loss. Refused before anything is read or
+// spawned, dry run included — the marker name is duplicated here so the gate
+// stays a plain existence check, with no import just to read a constant.
+// The hint leads with the in-image command: /backups is the compose mount
+// path even when BACKUP_DIR elsewhere points at a host folder; the host
+// alternative names that folder instead, never a container path.
 if (!existsSync(join(dir, "verified"))) {
     console.error(`restore: ${name} has no 'verified' marker — an unverified backup is not a restore target`);
-    console.error(`verify it first: node scripts/lib/verify-backup.mjs ${dir}`);
+    console.error(`verify it first: docker compose run --rm --entrypoint node backup verify-backup.mjs /backups/${name}`);
+    console.error(`  (or on the host, with Node 22+: node scripts/lib/verify-backup.mjs <host backup folder>/${name})`);
     process.exit(1);
 }
 
