@@ -340,9 +340,11 @@ export function manualTeardownCommand({ https = false, cloneDir }) {
 /**
  * HO1d D4: the CLI's Ctrl+C wiring, testable with a fake process
  * (EventEmitter). First signal: abort the controller and print one line — the
- * check then takes its normal teardown path. Second signal: print the manual
- * teardown command (when there is something to tear down) and exit 130 at
- * once, even mid-teardown. SIGINT/SIGTERM always; SIGBREAK exists only on
+ * check then takes its normal teardown path. Second signal: interrupt the
+ * current docker command (which may be the teardown `down -v`); the check
+ * stops after the teardown finishes, not by skipping it, and exits 130 after
+ * printing the manual teardown command (when there is something to tear down).
+ * SIGINT/SIGTERM always; SIGBREAK exists only on
  * Windows and is registered only there. Importing the module registers
  * nothing — only the isMain block calls this.
  *
@@ -526,6 +528,9 @@ export async function runCheck({
     for (const p of ports) if (!await portFree(p)) busy.push(p);
     if (busy.length) { step('port', false, `${busy.join(', ')} in use`); return { ok: false, steps, failed: 'port' }; }
     step('port', true, https ? `${port}, ${httpsPort} (https)` : String(port));
+    // HO1d review item 3: the lock/port probes are async; an abort that lands
+    // during them must be observed before the clone begins.
+    if (await checkpoint()) return interrupted();
 
     // 3. The clone: the default branch as this checkout has it (D5), so the check
     //    proves committed state and never depends on the network being up.
@@ -740,7 +745,8 @@ if (isMain) {
   }
   console.log(`selfhost-check: ref=${opts.ref} port=${opts.port}${opts.https ? ' https=8443' : ''} source=${opts.source ?? REPO_ROOT}`);
   // HO1d D4: Ctrl+C wiring — first signal aborts and the check tears down
-  // normally; the second prints the manual command and exits 130 at once.
+  // normally; the second interrupts the current docker command (possibly the
+  // teardown) and exits 130 once the teardown has finished, printing the manual command.
   // `command()` answers null until the clone exists (nothing to tear down).
   const controller = new AbortController();
   let teardownTarget = null;
