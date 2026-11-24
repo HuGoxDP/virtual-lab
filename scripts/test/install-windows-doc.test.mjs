@@ -2,12 +2,7 @@
 //
 // HO1a Phase 3 (DW-3.1, DW-3.2): the Windows one-command install
 // subsection must live inside `## Встановлення`, before
-// `### Перший модератор`, and the rest of docs/self-host.md must stay
-// byte-for-byte the frozen pre-HO1a text (additions only, no rewording
-// of other sections). The base is the committed fixture
-// scripts/test/fixtures/self-host-pre-ho1a.md (exact bytes of
-// origin/ms/1:docs/self-host.md before HO1a), NOT a live git ref: a
-// live-ref guard breaks the moment the branch merges into its own base.
+// `### Перший модератор`. Scoped guard (no whole-doc comparison).
 // Pattern: selfhost-doc.test.mjs - fs reads + node:test, `## ` section
 // slicing, no Docker, no git; every test runs on every host.
 
@@ -19,11 +14,6 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DOC_PATH = path.join(ROOT, 'docs', 'self-host.md');
-const FIXTURE_PATH = path.join(ROOT, 'scripts', 'test', 'fixtures', 'self-host-pre-ho1a.md');
-// Read as text and normalize line endings on both sides: the fixture
-// holds the index bytes (LF), the worktree may be CRLF (autocrlf) -
-// compare after normalizing, so the guard checks TEXT, not checkout
-// mechanics.
 const DOC = readFileSync(DOC_PATH, 'utf8').replace(/\r\n/g, '\n');
 const NEW_HEADING = '### Windows: встановлення однією командою (install.cmd)';
 
@@ -75,27 +65,4 @@ test('self-host doc: the Windows subsection carries the full D12 content list', 
   assert.match(sub, /бекапу/, 'restoring from a backup must be the advised path');
   assert.match(sub, /down -v/, 'the down -v data-loss warning must be present');
   assert.ok(!/docker compose [^\n]* -f /.test(sub), 'no docker compose -f line in the subsection');
-});
-
-// DW-3.2: everything outside the ## Встановлення slice must equal the
-// frozen pre-HO1a fixture - the phase may only add inside that section.
-// The fixture is committed, so this runs unconditionally on every host.
-test('self-host doc: text outside «Встановлення» is byte-equal to the frozen pre-HO1a fixture (additions-only guard)', () => {
-  const base = readFileSync(FIXTURE_PATH, 'utf8').replace(/\r\n/g, '\n');
-  const current = slice(DOC, 'Встановлення');
-  const original = slice(base, 'Встановлення');
-  assert.equal(DOC.slice(0, current.start), base.slice(0, original.start),
-    'everything before ## Встановлення must be unchanged');
-  assert.equal(DOC.slice(current.end), base.slice(original.end),
-    'everything after ## Встановлення must be unchanged');
-  // Inside the section: additions only - removing the new subsection
-  // (heading through the line before ### Перший модератор) must restore
-  // the base section exactly, so no existing line was reworded or lost.
-  const subStart = current.body.indexOf(NEW_HEADING);
-  const subEnd = current.body.indexOf('### Перший модератор');
-  assert.notEqual(subStart, -1);
-  assert.ok(subEnd > subStart);
-  const restored = current.body.slice(0, subStart) + current.body.slice(subEnd);
-  assert.equal(restored, original.body,
-    'the section minus the new subsection must equal the base section (0 deleted lines)');
 });

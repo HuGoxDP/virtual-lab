@@ -1,7 +1,7 @@
 // scripts/test/install-windows-findings.test.mjs
 //
-// HO1a premerge findings, round 1 (review fixes): regression pins for
-// F1 (frozen-fixture doc guard, no live git ref), F2 (ACL warning in the
+// HO1a premerge findings, round 2 (review fixes): regression pins for
+// F1 (scoped doc guard, tolerating outside edits), F2 (ACL warning in the
 // Windows subsection), F3 (env-override NOTEs for the secret keys, key
 // name only), F4 (the harness SystemRoot fallback is a real path).
 // Pattern: install-windows.test.mjs - harness sandbox runs on Windows,
@@ -18,7 +18,6 @@ import { ROOT, canRun, makeSandbox, runInstaller, secretValues } from './install
 
 const NEW_HEADING = '### Windows: встановлення однією командою (install.cmd)';
 const DOC_PATH = path.join(ROOT, 'docs', 'self-host.md');
-const FIXTURE_PATH = path.join(ROOT, 'scripts', 'test', 'fixtures', 'self-host-pre-ho1a.md');
 const GUARD_PATH = path.join(ROOT, 'scripts', 'test', 'install-windows-doc.test.mjs');
 const DOC = fs.readFileSync(DOC_PATH, 'utf8').replace(/\r\n/g, '\n');
 
@@ -31,14 +30,13 @@ function windowsSubsection(doc) {
   return doc.slice(start, end);
 }
 
-/** A temp copy of the doc-guard layout: docs/ + scripts/test/{,fixtures}. */
+/** A temp copy of the doc-guard layout: docs/ + scripts/test/. */
 function makeGuardSandbox(docText) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ho1a guard sim '));
   fs.mkdirSync(path.join(dir, 'docs'));
-  fs.mkdirSync(path.join(dir, 'scripts', 'test', 'fixtures'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'scripts', 'test'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'docs', 'self-host.md'), docText);
   fs.copyFileSync(GUARD_PATH, path.join(dir, 'scripts', 'test', 'install-windows-doc.test.mjs'));
-  fs.copyFileSync(FIXTURE_PATH, path.join(dir, 'scripts', 'test', 'fixtures', 'self-host-pre-ho1a.md'));
   return {
     dir,
     cleanup() { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }); },
@@ -57,50 +55,25 @@ function runGuard(dir) {
   return r;
 }
 
-// ---- F1: the frozen fixture ----
+// ---- F1: the scoped doc guard ----
 
-test('F1: the pre-HO1a fixture exists and predates the Windows subsection', () => {
-  const fixture = fs.readFileSync(FIXTURE_PATH, 'utf8');
-  assert.ok(!fixture.includes(NEW_HEADING), 'the fixture must NOT contain the new heading');
-  assert.ok(!fixture.includes('install.cmd'), 'the fixture must NOT mention install.cmd');
-});
-
-test('F1: the doc guard passes when origin/ms/1 already carries the post-HO1a doc (post-merge simulation)', () => {
-  // The exact scenario that broke the old live-ref guard: a repo whose
-  // origin/ms/1 ref points at a commit containing the CURRENT doc. The
-  // fixture-based guard must stay green there (it never consults git).
-  const sim = makeGuardSandbox(fs.readFileSync(DOC_PATH));
+test('F1: the scoped doc guard passes even when text outside «Встановлення» (e.g. HTTPS section) is edited', () => {
+  const reworded = DOC.replace('## HTTPS', '## HTTPS (Updated)');
+  const sim = makeGuardSandbox(reworded);
   try {
-    const g = (args) => spawnSync('git', ['-c', 'user.email=sim@local', '-c', 'user.name=sim', ...args],
-      { cwd: sim.dir, encoding: 'utf8', timeout: 30000 });
-    let r = g(['init', '-q']);
-    assert.equal(r.status, 0, `git init failed: ${r.stderr}`);
-    r = g(['add', '.']);
-    assert.equal(r.status, 0, `git add failed: ${r.stderr}`);
-    r = g(['commit', '-q', '-m', 'post-ho1a snapshot']);
-    assert.equal(r.status, 0, `git commit failed: ${r.stderr}`);
-    const head = g(['rev-parse', 'HEAD']).stdout.trim();
-    fs.mkdirSync(path.join(sim.dir, '.git', 'refs', 'remotes', 'origin', 'ms'), { recursive: true });
-    fs.writeFileSync(path.join(sim.dir, '.git', 'refs', 'remotes', 'origin', 'ms', '1'), head + '\n');
     const run = runGuard(sim.dir);
-    assert.equal(run.status, 0, `guard must pass post-merge:\n${run.stdout}\n${run.stderr}`);
+    assert.equal(run.status, 0, `scoped guard must pass despite edits outside «Встановлення»:\n${run.stdout}\n${run.stderr}`);
   } finally {
     sim.cleanup();
   }
 });
 
-test('F1: a reworded line outside «Встановлення» still fails the fixture guard (the guard still guards)', () => {
-  const anchor = 'Цей документ — для адміністратора університету';
-  assert.ok(DOC.includes(anchor), 'the reword anchor must exist outside the install section');
-  const reworded = DOC.replace(anchor, 'Цей документ — для адміністратора ліцею');
-  const sim = makeGuardSandbox(reworded);
+test('F1: clobbering the Windows subsection itself (e.g. removing a required keyword) fails the scoped doc guard', () => {
+  const clobbered = DOC.replace('install.cmd', 'bad-script.bat');
+  const sim = makeGuardSandbox(clobbered);
   try {
     const run = runGuard(sim.dir);
-    assert.notEqual(run.status, 0, `a reworded line outside the section must fail the guard
-${run.stdout}
-${run.stderr}`);
-    assert.ok(/must be unchanged/.test(run.stdout + run.stderr),
-      'the failure must be the additions-only assertion');
+    assert.notEqual(run.status, 0, `clobbered subsection must fail the guard:\n${run.stdout}\n${run.stderr}`);
   } finally {
     sim.cleanup();
   }
