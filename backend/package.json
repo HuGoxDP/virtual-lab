@@ -10,6 +10,7 @@
     "test:integration": "node --test --test-concurrency=1 \"test/integration/*.test.js\"",
     "publish:release": "node --env-file-if-exists=../.env scripts/publish-release.mjs",
     "verify:ktx2": "node scripts/verify-ktx2.mjs",
+    "lti:add-registration": "node scripts/lti-add-registration.js",
     "import:assets": "node scripts/import-release-assets.mjs"
   },
   "dependencies": {
