@@ -534,6 +534,8 @@ export async function runCheck({
     const clone = git('git', ['clone', '--quiet', '--depth', '1', '--branch', ref, source, cloneDir]);
     if (clone.status !== 0) {
       step('clone', false, (clone.stderr || clone.error?.message || '').trim().slice(0, 200));
+      // AC-12: an interrupted clone is the interruption, not a clone failure.
+      if (await checkpoint()) return interrupted();
       return { ok: false, steps, failed: 'clone' };
     }
     const sha = git('git', ['-C', cloneDir, 'rev-parse', '--short', 'HEAD']);
@@ -561,10 +563,12 @@ export async function runCheck({
     //    containers behind, and the finally block must tear them down.
     upAttempted = true;
     const up = exec('docker', composeArgs(['up', '-d', '--build'], { https }), { cwd: cloneDir, timeout: 30 * 60_000, env: dockerEnv });
-    if (!step('up', up.status === 0, up.status === 0 ? '' : why(up).slice(0, 300))) {
-      return { ok: false, steps, failed: 'up' };
-    }
+    const upFailed = !step('up', up.status === 0, up.status === 0 ? '' : why(up).slice(0, 300));
+    // AC-12: the abort is judged BEFORE the child's status. A terminal Ctrl+C
+    // reaches the docker child too, so `up` returns non-zero on an interrupt;
+    // judging the status first named 'up' instead of 'interrupted'.
     if (await checkpoint()) return interrupted();
+    if (upFailed) return { ok: false, steps, failed: 'up' };
 
     // 6. Healthy. In https mode the redirect include makes EVERY plain request
     //    answer 301 — /api/health included — so the health wait moves to the
@@ -614,6 +618,7 @@ export async function runCheck({
     const once = exec('docker', composeArgs(['run', '--rm', '-e', 'BACKUP_RUN_ONCE=1', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
     if (once.status !== 0) {
       step('backup', false, why(once));
+      if (await checkpoint()) return interrupted(); // AC-12: the same rule as `up`
       return { ok: false, steps, failed: 'backup' };
     }
     const produced = newestBackup(backupDir);
@@ -645,6 +650,10 @@ export async function runCheck({
     const heldCount = Number((before.stdout || '').trim());
     const removed = psql(`DELETE FROM scenarios WHERE id = '${proofId}'`);
     const restore = exec('docker', composeArgs(['-f', 'docker-compose.restore.yml', 'run', '--rm', '--entrypoint', 'node', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup', 'restore.mjs', path.basename(produced), '--yes'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
+
+    // AC-12: an interrupt during the restore child is the interruption, not a
+    // restore failure - the numbers below would only describe a broken child.
+    if (await checkpoint()) return interrupted();
     const after = restore.status === 0 ? psql(countSql) : { status: 1, stdout: '', stderr: '' };
     const restoredCount = Number((after.stdout || '').trim());
     const postHealth = restore.status === 0 ? judgeHealth(await probe(`${healthBase}/api/health`)) : { ok: false, reason: 'restore failed' };
@@ -670,20 +679,18 @@ export async function runCheck({
       ...(https ? { NODE_TLS_REJECT_UNAUTHORIZED: '0', E2E_INSECURE_TLS: '1' } : {}),
     };
     const install = exec('npm', ['ci', '--silent'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
-    if (!step('e2e deps', install.status === 0, install.status === 0 ? '' : why(install))) {
-      return { ok: false, steps, failed: 'e2e deps' };
-    }
-    if (await checkpoint()) return interrupted();
+    const depsFailed = !step('e2e deps', install.status === 0, install.status === 0 ? '' : why(install));
+    if (await checkpoint()) return interrupted(); // AC-12: an interrupted install is not a failed one
+    if (depsFailed) return { ok: false, steps, failed: 'e2e deps' };
     const browsers = exec('npx', ['playwright', 'install', 'chromium'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
-    if (!step('e2e browser', browsers.status === 0, browsers.status === 0 ? '' : why(browsers))) {
-      return { ok: false, steps, failed: 'e2e browser' };
-    }
-    if (await checkpoint()) return interrupted();
+    const browsersFailed = !step('e2e browser', browsers.status === 0, browsers.status === 0 ? '' : why(browsers));
+    if (await checkpoint()) return interrupted(); // AC-12: an interrupted browser install is not a failed one
+    if (browsersFailed) return { ok: false, steps, failed: 'e2e browser' };
     const smoke = exec('npm', ['run', '--silent', 'smoke'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
     const smokeTail = (smoke.stdout || '').trim().split('\n').slice(-1)[0] ?? '';
-    if (!step('smoke', smoke.status === 0, smoke.status === 0 ? smokeTail.slice(0, 120) : why(smoke))) {
-      return { ok: false, steps, failed: 'smoke' };
-    }
+    const smokeFailed = !step('smoke', smoke.status === 0, smoke.status === 0 ? smokeTail.slice(0, 120) : why(smoke));
+    if (await checkpoint()) return interrupted(); // AC-12: an interrupted smoke is not a failed one
+    if (smokeFailed) return { ok: false, steps, failed: 'smoke' };
 
     return { ok: true, steps };
   } catch (err) {
@@ -712,7 +719,7 @@ export async function runCheck({
       // HO1d D5: --keep wins even on an abort — nothing is torn down, so the
       // admin gets the exact command to clean the kept stack up by hand.
       // Only when `up` was attempted: before that there is no stack.
-      if (upAttempted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, cloneDir: path.join(workdir, 'app') })}`);
+      if (upAttempted && signal?.aborted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, cloneDir: path.join(workdir, 'app') })}`);
     }
   }
 }
