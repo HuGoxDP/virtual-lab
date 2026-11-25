@@ -16,8 +16,9 @@
 // validation walk, not an extractor — a bad header checksum or a truncated
 // final entry is the failure it exists to find.
 
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { gunzipSync } from 'node:zlib';
+import { createReadStream, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createGunzip, gunzipSync } from 'node:zlib';
+import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -322,6 +323,76 @@ export function verifyBackup(dir) {
       result = checkTarGz(file);
     }
     step = gen.next(result);
+  }
+  return step.value;
+}
+
+/**
+ * Streams one gzipped file, feeding every inflated chunk to `onChunk`.
+ * Returns `null` on success, or the read/gzip error message. The gunzip is
+ * drained even when `onChunk` records a tar error, so a later gzip error still
+ * wins — matching `gunzipSync` before `walkTar` in the sync path.
+ *
+ * @param {string} file
+ * @param {{highWaterMark?: number, chunkSize?: number}} opts
+ * @param {(chunk: Buffer) => void} onChunk
+ * @returns {Promise<string|null>} error message or null
+ */
+async function streamGzip(file, opts, onChunk) {
+  const readOpts = opts.highWaterMark === undefined ? undefined : { highWaterMark: opts.highWaterMark };
+  const gzipOpts = opts.chunkSize === undefined ? undefined : { highWaterMark: opts.chunkSize };
+  try {
+    await pipeline(
+      createReadStream(file, readOpts),
+      createGunzip(gzipOpts),
+      async source => { for await (const chunk of source) onChunk(chunk); },
+    );
+    return null;
+  } catch (err) {
+    return err.message;
+  }
+}
+
+/**
+ * Verifies one backup directory through streams: the dump and every volume
+ * archive are decompressed incrementally, never read whole. The result is
+ * deep-equal to `verifyBackup(dir)` on every backup, including failure keys
+ * and check details. Backup content and fs errors resolve as `{ok:false}`.
+ *
+ * @param {string} dir — one backup directory (the timestamped one).
+ * @param {{highWaterMark?: number, chunkSize?: number}} [opts] — read/gunzip
+ *   chunk sizes, test-only; defaults match Node's built-ins.
+ * @returns {Promise<{ok: boolean, checks: Array<{name: string, ok: boolean, detail: string}>, error?: string}>}
+ */
+export async function verifyBackupStream(dir, opts = {}) {
+  const gen = verifySteps(dir);
+  let step = gen.next();
+  while (!step.done) {
+    const { kind, file } = step.value;
+    let result;
+    if (kind === 'dump') {
+      const state = { carry: '\n', bytes: 0, tables: 0 };
+      const onChunk = chunk => {
+        state.bytes += chunk.length;
+        const both = state.carry + chunk.toString('latin1');
+        state.tables += (both.match(/[\n\r]CREATE TABLE /g)?.length ?? 0);
+        state.carry = both.slice(-13);
+      };
+      const err = await streamGzip(file, opts, onChunk);
+      if (err) result = { ok: false, message: err };
+      else result = { ok: true, bytes: state.bytes, tables: state.tables };
+      step = gen.next(result);
+      continue;
+    }
+    if (kind === 'archive') {
+      const walker = new TarWalker();
+      const err = await streamGzip(file, opts, chunk => { walker.push(chunk); });
+      if (err) result = { ok: false, entries: 0, error: `not a valid gzip stream (${err})` };
+      else result = walker.end();
+      step = gen.next(result);
+      continue;
+    }
+    step = gen.next({ ok: false, message: `unknown read request: ${kind}` });
   }
   return step.value;
 }
