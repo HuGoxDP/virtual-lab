@@ -18,8 +18,9 @@
 //     (`--lock <dir>`), because a check that fights the lab stack on 8044 or the
 //     Docker Postgres on 55432 is the failure mode the lock exists for.
 //
-// Every step prints one line: `step=<n> <name> ok=1|0 [detail]`. A failure is
-// named, not thrown as a stack trace, and the exit code is non-zero.
+// Every step prints one line: `  ok   <name>` / `  FAIL <name> — <detail>` /
+// `  --   <name>`. A failed run ends with `selfhost-check: steps=N ok=M RED at <failed>`;
+// green ends with `selfhost-check: steps=N ok=M GREEN`. The exit code mirrors ok.
 
 import { spawnSync } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
@@ -144,15 +145,30 @@ export function generateSecrets() {
  * @param {number} port
  * @returns {Promise<boolean>}
  */
-export function portFree(port) {
-  return new Promise(resolve => {
-    const server = createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => server.close(() => resolve(true)));
-    server.listen(port, '127.0.0.1');
-  });
+export async function portFree(port) {
+  // File: selfhost-check.mjs
+  // D9: free only when all three addresses bind and release. Any real bind
+  // error means busy; EAFNOSUPPORT / EADDRNOTAVAIL on :: means no IPv6.
+  const addresses = ['127.0.0.1', '0.0.0.0', '::'];
+  for (const address of addresses) {
+    const free = await new Promise((resolve) => {
+      const server = createServer();
+      server.once('error', (err) => {
+        if (address === '::' && (err.code === 'EAFNOSUPPORT' || err.code === 'EADDRNOTAVAIL')) resolve(true);
+        else resolve(false);
+      });
+      server.once('listening', () => server.close(() => resolve(true)));
+      // A rejected port (or any synchronous listen failure) is not free.
+      try {
+        server.listen(port, address, { ipv6Only: true });
+      } catch {
+        resolve(false);
+      }
+    });
+    if (!free) return false;
+  }
+  return true;
 }
-
 /**
  * Every variable the compose files interpolate (`${…}` in docker-compose.yml
  * and docker-compose.selfcheck.yml). Compose gives the caller's shell env
@@ -486,6 +502,7 @@ export async function runCheck({
   healthTimeoutMs = 300_000,
   git = runCommand,
   signal = null,
+  removeDir = (dir) => rmSync(dir, { recursive: true, force: true }),
 } = {}) {
   const steps = [];
   const step = (name, ok, detail = '') => {
@@ -516,7 +533,7 @@ export async function runCheck({
   // next commit with their own tests.
   let result;
 
-  /** Runs the old finally body verbatim and returns the (possibly mutated) result. */
+  /** D6: honest teardown — records failures without masking them. */
   function teardown(result) {
     // Teardown whenever `up` was attempted — including a failed or timed-out
     // `up`, which can leave containers with restart:unless-stopped and a
@@ -524,19 +541,35 @@ export async function runCheck({
     // removed: `down` needs the compose files inside it. `--keep` skips both.
     if (workdir && !keep) {
       const cloneDir = path.join(workdir, 'app');
+      let teardownFailed = null;
       if (upAttempted && existsSync(cloneDir)) {
-        for (const cmd of teardownCommands({ https })) exec(cmd[0], cmd.slice(1), { cwd: cloneDir, timeout: 10 * 60_000, env: scrubComposeEnv(process.env) });
+        for (const cmd of teardownCommands({ https })) {
+          const r = exec(cmd[0], cmd.slice(1), { cwd: cloneDir, timeout: 10 * 60_000, env: scrubComposeEnv(process.env) });
+          // D6: docker update is best effort (it legitimately fails for
+          // containers that never started). Only `down` counts as a teardown
+          // failure — it is the command that actually removes the stack.
+          if (r.status !== 0 && cmd.includes('down')) {
+            teardownFailed = `${cmd.slice(1).join(' ')} exited ${r.status}`;
+          }
+        }
       }
       try {
-        rmSync(workdir, { recursive: true, force: true });
-        log('  ok   teardown');
+        removeDir(workdir);
       } catch (err) {
-        // A locked file on Windows (EBUSY) must not mask the named failure:
-        // record it and let the real result stand.
+        // D6: rmSync failure -> record teardown failure; never mask the original.
+        teardownFailed = `could not remove ${workdir}: ${err.message}`;
+      }
+      if (teardownFailed) {
         if (result) {
-          result.steps.push({ name: 'cleanup', ok: false, detail: `could not remove ${workdir}: ${err.message}` });
+          result.steps.push({ name: 'teardown', ok: false, detail: teardownFailed });
+          if (!result.failed) result.failed = 'teardown';
+          result.ok = false;
         }
-        log(`  FAIL cleanup — could not remove ${workdir}: ${err.message}`);
+        log(`  FAIL teardown — ${teardownFailed}`);
+        // D6: print the manual command so the admin knows what to clean up.
+        if (upAttempted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, cloneDir })}`);
+      } else {
+        log('  ok   teardown');
       }
     } else if (workdir) {
       log(`  --   kept ${workdir}`);
@@ -547,7 +580,6 @@ export async function runCheck({
     }
     return result;
   }
-
   try {
     run: {
       // 1. The lock the caller holds (D8). A directory that exists is the contract
@@ -602,6 +634,25 @@ export async function runCheck({
       // gives exported vars precedence, so every docker child runs with them
       // scrubbed (the explicit `-e` flags on `run` still apply).
       const dockerEnv = scrubComposeEnv(process.env);
+      // D7: log the backend tail line by line, replacing both generated secrets.
+      const dbPwd = text.match(/^DB_PASSWORD=(.*)$/m)?.[1];
+      const adminTok = text.match(/^ADMIN_TOKEN=(.*)$/m)?.[1];
+      const redactSecrets = s => {
+        let out = s;
+        if (dbPwd) out = out.split(dbPwd).join('***');
+        if (adminTok) out = out.split(adminTok).join('***');
+        return out;
+      };
+      const dumpRedactedLogs = child => {
+        for (const line of (child.stdout || '').split('\r').join('').split('\n')) {
+          if (!line) continue;
+          log(redactSecrets(line));
+        }
+        for (const line of (child.stderr || '').split('\r').join('').split('\n')) {
+          if (!line) continue;
+          log(redactSecrets(line));
+        }
+      };
 
       // 5. Up. `--build` is the point: a clean clone has no images. `upAttempted`
       //    is set BEFORE the call: even a failed or timed-out `up` can leave
@@ -609,6 +660,11 @@ export async function runCheck({
       upAttempted = true;
       const up = exec('docker', composeArgs(['up', '-d', '--build'], { https }), { cwd: cloneDir, timeout: 30 * 60_000, env: dockerEnv });
       const upFailed = !step('up', up.status === 0, up.status === 0 ? '' : why(up).slice(0, 300));
+      // D7: on a failed up the backend tail is the first evidence available.
+      if (upFailed) {
+        const upLogs = exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https }), { cwd: cloneDir, env: dockerEnv });
+        dumpRedactedLogs(upLogs);
+      }
       // AC-12: the abort is judged BEFORE the child's status. A terminal Ctrl+C
       // reaches the docker child too, so `up` returns non-zero on an interrupt;
       // judging the status first named 'up' instead of 'interrupted'.
@@ -626,7 +682,8 @@ export async function runCheck({
       // step: no logs dump, the named 'interrupted' result and normal teardown.
       if (signal?.aborted) { result = interrupted(); break run; }
       if (!step('healthy', health.ok, `${health.reason} after ${Math.round(health.waitedMs / 1000)}s`)) {
-        exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https }), { cwd: cloneDir, env: dockerEnv });
+        const healthLogs = exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https }), { cwd: cloneDir, env: dockerEnv });
+        dumpRedactedLogs(healthLogs);
         result = { ok: false, steps, failed: 'healthy' }; break run;
       }
       if (await checkpoint()) { result = interrupted(); break run; }
@@ -638,7 +695,8 @@ export async function runCheck({
         const [httpAnswer, httpsAnswer] = await Promise.all([probe(`${baseUrl}/`), probe(`${httpsBaseUrl}/api/health`)]);
         const judged = judgeHttps({ http: { url: `${baseUrl}/`, ...httpAnswer }, https: httpsAnswer }, { httpsBaseUrl });
         if (!step('https', judged.ok, judged.reason)) {
-          exec('docker', composeArgs(['logs', '--tail', '40', 'frontend'], { https }), { cwd: cloneDir, env: dockerEnv });
+          const httpsLogs = exec('docker', composeArgs(['logs', '--tail', '40', 'frontend'], { https }), { cwd: cloneDir, env: dockerEnv });
+          dumpRedactedLogs(httpsLogs);
           result = { ok: false, steps, failed: 'https' }; break run;
         }
         if (await checkpoint()) { result = interrupted(); break run; }
@@ -733,7 +791,23 @@ export async function runCheck({
       if (browsersFailed) { result = { ok: false, steps, failed: 'e2e browser' }; break run; }
       const smoke = exec('npm', ['run', '--silent', 'smoke'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
       const smokeTail = (smoke.stdout || '').trim().split('\n').slice(-1)[0] ?? '';
-      const smokeFailed = !step('smoke', smoke.status === 0, smoke.status === 0 ? smokeTail.slice(0, 120) : why(smoke));
+      // D8: failure detail from stdout+stderr: Playwright list headers, the
+      // N failed summary, then the ✘ lines; never leak a bare exit reason.
+      const smokeDetail = () => {
+        if (smoke.status === 0) return smokeTail.slice(0, 120);
+        const allOutput = (smoke.stdout || '') + '\n' + (smoke.stderr || '');
+        const lines = allOutput.split('\r').join('').split('\n').map(l => l.trim());
+        const failureLines = lines.filter(l => /^\s*\d+\)\s/.test(l));
+        const summaryLines = lines.filter(l => /\d+ failed\b/.test(l));
+        let parts = [...failureLines, ...summaryLines];
+        if (parts.length === 0) parts = lines.filter(l => l.includes('✘'));
+        if (parts.length === 0) return why(smoke);
+        const deduped = [...new Set(parts)];
+        let detail = deduped.join(' | ');
+        if (detail.length > 300) detail = detail.slice(0, 300) + '…';
+        return detail;
+      };
+      const smokeFailed = !step('smoke', smoke.status === 0, smokeDetail());
       if (await checkpoint()) { result = interrupted(); break run; } // AC-12: an interrupted smoke is not a failed one
       if (smokeFailed) { result = { ok: false, steps, failed: 'smoke' }; break run; }
 
