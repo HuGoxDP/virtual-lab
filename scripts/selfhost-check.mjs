@@ -628,6 +628,9 @@ export async function runCheck({
     if (workdir && !keep) {
       const cloneDir = path.join(workdir, 'app');
       let teardownFailed = null;
+      // HO1f3: a failed `down` leaves the stack running, so the clone must
+      // survive — the `cd <workdir>/app` in the manual command needs it.
+      let downFailed = false;
       if (upAttempted && existsSync(cloneDir)) {
         for (const cmd of teardownCommands({ https, editor })) {
           const r = exec(cmd[0], cmd.slice(1), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv ?? scrubComposeEnv(process.env) });
@@ -635,15 +638,19 @@ export async function runCheck({
           // containers that never started). Only `down` counts as a teardown
           // failure — it is the command that actually removes the stack.
           if (r.status !== 0 && cmd.includes('down')) {
+            downFailed = true;
             teardownFailed = `${cmd.slice(1).join(' ')} exited ${r.status}`;
           }
         }
       }
-      try {
-        removeDir(workdir);
-      } catch (err) {
-        // D6: rmSync failure -> record teardown failure; never mask the original.
-        teardownFailed = `could not remove ${workdir}: ${err.message}`;
+      // HO1f3: keep the clone when `down` failed; a green `down` still removes it.
+      if (!downFailed) {
+        try {
+          removeDir(workdir);
+        } catch (err) {
+          // D6: rmSync failure -> record teardown failure; never mask the original.
+          teardownFailed = `could not remove ${workdir}: ${err.message}`;
+        }
       }
       if (teardownFailed) {
         if (result) {
@@ -652,6 +659,9 @@ export async function runCheck({
           result.ok = false;
         }
         log(`  FAIL teardown — ${teardownFailed}`);
+        // HO1f3: say the clone was kept before printing the manual command,
+        // so the admin knows the `cd` target still exists.
+        if (downFailed) log(`  --   kept ${workdir}`);
         // D6: print the manual command so the admin knows what to clean up.
         if (upAttempted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, editor, cloneDir })}`);
       } else {
