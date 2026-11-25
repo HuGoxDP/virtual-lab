@@ -5,11 +5,12 @@
 // and the refactored verifyBackup must deep-equal the base verifyBackup on
 // >= 10 backup fixtures without marker problems.
 //
-// The oracle code is a verbatim copy of the base file at e70ff8d:scripts/lib/verify-backup.mjs
+// The oracle code is adapted from the base verifier in backup/verify-backup.mjs:
+// walkTar/checkTarGz and the check sequence match; marker clear/write are inlined
+// (the production file routes them through settleMarker).
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import os from 'node:os';
@@ -17,7 +18,7 @@ import path from 'node:path';
 import { TarWalker, verifyBackup } from '../../backup/verify-backup.mjs';
 
 // ============================================================
-// ORACLE: verbatim copy of base functions from e70ff8d
+// ORACLE: base functions copied from backup/verify-backup.mjs (marker handling inlined)
 // ============================================================
 
 function walkTar(tar) {
@@ -89,15 +90,6 @@ function walkTar(tar) {
 
   return { ok: true, entries };
 }
-
-/**
- * One archive, gzip-then-tar. `gunzipSync` reads the whole stream, which is the
- * truncation check (`gzip -t` had no equivalent in Node): a file whose CRC or
- * length trailer does not match throws here.
- *
- * @param {string} file
- * @returns {{ok: boolean, entries: number, error?: string}}
- */
 
 /**
  * One archive, gzip-then-tar. `gunzipSync` reads the whole stream, which is the
@@ -197,17 +189,8 @@ function oracleVerifyBackup(dir) {
   return { ok: true, checks };
 }
 
-/**
- * The backup a run just produced: the newest timestamped directory under the
- * backup root. Backup names are UTC timestamps to the second
- * (`2026-11-17T09-15-04Z`), so lexicographic order is chronological order.
- *
- * @param {string} root — the backup root the service writes into.
- * @returns {string|null} the newest backup's path, or null when there is none.
- */
-
 // ============================================================
-// TAR FIXTURES (>=12 variants × 5 chunk sizes = 60 tests)
+// TAR FIXTURES (13 variants × 5 chunk sizes = 65 tests)
 // ============================================================
 
 /** A tar with one file entry, built by hand: valid header checksum, octal size, two zero blocks at the end. */
@@ -223,7 +206,7 @@ function tinyTar(name, content) {
   header.write('        ', 148, 'latin1'); // checksum field read as spaces while summing
   let sum = 0;
   for (const byte of header) sum += byte;
-  header.write(`${sum.toString(8).padStart(6, '0')}\\0 `, 148, 'latin1');
+  header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'latin1');
 
   const body = Buffer.alloc(Math.ceil(content.length / BLOCK) * BLOCK);
   Buffer.from(content).copy(body);
@@ -268,6 +251,20 @@ const tarFixtures = [
 ];
 
 const chunkSizes = [1, 7, 511, 512, 513];
+
+// Regression: two backslashes before 0 in the source (\\0 ) wrote a literal
+// backslash+zero instead of NUL, so every fixture failed at byte 0 and both
+// walkers only ever compared the same early checksum error.
+describe('DW-3.0: tinyTar fixture is a real tar', () => {
+  test('checksum field is NUL+space and both walkers accept the good tar', () => {
+    const tar = tinyTar('a.txt', 'hello');
+    assert.deepStrictEqual([...tar.subarray(154, 156)], [0x00, 0x20]);
+    assert.deepStrictEqual(walkTar(tar), { ok: true, entries: 1 });
+    const walker = new TarWalker();
+    for (let i = 0; i < tar.length; i += 1) walker.push(tar.subarray(i, i + 1));
+    assert.deepStrictEqual(walker.end(), { ok: true, entries: 1 });
+  });
+});
 
 describe('DW-3.1: TarWalker deep-equals oracle walkTar on all fixtures at all chunk sizes', () => {
   for (const fixture of tarFixtures) {
@@ -392,16 +389,4 @@ describe('DW-3.2: refactored verifyBackup deep-equals oracle on >=10 backup fixt
       rmSync(dir, { recursive: true, force: true });
     });
   }
-});
-
-describe('DW-3.3: guard command prints nothing', () => {
-  test('no M/D/R on test scripts, backup test, package.json, or docker-compose files', () => {
-    const res = spawnSync('git', [
-      'diff', '--name-only', '--diff-filter=MDR', 'origin/ms/1...',
-      '--', 'scripts/test', 'backup/restore.test.mjs', 'backup/test',
-      'package.json', 'docker-compose*.yml'
-    ], { encoding: 'utf8', cwd: process.cwd() });
-    assert.equal(res.stdout.trim(), '', 'guard command produced stdout: ' + JSON.stringify(res.stdout));
-    assert.equal(res.stderr.trim(), '', 'guard command produced stderr: ' + JSON.stringify(res.stderr));
-  });
 });

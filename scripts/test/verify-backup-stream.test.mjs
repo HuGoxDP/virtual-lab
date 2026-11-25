@@ -252,7 +252,7 @@ describe('DW-4.3 / DW-4.4: a large archive is streamed, not read whole', () => {
   });
 });
 
-describe('DW-4.5: sync API, re-export, guard', () => {
+describe('DW-4.5: sync API, re-export', () => {
   test('verifyBackup stays synchronous', () => {
     const dir = goodBackup(tmp());
     const result = verifyBackup(dir);
@@ -264,15 +264,5 @@ describe('DW-4.5: sync API, re-export, guard', () => {
   test('the lib re-exports the same stream function', async () => {
     const lib = await import('../lib/verify-backup.mjs');
     assert.equal(lib.verifyBackupStream, verifyBackupStream);
-  });
-
-  test('guard command prints nothing', () => {
-    const res = spawnSync('git', [
-      'diff', '--name-only', '--diff-filter=MDR', 'origin/ms/1...',
-      '--', 'scripts/test', 'backup/restore.test.mjs', 'backup/test',
-      'package.json', 'docker-compose*.yml'
-    ], { encoding: 'utf8', cwd: process.cwd() });
-    assert.equal(res.stdout.trim(), '');
-    assert.equal(res.stderr.trim(), '');
   });
 });

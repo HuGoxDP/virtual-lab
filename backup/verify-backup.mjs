@@ -357,7 +357,9 @@ async function streamGzip(file, opts, onChunk) {
  * Verifies one backup directory through streams: the dump and every volume
  * archive are decompressed incrementally, never read whole. The result is
  * deep-equal to `verifyBackup(dir)` on every backup, including failure keys
- * and check details. Backup content and fs errors resolve as `{ok:false}`.
+ * and check details. Dump/archive read errors resolve as `{ok:false}`; a
+ * `readdirSync(volumes)` failure rejects, as it does in `verifyBackup` —
+ * both paths stay in parity on that case too.
  *
  * @param {string} dir — one backup directory (the timestamped one).
  * @param {{highWaterMark?: number, chunkSize?: number}} [opts] — read/gunzip
