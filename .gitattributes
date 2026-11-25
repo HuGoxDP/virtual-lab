@@ -3,3 +3,6 @@
 
 # Shell scripts run inside Linux containers (nginx entrypoint): a CRLF checkout breaks the shebang.
 *.sh text eol=lf
+
+# Batch files must be CRLF: cmd.exe has known parse bugs with LF-only .cmd files.
+*.cmd text eol=crlf
