@@ -450,7 +450,7 @@ export async function runCli(argv, io = {}) {
     return usage();
   }
 
-  const result = verifyBackup(dir);
+  const result = await verifyBackupStream(dir);
   for (const check of result.checks) out.write(`${check.ok ? 'ok  ' : 'FAIL'} ${check.name}${check.detail ? ` — ${check.detail}` : ''}\n`);
   out.write(result.ok ? `verified: ${dir}\n` : `not verified: ${result.error}\n`);
   return result.ok ? 0 : 1;

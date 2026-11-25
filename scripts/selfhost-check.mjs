@@ -31,7 +31,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { newestBackup, verifyBackup, VERIFIED_MARKER } from './lib/verify-backup.mjs';
+import { newestBackup, verifyBackupStream, VERIFIED_MARKER } from './lib/verify-backup.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..');
@@ -631,7 +631,7 @@ export async function runCheck({
       step('backup', false, `nothing written under ${backupDir}`);
       return { ok: false, steps, failed: 'backup' };
     }
-    const verified = verifyBackup(produced);
+    const verified = await verifyBackupStream(produced);
     if (!step('backup', verified.ok, verified.ok ? `${verified.checks.length} checks, ${path.basename(produced)}` : String(verified.error))) {
       return { ok: false, steps, failed: 'backup' };
     }
