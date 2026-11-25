@@ -1,0 +1,20 @@
+# docker-compose.selfcheck-editor.yml
+#
+# R3: adds the scenario editor to the throwaway stack of
+#   npm run selfhost-check -- --editor [--editor-source <dir>]
+#
+# Loaded AFTER docker-compose.editor.yml (which supplies the service, its nginx
+# mounts and its healthcheck) and BEFORE docker-compose.https.yml. The build
+# context is passed to the docker children by the check script as
+# SELFCHECK_EDITOR_SOURCE — deliberately NOT written to `.env`, so the
+# generated .env keeps the same keys and a plain check never carries an editor
+# variable.
+# A path relative to this file would land inside the temporary clone, where the
+# editor repository does not exist.
+
+services:
+
+  editor:
+    build:
+      context: ${SELFCHECK_EDITOR_SOURCE}
+    container_name: VLCheckEditor

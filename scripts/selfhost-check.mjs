@@ -54,6 +54,11 @@ backup, runs the e2e smoke against it, then tears it down.
   --frontend-port <n>    host port for the check's stack (default: ${DEFAULT_PORT})
   --https                also publish the TLS listener (docker-compose.https.yml,
                          host port 8443), prove the redirect + HSTS, smoke over TLS
+  --editor               also build and start the scenario editor at /editor/ and
+                         prove it answers (docker-compose.editor.yml +
+                         docker-compose.selfcheck-editor.yml)
+  --editor-source <dir>  the editor's build context (Dockerfile in its root);
+                         default: the sibling WebEngineTSEditor checkout
   --lock <dir>           required: a held lock directory, e.g. .workers/locks/vl-db.lock
   --keep                 leave the temp clone and its stack on disk for inspection
   --help                 this text
@@ -81,6 +86,10 @@ export function parseArgs(argv) {
     if (arg === '--help' || arg === '-h') out.help = true;
     else if (arg === '--keep') out.keep = true;
     else if (arg === '--https') out.https = true;
+    // R3: the editor keys appear only when their flag is given — a run without
+    // them must keep parseArgs' output byte-for-byte (including its key set).
+    else if (arg === '--editor') out.editor = true;
+    else if (arg === '--editor-source') { out.editorSource = need(arg, i); i += 1; }
     else if (arg === '--ref') { out.ref = need(arg, i); i += 1; }
     else if (arg === '--source') { out.source = need(arg, i); i += 1; }
     else if (arg === '--frontend-port') {
@@ -184,7 +193,7 @@ export const COMPOSE_INTERPOLATED = [
   'DB_HOST', 'DB_NAME', 'DB_PASSWORD', 'DB_PORT', 'DB_USER', 'FRONTEND_PORT',
   'HTTPS_PORT', 'HTTPS_REDIRECT_PORT',
   'LTI_FRAME_ANCESTORS', 'LTI_PUBLIC_URL', 'LTI_REGISTRATION_SECRET',
-  'MAX_ARCHIVE_ENTRIES', 'MAX_ENTRY_BYTES', 'REQUIRE_HTTPS', 'TRUST_PROXY',
+  'MAX_ARCHIVE_ENTRIES', 'MAX_ENTRY_BYTES', 'REQUIRE_HTTPS', 'SELFCHECK_EDITOR_SOURCE', 'TRUST_PROXY',
 ];
 
 /**
@@ -207,11 +216,17 @@ export function scrubComposeEnv(env) {
  * the base file), so the override is not optional.
  *
  * @param {string[]} args the compose subcommand and its arguments
- * @param {{https?: boolean}} [opts] https mode appends docker-compose.https.yml AFTER base + selfcheck
+ * @param {{https?: boolean, editor?: boolean}} [opts] editor appends
+ *   docker-compose.editor.yml + its selfcheck overlay; https appends
+ *   docker-compose.https.yml AFTER those, so https is always last
  * @returns {string[]}
  */
-export function composeArgs(args, { https = false } = {}) {
-  const files = [...COMPOSE_FILES, ...(https ? ['docker-compose.https.yml'] : [])];
+export function composeArgs(args, { https = false, editor = false } = {}) {
+  const files = [
+    ...COMPOSE_FILES,
+    ...(editor ? ['docker-compose.editor.yml', 'docker-compose.selfcheck-editor.yml'] : []),
+    ...(https ? ['docker-compose.https.yml'] : []),
+  ];
   return ['compose', '-p', PROJECT, ...files.flatMap(file => ['-f', file]), ...args];
 }
 
@@ -221,14 +236,17 @@ export function composeArgs(args, { https = false } = {}) {
  * (the 2026-11-16 lesson), and a resurrected stack then held the volumes the
  * next run needs.
  *
- * @param {{https?: boolean}} [opts] the down must carry the same overlays as the up, or the TLS listener survives
+ * @param {{https?: boolean, editor?: boolean}} [opts] the down must carry the same overlays as the up, or the TLS listener (or editor) survives
  * @returns {string[][]} commands, each ready for `spawnSync(cmd[0], cmd.slice(1))`
  */
-export function teardownCommands({ https = false } = {}) {
-  const containers = ['VLCheckDatabase', 'VLCheckBackend', 'VLCheckFrontend', 'VLCheckBackup'];
+export function teardownCommands({ https = false, editor = false } = {}) {
+  const containers = [
+    'VLCheckDatabase', 'VLCheckBackend', 'VLCheckFrontend', 'VLCheckBackup',
+    ...(editor ? ['VLCheckEditor'] : []),
+  ];
   return [
     ['docker', 'update', '--restart=no', ...containers],
-    ['docker', ...composeArgs(['down', '-v', '--remove-orphans'], { https })],
+    ['docker', ...composeArgs(['down', '-v', '--remove-orphans'], { https, editor })],
   ];
 }
 
@@ -341,16 +359,73 @@ export async function waitHealthy(probe, { baseUrl, timeoutMs = 300_000, sleep =
 }
 
 /**
+ * R3 D13: the per-second wait for the editor's own HTTP answer. The editor is
+ * built inside the throwaway stack, so an empty answer while nginx is still
+ * wiring its `/editor/` location is expected — retry until a 2xx or the window
+ * ends. The attempt cap makes an injected no-op `sleep` deterministic: it
+ * cannot turn a short injected timeout into an unbounded loop.
+ *
+ * @param {(url: string) => Promise<{status: number}>} probe injected, so this is testable without a server
+ * @param {{baseUrl: string, timeoutMs?: number, sleep?: (ms: number) => Promise<void>, log?: (line: string) => void, signal?: AbortSignal}} opts
+ * @returns {Promise<{ok: boolean, reason: string, waitedMs: number}>}
+ */
+async function waitEditor(probe, { baseUrl, timeoutMs = 60_000, sleep = ms => new Promise(r => setTimeout(r, ms)), log = () => {}, signal = null }) {
+  const started = Date.now();
+  const maxAttempts = Math.max(1, Math.ceil(timeoutMs / 1000));
+  let last = 'no answer';
+  for (let attempt = 1; attempt <= maxAttempts && !signal?.aborted; attempt += 1) {
+    try {
+      const answer = await probe(`${baseUrl}/editor/`);
+      const status = Number(answer?.status);
+      last = Number.isInteger(status) ? `http ${status}` : 'no answer';
+      if (status >= 200 && status < 300) return { ok: true, reason: last, waitedMs: Date.now() - started };
+    } catch (err) {
+      // A refused connection is an expected attempt, not a failed check. Keep
+      // the message as the last reason so a timeout can name it.
+      last = err?.message ?? String(err);
+    }
+    log(`  editor wait ${attempt}: no (${last})`);
+    if (signal?.aborted) break;
+    if (attempt === maxAttempts || Date.now() - started + 1000 > timeoutMs) break;
+    await sleepInterruptible(sleep, 1000, signal);
+  }
+  return { ok: false, reason: signal?.aborted ? 'interrupted' : last, waitedMs: Date.now() - started };
+}
+
+/** True only for an existing directory; a race or a bad path is not an exception. */
+function isDirectory(dir) {
+  try { return statSync(dir).isDirectory(); } catch { return false; }
+}
+
+/** True only for an existing regular file (a directory named Dockerfile is not one). */
+function isFile(file) {
+  try { return statSync(file).isFile(); } catch { return false; }
+}
+
+/**
+ * R3 D13: the editor lives in a sibling checkout of the repo being checked.
+ * A URL source has no sibling directories, so fall back to the checkout that
+ * runs the script. An explicitly passed `--editor-source` always wins.
+ *
+ * @param {string} source
+ * @returns {string} absolute build-context path
+ */
+export function defaultEditorSource(source) {
+  const base = isDirectory(source) ? source : REPO_ROOT;
+  return path.resolve(base, '../../WebEngineTSEditor');
+}
+
+/**
  * HO1d D5: the one command that cleans up a kept or abandoned check stack by
  * hand — the same project name and the same `-f` files as the `up` (https
  * overlay last when https), so `down -v` covers exactly what was started.
  * Pure: printed on `--keep` (with the kept dir) and on the second Ctrl+C.
  *
- * @param {{https?: boolean, cloneDir: string}} opts
+ * @param {{https?: boolean, editor?: boolean, cloneDir: string}} opts
  * @returns {string} `cd <cloneDir> && docker compose -p vl-selfcheck -f … down -v --remove-orphans`
  */
-export function manualTeardownCommand({ https = false, cloneDir }) {
-  return `cd ${cloneDir} && docker ${composeArgs(['down', '-v', '--remove-orphans'], { https }).join(' ')}`;
+export function manualTeardownCommand({ https = false, editor = false, cloneDir }) {
+  return `cd ${cloneDir} && docker ${composeArgs(['down', '-v', '--remove-orphans'], { https, editor }).join(' ')}`;
 }
 
 /**
@@ -503,6 +578,10 @@ export async function runCheck({
   git = runCommand,
   signal = null,
   removeDir = (dir) => rmSync(dir, { recursive: true, force: true }),
+  // R3: both default to off/no-key so a run without the new flags is today's run.
+  editor = false,
+  editorSource = null,
+  editorTimeoutMs = 60_000,
 } = {}) {
   const steps = [];
   const step = (name, ok, detail = '') => {
@@ -513,6 +592,10 @@ export async function runCheck({
 
   let workdir = null;
   let upAttempted = false;
+  // R3: the teardown children need the same editor interpolation as `up`, so
+  // the scrubbed docker env lives here rather than inside the `run` block.
+  let dockerEnv = null;
+  let resolvedEditorSource = null;
 
   // HO1d D3: yield to the event loop, then check the abort. The runner stays
   // synchronous (spawnSync); this yield is what lets a Ctrl+C — which reaches
@@ -543,8 +626,8 @@ export async function runCheck({
       const cloneDir = path.join(workdir, 'app');
       let teardownFailed = null;
       if (upAttempted && existsSync(cloneDir)) {
-        for (const cmd of teardownCommands({ https })) {
-          const r = exec(cmd[0], cmd.slice(1), { cwd: cloneDir, timeout: 10 * 60_000, env: scrubComposeEnv(process.env) });
+        for (const cmd of teardownCommands({ https, editor })) {
+          const r = exec(cmd[0], cmd.slice(1), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv ?? scrubComposeEnv(process.env) });
           // D6: docker update is best effort (it legitimately fails for
           // containers that never started). Only `down` counts as a teardown
           // failure — it is the command that actually removes the stack.
@@ -567,7 +650,7 @@ export async function runCheck({
         }
         log(`  FAIL teardown — ${teardownFailed}`);
         // D6: print the manual command so the admin knows what to clean up.
-        if (upAttempted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, cloneDir })}`);
+        if (upAttempted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, editor, cloneDir })}`);
       } else {
         log('  ok   teardown');
       }
@@ -576,7 +659,7 @@ export async function runCheck({
       // HO1d D5: --keep wins even on an abort — nothing is torn down, so the
       // admin gets the exact command to clean the kept stack up by hand.
       // Only when `up` was attempted: before that there is no stack.
-      if (upAttempted && signal?.aborted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, cloneDir: path.join(workdir, 'app') })}`);
+      if (upAttempted && signal?.aborted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, editor, cloneDir: path.join(workdir, 'app') })}`);
     }
     return result;
   }
@@ -600,6 +683,23 @@ export async function runCheck({
       for (const p of ports) if (!await portFree(p)) busy.push(p);
       if (busy.length) { step('port', false, `${busy.join(', ')} in use`); result = { ok: false, steps, failed: 'port' }; break run; }
       step('port', true, https ? `${port}, ${httpsPort} (https)` : String(port));
+
+      // R3 D13: the editor's build context is checked BEFORE the clone. A path
+      // that is not a directory with a Dockerfile is a named refusal, not a
+      // Docker build error minutes into `up`. An explicit --editor-source wins;
+      // otherwise use the sibling of the local source (of this repo when
+      // --source is a URL, which has no siblings).
+      resolvedEditorSource = editor
+        ? (editorSource ? path.resolve(editorSource) : defaultEditorSource(source))
+        : null;
+      if (editor) {
+        const given = editorSource ?? '(default sibling checkout)';
+        if (!isDirectory(resolvedEditorSource) || !isFile(path.join(resolvedEditorSource, 'Dockerfile'))) {
+          step('editor-source', false, `editor source ${given} (resolved ${resolvedEditorSource}) is not a directory containing a Dockerfile`);
+          result = { ok: false, steps, failed: 'editor-source' }; break run;
+        }
+        step('editor-source', true, resolvedEditorSource);
+      }
       // HO1d review item 3: the lock/port probes are async; an abort that lands
       // during them must be observed before the clone begins.
       if (await checkpoint()) { result = interrupted(); break run; }
@@ -633,7 +733,12 @@ export async function runCheck({
       // The caller's shell env must not override the generated .env: compose
       // gives exported vars precedence, so every docker child runs with them
       // scrubbed (the explicit `-e` flags on `run` still apply).
-      const dockerEnv = scrubComposeEnv(process.env);
+      dockerEnv = scrubComposeEnv(process.env);
+      // R3 D11: the editor source is a compose interpolation, NOT a `.env` key —
+      // the env step's 4/5-key count stays as it is. Set it AFTER the scrub and
+      // only in editor mode: a plain run's docker children see no editor var,
+      // even if the caller happened to export one.
+      if (editor) dockerEnv.SELFCHECK_EDITOR_SOURCE = resolvedEditorSource;
       // D7: log the backend tail line by line, replacing both generated secrets.
       const dbPwd = text.match(/^DB_PASSWORD=(.*)$/m)?.[1];
       const adminTok = text.match(/^ADMIN_TOKEN=(.*)$/m)?.[1];
@@ -658,11 +763,11 @@ export async function runCheck({
       //    is set BEFORE the call: even a failed or timed-out `up` can leave
       //    containers behind, and the finally block must tear them down.
       upAttempted = true;
-      const up = exec('docker', composeArgs(['up', '-d', '--build'], { https }), { cwd: cloneDir, timeout: 30 * 60_000, env: dockerEnv });
+      const up = exec('docker', composeArgs(['up', '-d', '--build'], { https, editor }), { cwd: cloneDir, timeout: 30 * 60_000, env: dockerEnv });
       const upFailed = !step('up', up.status === 0, up.status === 0 ? '' : why(up).slice(0, 300));
       // D7: on a failed up the backend tail is the first evidence available.
       if (upFailed) {
-        const upLogs = exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https }), { cwd: cloneDir, env: dockerEnv });
+        const upLogs = exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https, editor }), { cwd: cloneDir, env: dockerEnv });
         dumpRedactedLogs(upLogs);
       }
       // AC-12: the abort is judged BEFORE the child's status. A terminal Ctrl+C
@@ -682,7 +787,7 @@ export async function runCheck({
       // step: no logs dump, the named 'interrupted' result and normal teardown.
       if (signal?.aborted) { result = interrupted(); break run; }
       if (!step('healthy', health.ok, `${health.reason} after ${Math.round(health.waitedMs / 1000)}s`)) {
-        const healthLogs = exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https }), { cwd: cloneDir, env: dockerEnv });
+        const healthLogs = exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https, editor }), { cwd: cloneDir, env: dockerEnv });
         dumpRedactedLogs(healthLogs);
         result = { ok: false, steps, failed: 'healthy' }; break run;
       }
@@ -695,9 +800,23 @@ export async function runCheck({
         const [httpAnswer, httpsAnswer] = await Promise.all([probe(`${baseUrl}/`), probe(`${httpsBaseUrl}/api/health`)]);
         const judged = judgeHttps({ http: { url: `${baseUrl}/`, ...httpAnswer }, https: httpsAnswer }, { httpsBaseUrl });
         if (!step('https', judged.ok, judged.reason)) {
-          const httpsLogs = exec('docker', composeArgs(['logs', '--tail', '40', 'frontend'], { https }), { cwd: cloneDir, env: dockerEnv });
+          const httpsLogs = exec('docker', composeArgs(['logs', '--tail', '40', 'frontend'], { https, editor }), { cwd: cloneDir, env: dockerEnv });
           dumpRedactedLogs(httpsLogs);
           result = { ok: false, steps, failed: 'https' }; break run;
+        }
+        if (await checkpoint()) { result = interrupted(); break run; }
+      }
+
+      // 6c. R3: with the editor in the stack, nginx serves it at /editor/ on the
+      // platform's own port. Prove that (not merely that the container started):
+      // a build that exits 0 but serves a blank page is a failed check. Same
+      // abortable wait as health, a shorter window (60 s) and the last status
+      // becomes the failure detail.
+      if (editor) {
+        const editorAnswer = await waitEditor(probe, { baseUrl: healthBase, timeoutMs: editorTimeoutMs, sleep, log, signal });
+        if (signal?.aborted) { result = interrupted(); break run; }
+        if (!step('editor', editorAnswer.ok, `${editorAnswer.reason} after ${Math.round(editorAnswer.waitedMs / 1000)}s`)) {
+          result = { ok: false, steps, failed: 'editor' }; break run;
         }
         if (await checkpoint()) { result = interrupted(); break run; }
       }
@@ -708,7 +827,7 @@ export async function runCheck({
       //    the smoke never sees it; the backup snapshots it, the restore step
       //    deletes it and must bring it back.
       const backupDir = path.join(workdir, 'backups');
-      const psql = sql => exec('docker', composeArgs(['exec', '-T', 'database', 'psql', '-U', dbUser, '-d', dbName, '-tAc', sql], { https }), { cwd: cloneDir, timeout: 60_000, env: dockerEnv });
+      const psql = sql => exec('docker', composeArgs(['exec', '-T', 'database', 'psql', '-U', dbUser, '-d', dbName, '-tAc', sql], { https, editor }), { cwd: cloneDir, timeout: 60_000, env: dockerEnv });
       const seed = psql(`INSERT INTO scenarios (id, title, category, category_label, status) VALUES ('vl-selfcheck-restore-proof', 'restore proof', 'physics', 'Фізика', 'draft')`);
       if (seed.status !== 0) {
         step('restore', false, `seed failed: ${why(seed)}`);
@@ -718,7 +837,7 @@ export async function runCheck({
       // explicit -e stays (pinned by compose-backup-dir.test.mjs and, for the
       // restore child, selfhost-restore.test.mjs): the check clones any --ref,
       // including pre-P5c code where the env still interpolated BACKUP_DIR.
-      const once = exec('docker', composeArgs(['run', '--rm', '-e', 'BACKUP_RUN_ONCE=1', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
+      const once = exec('docker', composeArgs(['run', '--rm', '-e', 'BACKUP_RUN_ONCE=1', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup'], { https, editor }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
       if (once.status !== 0) {
         step('backup', false, why(once));
         if (await checkpoint()) { result = interrupted(); break run; } // AC-12: the same rule as `up`
@@ -752,7 +871,7 @@ export async function runCheck({
       const before = psql(countSql);
       const heldCount = Number((before.stdout || '').trim());
       const removed = psql(`DELETE FROM scenarios WHERE id = '${proofId}'`);
-      const restore = exec('docker', composeArgs(['-f', 'docker-compose.restore.yml', 'run', '--rm', '--entrypoint', 'node', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup', 'restore.mjs', path.basename(produced), '--yes'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
+      const restore = exec('docker', composeArgs(['-f', 'docker-compose.restore.yml', 'run', '--rm', '--entrypoint', 'node', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup', 'restore.mjs', path.basename(produced), '--yes'], { https, editor }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
 
       // AC-12: an interrupt during the restore child is the interruption, not a
       // restore failure - the numbers below would only describe a broken child.
@@ -842,10 +961,11 @@ if (isMain) {
   const controller = new AbortController();
   let teardownTarget = null;
   installSignalHandlers(process, controller, {
-    command: () => (teardownTarget ? manualTeardownCommand({ https: opts.https, cloneDir: teardownTarget.cloneDir }) : null),
+    command: () => (teardownTarget ? manualTeardownCommand({ https: opts.https, editor: opts.editor, cloneDir: teardownTarget.cloneDir }) : null),
   });
   const result = await runCheck({
     ref: opts.ref, source: opts.source ?? REPO_ROOT, port: opts.port, https: opts.https, lock: opts.lock, keep: opts.keep,
+    editor: opts.editor, editorSource: opts.editorSource,
     signal: controller.signal,
     // The clone dir becomes known before `up` runs (the first child that can
     // leave containers behind), so a second Ctrl+C from then on can name the
