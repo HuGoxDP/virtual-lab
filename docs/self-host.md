@@ -752,7 +752,7 @@ docker compose down -v            # ПОВНЕ скидання: томи й у�
 прибирає. Жодного дотику до вашого робочого стека.
 
 ```bash
-npm run selfhost-check -- --lock <каталог-замок> [--ref main] [--frontend-port 8051] [--https]
+npm run selfhost-check -- --lock <каталог-замок> [--ref main] [--frontend-port 8051] [--https] [--editor [--editor-source <dir>]]
 ```
 
 - `--lock` обов'язковий: каталог, який ви тримаєте як замок, щоб перевірка не
@@ -770,6 +770,26 @@ npm run selfhost-check -- --lock <каталог-замок> [--ref main] [--fro
   навіть після помилки.
 - Кожен крок друкує один рядок `ok`/`FAIL`; підсумок — `GREEN` або `RED at <крок>`.
 
+- `--editor` додає до тимчасового стеку редактор сценаріїв: до переліку `-f`
+  входять `docker-compose.editor.yml` і `docker-compose.selfcheck-editor.yml`,
+  а контейнер редактора перейменовано на `VLCheckEditor` (шлях збірки береться
+  з `SELFCHECK_EDITOR_SOURCE`, який перевірка передає в docker-процеси, а не
+  пише у `.env`). Після кроку `healthy` (а з `--https` — після кроку `https`)
+  перевірка до 60 с опитує `/editor/` раз на секунду, доки не отримає 2xx;
+  інакше підсумок `RED at editor` із останнім статусом, і стек усе одно
+  прибирається. `--editor` можна поєднувати з `--https`: https-оверлей лишається
+  останнім у кожному compose-виклику.
+- `--editor-source <dir>` — шлях до checkout-у WebEngineTSEditor. Ще до
+  клонування перевірка вимагає, щоб це був каталог із файлом `Dockerfile`;
+  інакше підсумок `RED at editor-source`, у деталях — перевірений шлях, нічого
+  не клонується й стек не стартує. Прапорець без значення відхиляється так само,
+  як і інші прапорці зі значенням. За замовчуванням використовується
+  `<source>/../../WebEngineTSEditor`, коли `--source` — локальний каталог, інакше
+  `../../WebEngineTSEditor` від кореня репозиторію самого скрипта. Якщо у вас
+  інше компонування каталогів, передайте `--editor-source` явно.
+  Вибір папки у веб-редакторі (рідний діалог ОС) — **ручна** перевірка (AC-16):
+  скрипт її не автоматизує.
+
 **Ctrl+C перериває перевірку безпечно.** Перший Ctrl+C (SIGINT/SIGTERM, на
 Windows також Ctrl+Break) зупиняє перевірку між кроками — навіть посеред
 очікування healthy — і команда прибирає свій стек звичайним чином: результат
@@ -786,6 +806,10 @@ Windows також Ctrl+Break) зупиняє перевірку між крок
 # без HTTPS-оверлея:
 cd <папка> && docker compose -p vl-selfcheck -f docker-compose.yml -f docker-compose.selfcheck.yml down -v --remove-orphans
 ```
+
+За `--editor` додайте до наведеної ручної команди ще
+`-f docker-compose.editor.yml -f docker-compose.selfcheck-editor.yml` (перед
+`-f docker-compose.https.yml`, якщо стек піднято з `--https`).
 
 Потрібні Docker і Node.js 22+. Команда сама ставить e2e-залежності, а Chromium
 завантажується у ваш особистий кеш Playwright (не в тимчасовий клон); на Linux
