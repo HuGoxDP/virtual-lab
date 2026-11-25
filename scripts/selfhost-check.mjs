@@ -168,8 +168,11 @@ export async function portFree(port) {
       });
       server.once('listening', () => server.close(() => resolve(true)));
       // A rejected port (or any synchronous listen failure) is not free.
+      // Use the single-options form: in listen(port, host, options) the third
+      // positional argument is `backlog`, so ipv6Only would be ignored and the
+      // '::' probe could bind alongside an IPv6-only holder on the same port.
       try {
-        server.listen(port, address, { ipv6Only: true });
+        server.listen({ port, host: address, ipv6Only: true });
       } catch {
         resolve(false);
       }
