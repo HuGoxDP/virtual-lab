@@ -16,95 +16,149 @@
 // validation walk, not an extractor — a bad header checksum or a truncated
 // final entry is the failure it exists to find.
 
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { gunzipSync } from 'node:zlib';
+import { createReadStream, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createGunzip, gunzipSync } from 'node:zlib';
+import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The marker `restore.mjs` refuses to work without. Written last, on success only. */
 export const VERIFIED_MARKER = 'verified';
 
+const BLOCK = 512;
+const NO_BYTES = Buffer.alloc(0);
+
+/**
+ * Incremental tar header walk: the same validation a whole-buffer walk does,
+ * with at most one partial header block (never more than BLOCK bytes) held in
+ * memory. Entry bodies are skipped by count, not stored. Errors that name the
+ * total archive length (a short file, a truncated entry, a partial trailing
+ * block) are decided in `end()`; every other error stops the walk on the chunk
+ * that reveals it, and later pushes are ignored.
+ *
+ * Exported so the parity tests can drive it at every chunk boundary; it is not
+ * a documented API. `walkTar(buf)` is push-the-whole-buffer + `end()`.
+ */
+export class TarWalker {
+  constructor() {
+    this.carry = NO_BYTES;   // bytes of the header block assembled so far (< BLOCK)
+    this.total = 0;          // every byte pushed, including bytes after an error
+    this.cursor = 0;         // absolute position just past consumed headers/bodies
+    this.skip = 0;           // entry body + padding bytes still to skip
+    this.entries = 0;
+    this.zeroBlocks = 0;
+    this.error = null;
+    this.lastEntry = null;   // the entry whose tail can still be truncated
+  }
+
+  /** @param {Buffer} chunk */
+  push(chunk) {
+    this.total += chunk.length;
+    if (this.error) return;
+
+    let pos = 0;
+    while (pos < chunk.length) {
+      if (this.skip > 0) {
+        const taken = Math.min(this.skip, chunk.length - pos);
+        this.skip -= taken;
+        this.cursor += taken;
+        pos += taken;
+        continue;
+      }
+
+      const taken = Math.min(BLOCK - this.carry.length, chunk.length - pos);
+      const part = chunk.subarray(pos, pos + taken);
+      this.carry = this.carry.length === 0 ? Buffer.from(part) : Buffer.concat([this.carry, part]);
+      pos += taken;
+      if (this.carry.length < BLOCK) break;
+
+      const header = this.carry;
+      const offset = this.cursor;
+      this.carry = NO_BYTES;
+
+      if (header.every(byte => byte === 0)) {
+        // One zero block marks the end; a file that ends on the first one is
+        // still a readable tar.
+        this.zeroBlocks += 1;
+        this.cursor += BLOCK;
+        continue;
+      }
+      if (this.zeroBlocks > 0) {
+        this.error = `content after the end-of-archive marker at byte ${offset}`;
+        return;
+      }
+
+      // The checksum is octal, with its own field read as spaces.
+      let stored = 0;
+      for (let i = 148; i < 156; i += 1) {
+        const digit = header[i];
+        if (digit < 0x30 || digit > 0x37) {
+          if (digit === 0x20 || digit === 0x00) continue; // leading space / NUL padding
+          this.error = `checksum field is not octal at byte ${offset}`;
+          return;
+        }
+        stored = stored * 8 + (digit - 0x30);
+      }
+      let sum = 0;
+      for (let i = 0; i < BLOCK; i += 1) sum += (i >= 148 && i < 156) ? 0x20 : header[i];
+      if (sum !== stored) {
+        this.error = `header checksum mismatch at byte ${offset} (${sum} != ${stored})`;
+        return;
+      }
+
+      // The size is octal in 12 bytes; NUL and space terminate it.
+      const sizeField = header.subarray(124, 136).toString('latin1').replace(/[\0 ]+$/, '');
+      if (!/^[0-7]*$/.test(sizeField)) {
+        this.error = `size field is not octal at byte ${offset}`;
+        return;
+      }
+      const size = parseInt(sizeField || '0', 8);
+      if (!Number.isFinite(size)) {
+        this.error = `size field is not a number at byte ${offset}`;
+        return;
+      }
+
+      const padded = Math.ceil(size / BLOCK) * BLOCK;
+      this.cursor += BLOCK;
+      this.entries += 1;
+      this.lastEntry = { at: offset, end: this.cursor + padded, size };
+      this.skip = padded;
+    }
+  }
+
+  /** @returns {{ok: boolean, entries: number, error?: string}} */
+  end() {
+    if (this.error) return { ok: false, entries: this.entries, error: this.error };
+
+    // A whole-buffer walk fails at the first entry whose promised body is not
+    // there. More chunks may still arrive while streaming, so the decision is
+    // made here, against the final length — and wins over a partial tail.
+    const last = this.lastEntry;
+    if (last && this.total < last.end) {
+      return { ok: false, entries: this.entries, error: `truncated tail: entry at byte ${last.at} promises ${last.size} bytes, archive ends at ${this.total}` };
+    }
+    if (this.total < BLOCK) {
+      return { ok: false, entries: 0, error: `shorter than one header block (${this.total} bytes)` };
+    }
+    // A readable tar ends on a block boundary; a partial block is a cut header
+    // or padding, even when every one of its bytes is zero.
+    if (this.carry.length > 0) {
+      return { ok: false, entries: this.entries, error: `truncated tail: ${this.carry.length} trailing byte(s) after the last full block (archive ends mid-block at ${this.total})` };
+    }
+    return { ok: true, entries: this.entries };
+  }
+}
+
 /**
  * Walks a tar's headers from a buffer and proves it parses end to end.
- *
- * A tar file is a sequence of 512-byte entries: a header whose checksum
- * matches, then the entry's bytes rounded up to a 512 boundary. The archive
- * ends at an all-zero block. Two things count as unreadable here — a header
- * whose stored checksum does not match (a file that was truncated mid-write and
- * re-assembled), and an archive whose last entry promises more bytes than the
- * buffer holds (a truncated tail).
  *
  * @param {Buffer} tar
  * @returns {{ok: boolean, entries: number, error?: string}}
  */
 function walkTar(tar) {
-  const BLOCK = 512;
-  if (tar.length < BLOCK) return { ok: false, entries: 0, error: `shorter than one header block (${tar.length} bytes)` };
-
-  let offset = 0;
-  let entries = 0;
-  let zeroBlocks = 0;
-
-  while (offset + BLOCK <= tar.length) {
-    const header = tar.subarray(offset, offset + BLOCK);
-    if (header.every(byte => byte === 0)) {
-      // The end-of-archive marker: one zero block here, another right after it.
-      // A file that ends on the first one is still a readable tar.
-      zeroBlocks += 1;
-      offset += BLOCK;
-      continue;
-    }
-    if (zeroBlocks > 0) return { ok: false, entries, error: `content after the end-of-archive marker at byte ${offset}` };
-
-    // The checksum is octal, like every other numeric header field: the sum of
-    // every header byte with the checksum field itself read as spaces — the one
-    // field the header cannot validate directly. Parsing it as decimal accepts
-    // only checksums whose octal digits happen to be < 8 and rejects every real
-    // tar whose sum carries an 8 or 9 (the first fixture caught it).
-    let stored = 0;
-    for (let i = 148; i < 156; i += 1) {
-      const digit = header[i];
-      if (digit < 0x30 || digit > 0x37) {
-        if (digit === 0x20 || digit === 0x00) continue; // leading space / NUL padding
-        return { ok: false, entries, error: `checksum field is not octal at byte ${offset}` };
-      }
-      stored = stored * 8 + (digit - 0x30);
-    }
-    let sum = 0;
-    for (let i = 0; i < BLOCK; i += 1) sum += (i >= 148 && i < 156) ? 0x20 : header[i];
-
-    if (sum !== stored) {
-      return { ok: false, entries, error: `header checksum mismatch at byte ${offset} (${sum} != ${stored})` };
-    }
-
-    // The size is octal in 12 bytes; NUL and space terminate it.
-    const sizeField = header.subarray(124, 136).toString('latin1').replace(/[\0 ]+$/, '');
-    if (!/^[0-7]*$/.test(sizeField)) {
-      return { ok: false, entries, error: `size field is not octal at byte ${offset}` };
-    }
-    const size = parseInt(sizeField || '0', 8);
-    if (!Number.isFinite(size)) return { ok: false, entries, error: `size field is not a number at byte ${offset}` };
-
-    offset += BLOCK + Math.ceil(size / BLOCK) * BLOCK;
-    entries += 1;
-    // An entry that promises more bytes than the buffer holds is a truncated
-    // tail — the failure this walk exists to find. A tar that ends exactly at
-    // the last entry's bytes (no zero blocks) is still readable.
-    if (offset > tar.length) {
-      return { ok: false, entries, error: `truncated tail: entry at byte ${offset - BLOCK - Math.ceil(size / BLOCK) * BLOCK} promises ${size} bytes, archive ends at ${tar.length}` };
-    }
-  }
-
-  // Anything left over is less than one block: a header or a padding block cut
-  // mid-write. A readable tar ends on a block boundary — complete zero-block
-  // padding is consumed by the loop above, so a partial remainder (even an
-  // all-zero one) is a truncated tail, not padding.
-  const remainder = tar.length - offset;
-  if (remainder > 0) {
-    return { ok: false, entries, error: `truncated tail: ${remainder} trailing byte(s) after the last full block (archive ends mid-block at ${tar.length})` };
-  }
-
-  return { ok: true, entries };
+  const walker = new TarWalker();
+  walker.push(tar);
+  return walker.end();
 }
 
 /**
@@ -150,13 +204,16 @@ function settleMarker(dir, action) {
 }
 
 /**
- * Verifies one backup directory and — only when every check passes — writes the
- * `verified` marker `restore.mjs` requires.
+ * Internal generator that yields the sequence of read requests for a backup
+ * directory. The driver receives results and returns the next request, or
+ * finishes with the final result.
  *
- * @param {string} dir — one backup directory (the timestamped one).
- * @returns {{ok: boolean, checks: Array<{name: string, ok: boolean, detail: string}>, error?: string}}
+ * Yields: { kind: 'dump', file } | { kind: 'archive', file }
+ * Receives: { ok: true, bytes, tables } | { ok: false, message } for dump
+ *           { ok, entries, error? } for archive
+ * Returns: { ok, checks, error? }
  */
-export function verifyBackup(dir) {
+function* verifySteps(dir) {
   const checks = [];
   const done = (name, ok, detail) => { checks.push({ name, ok, detail }); return ok; };
 
@@ -174,17 +231,15 @@ export function verifyBackup(dir) {
   }
   done('db.sql.gz', true, 'present');
 
-  let sql;
-  try {
-    sql = gunzipSync(readFileSync(dump));
-  } catch (err) {
-    done('dump gunzips', false, err.message);
-    return { ok: false, checks, error: `db.sql.gz is not a valid gzip stream (${err.message})` };
+  // Yield dump request
+  const dumpResult = yield { kind: 'dump', file: dump };
+  if (!dumpResult.ok) {
+    done('dump gunzips', false, dumpResult.message);
+    return { ok: false, checks, error: `db.sql.gz is not a valid gzip stream (${dumpResult.message})` };
   }
-  done('dump gunzips', true, `${sql.length} bytes of SQL`);
+  done('dump gunzips', true, `${dumpResult.bytes} bytes of SQL`);
 
-  const tables = sql.toString('latin1').match(/^CREATE TABLE /gm)?.length ?? 0;
-  if (!done('dump names tables', tables > 0, `${tables} CREATE TABLE statements`)) {
+  if (!done('dump names tables', dumpResult.tables > 0, `${dumpResult.tables} CREATE TABLE statements`)) {
     return { ok: false, checks, error: 'db.sql.gz holds no tables' };
   }
 
@@ -227,8 +282,8 @@ export function verifyBackup(dir) {
     return { ok: false, checks, error: 'volumes/ holds no archives' };
   }
   for (const archive of archives) {
-    const walk = checkTarGz(path.join(volumes, archive));
-    if (!done(`archive ${archive}`, walk.ok, walk.ok ? `${walk.entries} entries` : walk.error ?? 'unreadable')) {
+    const archiveResult = yield { kind: 'archive', file: path.join(volumes, archive) };
+    if (!done(`archive ${archive}`, archiveResult.ok, archiveResult.ok ? `${archiveResult.entries} entries` : archiveResult.error ?? 'unreadable')) {
       return { ok: false, checks, error: `volume archive ${archive} is unreadable` };
     }
   }
@@ -238,6 +293,110 @@ export function verifyBackup(dir) {
   const written = settleMarker(dir, 'write');
   if (written) return { ok: false, checks: [...checks, written.check], error: written.error };
   return { ok: true, checks };
+}
+
+/**
+ * Verifies one backup directory and — only when every check passes — writes the
+ * `verified` marker `restore.mjs` requires.
+ *
+ * @param {string} dir — one backup directory (the timestamped one).
+ * @returns {{ok: boolean, checks: Array<{name: string, ok: boolean, detail: string}>, error?: string}}
+ */
+export function verifyBackup(dir) {
+  const gen = verifySteps(dir);
+  let step = gen.next();
+  while (!step.done) {
+    const { kind, file } = step.value;
+    let result;
+    if (kind === 'dump') {
+      let sql;
+      try {
+        sql = gunzipSync(readFileSync(file));
+      } catch (err) {
+        result = { ok: false, message: err.message };
+        step = gen.next(result);
+        continue;
+      }
+      const tables = sql.toString('latin1').match(/^CREATE TABLE /gm)?.length ?? 0;
+      result = { ok: true, bytes: sql.length, tables };
+    } else if (kind === 'archive') {
+      result = checkTarGz(file);
+    }
+    step = gen.next(result);
+  }
+  return step.value;
+}
+
+/**
+ * Streams one gzipped file, feeding every inflated chunk to `onChunk`.
+ * Returns `null` on success, or the read/gzip error message. The gunzip is
+ * drained even when `onChunk` records a tar error, so a later gzip error still
+ * wins — matching `gunzipSync` before `walkTar` in the sync path.
+ *
+ * @param {string} file
+ * @param {{highWaterMark?: number, chunkSize?: number}} opts
+ * @param {(chunk: Buffer) => void} onChunk
+ * @returns {Promise<string|null>} error message or null
+ */
+async function streamGzip(file, opts, onChunk) {
+  const readOpts = opts.highWaterMark === undefined ? undefined : { highWaterMark: opts.highWaterMark };
+  const gzipOpts = opts.chunkSize === undefined ? undefined : { highWaterMark: opts.chunkSize };
+  try {
+    await pipeline(
+      createReadStream(file, readOpts),
+      createGunzip(gzipOpts),
+      async source => { for await (const chunk of source) onChunk(chunk); },
+    );
+    return null;
+  } catch (err) {
+    return err.message;
+  }
+}
+
+/**
+ * Verifies one backup directory through streams: the dump and every volume
+ * archive are decompressed incrementally, never read whole. The result is
+ * deep-equal to `verifyBackup(dir)` on every backup, including failure keys
+ * and check details. Dump/archive read errors resolve as `{ok:false}`; a
+ * `readdirSync(volumes)` failure rejects, as it does in `verifyBackup` —
+ * both paths stay in parity on that case too.
+ *
+ * @param {string} dir — one backup directory (the timestamped one).
+ * @param {{highWaterMark?: number, chunkSize?: number}} [opts] — read/gunzip
+ *   chunk sizes, test-only; defaults match Node's built-ins.
+ * @returns {Promise<{ok: boolean, checks: Array<{name: string, ok: boolean, detail: string}>, error?: string}>}
+ */
+export async function verifyBackupStream(dir, opts = {}) {
+  const gen = verifySteps(dir);
+  let step = gen.next();
+  while (!step.done) {
+    const { kind, file } = step.value;
+    let result;
+    if (kind === 'dump') {
+      const state = { carry: '\n', bytes: 0, tables: 0 };
+      const onChunk = chunk => {
+        state.bytes += chunk.length;
+        const both = state.carry + chunk.toString('latin1');
+        state.tables += (both.match(/[\n\r]CREATE TABLE /g)?.length ?? 0);
+        state.carry = both.slice(-13);
+      };
+      const err = await streamGzip(file, opts, onChunk);
+      if (err) result = { ok: false, message: err };
+      else result = { ok: true, bytes: state.bytes, tables: state.tables };
+      step = gen.next(result);
+      continue;
+    }
+    if (kind === 'archive') {
+      const walker = new TarWalker();
+      const err = await streamGzip(file, opts, chunk => { walker.push(chunk); });
+      if (err) result = { ok: false, entries: 0, error: `not a valid gzip stream (${err})` };
+      else result = walker.end();
+      step = gen.next(result);
+      continue;
+    }
+    step = gen.next({ ok: false, message: `unknown read request: ${kind}` });
+  }
+  return step.value;
 }
 
 /**
@@ -293,7 +452,7 @@ export async function runCli(argv, io = {}) {
     return usage();
   }
 
-  const result = verifyBackup(dir);
+  const result = await verifyBackupStream(dir);
   for (const check of result.checks) out.write(`${check.ok ? 'ok  ' : 'FAIL'} ${check.name}${check.detail ? ` — ${check.detail}` : ''}\n`);
   out.write(result.ok ? `verified: ${dir}\n` : `not verified: ${result.error}\n`);
   return result.ok ? 0 : 1;
