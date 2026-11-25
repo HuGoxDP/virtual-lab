@@ -787,5 +787,6 @@ Windows також Ctrl+Break) зупиняє перевірку між крок
 cd <папка> && docker compose -p vl-selfcheck -f docker-compose.yml -f docker-compose.selfcheck.yml down -v --remove-orphans
 ```
 
-Потрібні Docker і Node.js 22+; e2e-залежності та Chromium команда ставить сама
-в тимчасовий клон.
+Потрібні Docker і Node.js 22+. Команда сама ставить e2e-залежності, а Chromium
+завантажується у ваш особистий кеш Playwright (не в тимчасовий клон); на Linux
+його системні бібліотеки можна встановити заздалегідь: `sudo npx playwright install-deps chromium`.
