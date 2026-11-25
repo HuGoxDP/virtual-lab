@@ -509,198 +509,15 @@ export async function runCheck({
   };
   const interrupted = () => ({ ok: false, steps, failed: 'interrupted' });
 
-  try {
-    // 1. The lock the caller holds (D8). A directory that exists is the contract
-    //    `wk.sh lock vl-db` provides; its content is not this script's business.
-    //    A regular file is not a lock: `wk.sh lock` creates a directory.
-    if (!lock) return { ok: false, steps, failed: 'lock' };
-    let lockIsDir = false;
-    try { lockIsDir = statSync(lock).isDirectory(); } catch { lockIsDir = false; }
-    if (!lockIsDir) { step('lock', false, `not a lock directory: ${lock}`); return { ok: false, steps, failed: 'lock' }; }
-    step('lock', true, lock);
+  // HO1f D6 restructure (phase 3, first commit): try/catch computes `result`
+  // only; `finally` delegates to `teardown(result)`, which performs exactly
+  // the old teardown commands, rmSync and logging, and returns the final
+  // result. No behaviour changes here — the red/green semantics land in the
+  // next commit with their own tests.
+  let result;
 
-    // 2. The ports have to be free before Docker takes them: a busy one produces
-    //    a bind error deep inside a container start, minutes later. In https
-    //    mode the TLS listener's port (the overlay's own default 8443) is
-    //    checked too, before anything is cloned.
-    const ports = [port, ...(https ? [httpsPort] : [])];
-    const busy = [];
-    for (const p of ports) if (!await portFree(p)) busy.push(p);
-    if (busy.length) { step('port', false, `${busy.join(', ')} in use`); return { ok: false, steps, failed: 'port' }; }
-    step('port', true, https ? `${port}, ${httpsPort} (https)` : String(port));
-    // HO1d review item 3: the lock/port probes are async; an abort that lands
-    // during them must be observed before the clone begins.
-    if (await checkpoint()) return interrupted();
-
-    // 3. The clone: the default branch as this checkout has it (D5), so the check
-    //    proves committed state and never depends on the network being up.
-    workdir = mkdtempSync(path.join(tmpRoot, 'vl-selfcheck-'));
-    const cloneDir = path.join(workdir, 'app');
-    const clone = git('git', ['clone', '--quiet', '--depth', '1', '--branch', ref, source, cloneDir]);
-    if (clone.status !== 0) {
-      step('clone', false, (clone.stderr || clone.error?.message || '').trim().slice(0, 200));
-      // AC-12: an interrupted clone is the interruption, not a clone failure.
-      if (await checkpoint()) return interrupted();
-      return { ok: false, steps, failed: 'clone' };
-    }
-    const sha = git('git', ['-C', cloneDir, 'rev-parse', '--short', 'HEAD']);
-    step('clone', true, `${ref}@${(sha.stdout || '').trim()}`);
-    if (await checkpoint()) return interrupted();
-
-    // 4. The `.env` an admin writes by hand, written here with generated secrets.
-    const { text, changed } = buildEnv(readFileSync(path.join(cloneDir, '.env.example'), 'utf8'), {
-      ...generateSecrets(), frontendPort: port, backupDir: path.join(workdir, 'backups'),
-      ...(https ? { httpsPort } : {}),
-    });
-    writeFileSync(path.join(cloneDir, '.env'), text);
-    const dbUser = text.match(/^DB_USER=(.*)$/m)?.[1] ?? 'lab_user';
-    const dbName = text.match(/^DB_NAME=(.*)$/m)?.[1] ?? 'virtual_lab';
-    step('env', changed.length === (https ? 5 : 4), `replaced ${changed.join(', ')}`);
-    if (await checkpoint()) return interrupted();
-
-    // The caller's shell env must not override the generated .env: compose
-    // gives exported vars precedence, so every docker child runs with them
-    // scrubbed (the explicit `-e` flags on `run` still apply).
-    const dockerEnv = scrubComposeEnv(process.env);
-
-    // 5. Up. `--build` is the point: a clean clone has no images. `upAttempted`
-    //    is set BEFORE the call: even a failed or timed-out `up` can leave
-    //    containers behind, and the finally block must tear them down.
-    upAttempted = true;
-    const up = exec('docker', composeArgs(['up', '-d', '--build'], { https }), { cwd: cloneDir, timeout: 30 * 60_000, env: dockerEnv });
-    const upFailed = !step('up', up.status === 0, up.status === 0 ? '' : why(up).slice(0, 300));
-    // AC-12: the abort is judged BEFORE the child's status. A terminal Ctrl+C
-    // reaches the docker child too, so `up` returns non-zero on an interrupt;
-    // judging the status first named 'up' instead of 'interrupted'.
-    if (await checkpoint()) return interrupted();
-    if (upFailed) return { ok: false, steps, failed: 'up' };
-
-    // 6. Healthy. In https mode the redirect include makes EVERY plain request
-    //    answer 301 — /api/health included — so the health wait moves to the
-    //    TLS base (the self-signed cert is accepted by the probe).
-    const baseUrl = `http://127.0.0.1:${port}`;
-    const httpsBaseUrl = `https://127.0.0.1:${httpsPort}`;
-    const healthBase = https ? httpsBaseUrl : baseUrl;
-    const health = await waitHealthy(probe, { baseUrl: healthBase, timeoutMs: healthTimeoutMs, sleep, log, signal });
-    // An aborted health wait is the interruption itself, not a failed healthy
-    // step: no logs dump, the named 'interrupted' result and normal teardown.
-    if (signal?.aborted) return interrupted();
-    if (!step('healthy', health.ok, `${health.reason} after ${Math.round(health.waitedMs / 1000)}s`)) {
-      exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https }), { cwd: cloneDir, env: dockerEnv });
-      return { ok: false, steps, failed: 'healthy' };
-    }
-    if (await checkpoint()) return interrupted();
-
-    // 6b. https mode: prove the redirect on the plain listener and HSTS on the
-    //     TLS one (judgeHttps). A stack that serves plain 200s with the overlay
-    //     on is misconfigured, and the check names it instead of smokes over it.
-    if (https) {
-      const [httpAnswer, httpsAnswer] = await Promise.all([probe(`${baseUrl}/`), probe(`${httpsBaseUrl}/api/health`)]);
-      const judged = judgeHttps({ http: { url: `${baseUrl}/`, ...httpAnswer }, https: httpsAnswer }, { httpsBaseUrl });
-      if (!step('https', judged.ok, judged.reason)) {
-        exec('docker', composeArgs(['logs', '--tail', '40', 'frontend'], { https }), { cwd: cloneDir, env: dockerEnv });
-        return { ok: false, steps, failed: 'https' };
-      }
-      if (await checkpoint()) return interrupted();
-    }
-
-    // 7. One backup, then the read-back that makes it a backup (D7, D-9).
-    //    First the restore proof (P5b D6): seed one draft scenario row inside
-    //    the stack's database. A draft is invisible to the public catalog, so
-    //    the smoke never sees it; the backup snapshots it, the restore step
-    //    deletes it and must bring it back.
-    const backupDir = path.join(workdir, 'backups');
-    const psql = sql => exec('docker', composeArgs(['exec', '-T', 'database', 'psql', '-U', dbUser, '-d', dbName, '-tAc', sql], { https }), { cwd: cloneDir, timeout: 60_000, env: dockerEnv });
-    const seed = psql(`INSERT INTO scenarios (id, title, category, category_label, status) VALUES ('vl-selfcheck-restore-proof', 'restore proof', 'physics', 'Фізика', 'draft')`);
-    if (seed.status !== 0) {
-      step('restore', false, `seed failed: ${why(seed)}`);
-      return { ok: false, steps, failed: 'restore' };
-    }
-    // P5c: compose now pins the container env to /backups itself, but the
-    // explicit -e stays (pinned by compose-backup-dir.test.mjs and, for the
-    // restore child, selfhost-restore.test.mjs): the check clones any --ref,
-    // including pre-P5c code where the env still interpolated BACKUP_DIR.
-    const once = exec('docker', composeArgs(['run', '--rm', '-e', 'BACKUP_RUN_ONCE=1', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
-    if (once.status !== 0) {
-      step('backup', false, why(once));
-      if (await checkpoint()) return interrupted(); // AC-12: the same rule as `up`
-      return { ok: false, steps, failed: 'backup' };
-    }
-    const produced = newestBackup(backupDir);
-    if (!produced) {
-      step('backup', false, `nothing written under ${backupDir}`);
-      return { ok: false, steps, failed: 'backup' };
-    }
-    const verified = verifyBackup(produced);
-    if (!step('backup', verified.ok, verified.ok ? `${verified.checks.length} checks, ${path.basename(produced)}` : String(verified.error))) {
-      return { ok: false, steps, failed: 'backup' };
-    }
-    if (await checkpoint()) return interrupted();
-    if (!existsSync(path.join(produced, VERIFIED_MARKER))) {
-      step('backup marker', false, 'missing');
-      return { ok: false, steps, failed: 'backup marker' };
-    }
-    step('backup marker', true);
-    if (await checkpoint()) return interrupted();
-
-    // 7b. The restore (P5b D6): count what the backup held, delete the proof
-    //     row, restore the verified backup inside the backup container with
-    //     docker-compose.restore.yml's rw mounts (--entrypoint node: the image
-    //     entrypoint is backup.mjs), and prove the count is back and the stack
-    //     still answers. A restore that cannot bring one row back is not a
-    //     restore, and the check fails here rather than at an outage.
-    const proofId = 'vl-selfcheck-restore-proof';
-    const countSql = `SELECT count(*) FROM scenarios WHERE id = '${proofId}'`;
-    const before = psql(countSql);
-    const heldCount = Number((before.stdout || '').trim());
-    const removed = psql(`DELETE FROM scenarios WHERE id = '${proofId}'`);
-    const restore = exec('docker', composeArgs(['-f', 'docker-compose.restore.yml', 'run', '--rm', '--entrypoint', 'node', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup', 'restore.mjs', path.basename(produced), '--yes'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
-
-    // AC-12: an interrupt during the restore child is the interruption, not a
-    // restore failure - the numbers below would only describe a broken child.
-    if (await checkpoint()) return interrupted();
-    const after = restore.status === 0 ? psql(countSql) : { status: 1, stdout: '', stderr: '' };
-    const restoredCount = Number((after.stdout || '').trim());
-    const postHealth = restore.status === 0 ? judgeHealth(await probe(`${healthBase}/api/health`)) : { ok: false, reason: 'restore failed' };
-    const restoreOk = before.status === 0 && removed.status === 0 && restore.status === 0
-      && after.status === 0 && Number.isInteger(heldCount) && restoredCount === heldCount && postHealth.ok;
-    const restoreDetail = restore.status !== 0 ? why(restore)
-      : !restoreOk ? `count ${restoredCount} ≠ ${heldCount} or health: ${postHealth.reason}`
-      : `${path.basename(produced)} restored, proof row back (${restoredCount}), ${postHealth.reason}`;
-    if (!step('restore', restoreOk, restoreDetail)) {
-      return { ok: false, steps, failed: 'restore' };
-    }
-    if (await checkpoint()) return interrupted();
-
-    // 8. The smoke (D4): the layer that can prove a fresh, empty install. In
-    //    https mode it runs against the TLS base; the self-signed cert of this
-    //    throwaway stack is opted into with NODE_TLS_REJECT_UNAUTHORIZED=0 and
-    //    E2E_INSECURE_TLS=1 (the smoke config's ignoreHTTPSErrors switch). A
-    //    plain run never sets either — full verification stays on.
-    const env = {
-      ...process.env,
-      E2E_BASE_URL: https ? httpsBaseUrl : baseUrl,
-      ADMIN_TOKEN: text.match(/^ADMIN_TOKEN=(.*)$/m)?.[1] ?? '',
-      ...(https ? { NODE_TLS_REJECT_UNAUTHORIZED: '0', E2E_INSECURE_TLS: '1' } : {}),
-    };
-    const install = exec('npm', ['ci', '--silent'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
-    const depsFailed = !step('e2e deps', install.status === 0, install.status === 0 ? '' : why(install));
-    if (await checkpoint()) return interrupted(); // AC-12: an interrupted install is not a failed one
-    if (depsFailed) return { ok: false, steps, failed: 'e2e deps' };
-    const browsers = exec('npx', ['playwright', 'install', 'chromium'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
-    const browsersFailed = !step('e2e browser', browsers.status === 0, browsers.status === 0 ? '' : why(browsers));
-    if (await checkpoint()) return interrupted(); // AC-12: an interrupted browser install is not a failed one
-    if (browsersFailed) return { ok: false, steps, failed: 'e2e browser' };
-    const smoke = exec('npm', ['run', '--silent', 'smoke'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
-    const smokeTail = (smoke.stdout || '').trim().split('\n').slice(-1)[0] ?? '';
-    const smokeFailed = !step('smoke', smoke.status === 0, smoke.status === 0 ? smokeTail.slice(0, 120) : why(smoke));
-    if (await checkpoint()) return interrupted(); // AC-12: an interrupted smoke is not a failed one
-    if (smokeFailed) return { ok: false, steps, failed: 'smoke' };
-
-    return { ok: true, steps };
-  } catch (err) {
-    return { ok: false, steps, failed: `exception: ${err.message}` };
-  } finally {
+  /** Runs the old finally body verbatim and returns the (possibly mutated) result. */
+  function teardown(result) {
     // Teardown whenever `up` was attempted — including a failed or timed-out
     // `up`, which can leave containers with restart:unless-stopped and a
     // vlcheck_pgdata that poisons the next run. It runs BEFORE the clone is
@@ -716,7 +533,9 @@ export async function runCheck({
       } catch (err) {
         // A locked file on Windows (EBUSY) must not mask the named failure:
         // record it and let the real result stand.
-        steps.push({ name: 'cleanup', ok: false, detail: `could not remove ${workdir}: ${err.message}` });
+        if (result) {
+          result.steps.push({ name: 'cleanup', ok: false, detail: `could not remove ${workdir}: ${err.message}` });
+        }
         log(`  FAIL cleanup — could not remove ${workdir}: ${err.message}`);
       }
     } else if (workdir) {
@@ -726,6 +545,204 @@ export async function runCheck({
       // Only when `up` was attempted: before that there is no stack.
       if (upAttempted && signal?.aborted) log(`  --   clean up by hand: ${manualTeardownCommand({ https, cloneDir: path.join(workdir, 'app') })}`);
     }
+    return result;
+  }
+
+  try {
+    run: {
+      // 1. The lock the caller holds (D8). A directory that exists is the contract
+      //    `wk.sh lock vl-db` provides; its content is not this script's business.
+      //    A regular file is not a lock: `wk.sh lock` creates a directory.
+      if (!lock) { result = { ok: false, steps, failed: 'lock' }; break run; }
+      let lockIsDir = false;
+      try { lockIsDir = statSync(lock).isDirectory(); } catch { lockIsDir = false; }
+      if (!lockIsDir) { step('lock', false, `not a lock directory: ${lock}`); result = { ok: false, steps, failed: 'lock' }; break run; }
+      step('lock', true, lock);
+
+      // 2. The ports have to be free before Docker takes them: a busy one produces
+      //    a bind error deep inside a container start, minutes later. In https
+      //    mode the TLS listener's port (the overlay's own default 8443) is
+      //    checked too, before anything is cloned.
+      const ports = [port, ...(https ? [httpsPort] : [])];
+      const busy = [];
+      for (const p of ports) if (!await portFree(p)) busy.push(p);
+      if (busy.length) { step('port', false, `${busy.join(', ')} in use`); result = { ok: false, steps, failed: 'port' }; break run; }
+      step('port', true, https ? `${port}, ${httpsPort} (https)` : String(port));
+      // HO1d review item 3: the lock/port probes are async; an abort that lands
+      // during them must be observed before the clone begins.
+      if (await checkpoint()) { result = interrupted(); break run; }
+
+      // 3. The clone: the default branch as this checkout has it (D5), so the check
+      //    proves committed state and never depends on the network being up.
+      workdir = mkdtempSync(path.join(tmpRoot, 'vl-selfcheck-'));
+      const cloneDir = path.join(workdir, 'app');
+      const clone = git('git', ['clone', '--quiet', '--depth', '1', '--branch', ref, source, cloneDir]);
+      if (clone.status !== 0) {
+        step('clone', false, (clone.stderr || clone.error?.message || '').trim().slice(0, 200));
+        // AC-12: an interrupted clone is the interruption, not a clone failure.
+        if (await checkpoint()) { result = interrupted(); break run; }
+        result = { ok: false, steps, failed: 'clone' }; break run;
+      }
+      const sha = git('git', ['-C', cloneDir, 'rev-parse', '--short', 'HEAD']);
+      step('clone', true, `${ref}@${(sha.stdout || '').trim()}`);
+      if (await checkpoint()) { result = interrupted(); break run; }
+
+      // 4. The `.env` an admin writes by hand, written here with generated secrets.
+      const { text, changed } = buildEnv(readFileSync(path.join(cloneDir, '.env.example'), 'utf8'), {
+        ...generateSecrets(), frontendPort: port, backupDir: path.join(workdir, 'backups'),
+        ...(https ? { httpsPort } : {}),
+      });
+      writeFileSync(path.join(cloneDir, '.env'), text);
+      const dbUser = text.match(/^DB_USER=(.*)$/m)?.[1] ?? 'lab_user';
+      const dbName = text.match(/^DB_NAME=(.*)$/m)?.[1] ?? 'virtual_lab';
+      step('env', changed.length === (https ? 5 : 4), `replaced ${changed.join(', ')}`);
+      if (await checkpoint()) { result = interrupted(); break run; }
+
+      // The caller's shell env must not override the generated .env: compose
+      // gives exported vars precedence, so every docker child runs with them
+      // scrubbed (the explicit `-e` flags on `run` still apply).
+      const dockerEnv = scrubComposeEnv(process.env);
+
+      // 5. Up. `--build` is the point: a clean clone has no images. `upAttempted`
+      //    is set BEFORE the call: even a failed or timed-out `up` can leave
+      //    containers behind, and the finally block must tear them down.
+      upAttempted = true;
+      const up = exec('docker', composeArgs(['up', '-d', '--build'], { https }), { cwd: cloneDir, timeout: 30 * 60_000, env: dockerEnv });
+      const upFailed = !step('up', up.status === 0, up.status === 0 ? '' : why(up).slice(0, 300));
+      // AC-12: the abort is judged BEFORE the child's status. A terminal Ctrl+C
+      // reaches the docker child too, so `up` returns non-zero on an interrupt;
+      // judging the status first named 'up' instead of 'interrupted'.
+      if (await checkpoint()) { result = interrupted(); break run; }
+      if (upFailed) { result = { ok: false, steps, failed: 'up' }; break run; }
+
+      // 6. Healthy. In https mode the redirect include makes EVERY plain request
+      //    answer 301 — /api/health included — so the health wait moves to the
+      //    TLS base (the self-signed cert is accepted by the probe).
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const httpsBaseUrl = `https://127.0.0.1:${httpsPort}`;
+      const healthBase = https ? httpsBaseUrl : baseUrl;
+      const health = await waitHealthy(probe, { baseUrl: healthBase, timeoutMs: healthTimeoutMs, sleep, log, signal });
+      // An aborted health wait is the interruption itself, not a failed healthy
+      // step: no logs dump, the named 'interrupted' result and normal teardown.
+      if (signal?.aborted) { result = interrupted(); break run; }
+      if (!step('healthy', health.ok, `${health.reason} after ${Math.round(health.waitedMs / 1000)}s`)) {
+        exec('docker', composeArgs(['logs', '--tail', '40', 'backend'], { https }), { cwd: cloneDir, env: dockerEnv });
+        result = { ok: false, steps, failed: 'healthy' }; break run;
+      }
+      if (await checkpoint()) { result = interrupted(); break run; }
+
+      // 6b. https mode: prove the redirect on the plain listener and HSTS on the
+      //     TLS one (judgeHttps). A stack that serves plain 200s with the overlay
+      //     on is misconfigured, and the check names it instead of smokes over it.
+      if (https) {
+        const [httpAnswer, httpsAnswer] = await Promise.all([probe(`${baseUrl}/`), probe(`${httpsBaseUrl}/api/health`)]);
+        const judged = judgeHttps({ http: { url: `${baseUrl}/`, ...httpAnswer }, https: httpsAnswer }, { httpsBaseUrl });
+        if (!step('https', judged.ok, judged.reason)) {
+          exec('docker', composeArgs(['logs', '--tail', '40', 'frontend'], { https }), { cwd: cloneDir, env: dockerEnv });
+          result = { ok: false, steps, failed: 'https' }; break run;
+        }
+        if (await checkpoint()) { result = interrupted(); break run; }
+      }
+
+      // 7. One backup, then the read-back that makes it a backup (D7, D-9).
+      //    First the restore proof (P5b D6): seed one draft scenario row inside
+      //    the stack's database. A draft is invisible to the public catalog, so
+      //    the smoke never sees it; the backup snapshots it, the restore step
+      //    deletes it and must bring it back.
+      const backupDir = path.join(workdir, 'backups');
+      const psql = sql => exec('docker', composeArgs(['exec', '-T', 'database', 'psql', '-U', dbUser, '-d', dbName, '-tAc', sql], { https }), { cwd: cloneDir, timeout: 60_000, env: dockerEnv });
+      const seed = psql(`INSERT INTO scenarios (id, title, category, category_label, status) VALUES ('vl-selfcheck-restore-proof', 'restore proof', 'physics', 'Фізика', 'draft')`);
+      if (seed.status !== 0) {
+        step('restore', false, `seed failed: ${why(seed)}`);
+        result = { ok: false, steps, failed: 'restore' }; break run;
+      }
+      // P5c: compose now pins the container env to /backups itself, but the
+      // explicit -e stays (pinned by compose-backup-dir.test.mjs and, for the
+      // restore child, selfhost-restore.test.mjs): the check clones any --ref,
+      // including pre-P5c code where the env still interpolated BACKUP_DIR.
+      const once = exec('docker', composeArgs(['run', '--rm', '-e', 'BACKUP_RUN_ONCE=1', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
+      if (once.status !== 0) {
+        step('backup', false, why(once));
+        if (await checkpoint()) { result = interrupted(); break run; } // AC-12: the same rule as `up`
+        result = { ok: false, steps, failed: 'backup' }; break run;
+      }
+      const produced = newestBackup(backupDir);
+      if (!produced) {
+        step('backup', false, `nothing written under ${backupDir}`);
+        result = { ok: false, steps, failed: 'backup' }; break run;
+      }
+      const verified = verifyBackup(produced);
+      if (!step('backup', verified.ok, verified.ok ? `${verified.checks.length} checks, ${path.basename(produced)}` : String(verified.error))) {
+        result = { ok: false, steps, failed: 'backup' }; break run;
+      }
+      if (await checkpoint()) { result = interrupted(); break run; }
+      if (!existsSync(path.join(produced, VERIFIED_MARKER))) {
+        step('backup marker', false, 'missing');
+        result = { ok: false, steps, failed: 'backup marker' }; break run;
+      }
+      step('backup marker', true);
+      if (await checkpoint()) { result = interrupted(); break run; }
+
+      // 7b. The restore (P5b D6): count what the backup held, delete the proof
+      //     row, restore the verified backup inside the backup container with
+      //     docker-compose.restore.yml's rw mounts (--entrypoint node: the image
+      //     entrypoint is backup.mjs), and prove the count is back and the stack
+      //     still answers. A restore that cannot bring one row back is not a
+      //     restore, and the check fails here rather than at an outage.
+      const proofId = 'vl-selfcheck-restore-proof';
+      const countSql = `SELECT count(*) FROM scenarios WHERE id = '${proofId}'`;
+      const before = psql(countSql);
+      const heldCount = Number((before.stdout || '').trim());
+      const removed = psql(`DELETE FROM scenarios WHERE id = '${proofId}'`);
+      const restore = exec('docker', composeArgs(['-f', 'docker-compose.restore.yml', 'run', '--rm', '--entrypoint', 'node', '-e', 'BACKUP_DIR=/backups', '-v', `${backupDir}:/backups`, 'backup', 'restore.mjs', path.basename(produced), '--yes'], { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
+
+      // AC-12: an interrupt during the restore child is the interruption, not a
+      // restore failure - the numbers below would only describe a broken child.
+      if (await checkpoint()) { result = interrupted(); break run; }
+      const after = restore.status === 0 ? psql(countSql) : { status: 1, stdout: '', stderr: '' };
+      const restoredCount = Number((after.stdout || '').trim());
+      const postHealth = restore.status === 0 ? judgeHealth(await probe(`${healthBase}/api/health`)) : { ok: false, reason: 'restore failed' };
+      const restoreOk = before.status === 0 && removed.status === 0 && restore.status === 0
+        && after.status === 0 && Number.isInteger(heldCount) && restoredCount === heldCount && postHealth.ok;
+      const restoreDetail = restore.status !== 0 ? why(restore)
+        : !restoreOk ? `count ${restoredCount} ≠ ${heldCount} or health: ${postHealth.reason}`
+        : `${path.basename(produced)} restored, proof row back (${restoredCount}), ${postHealth.reason}`;
+      if (!step('restore', restoreOk, restoreDetail)) {
+        result = { ok: false, steps, failed: 'restore' }; break run;
+      }
+      if (await checkpoint()) { result = interrupted(); break run; }
+
+      // 8. The smoke (D4): the layer that can prove a fresh, empty install. In
+      //    https mode it runs against the TLS base; the self-signed cert of this
+      //    throwaway stack is opted into with NODE_TLS_REJECT_UNAUTHORIZED=0 and
+      //    E2E_INSECURE_TLS=1 (the smoke config's ignoreHTTPSErrors switch). A
+      //    plain run never sets either — full verification stays on.
+      const env = {
+        ...process.env,
+        E2E_BASE_URL: https ? httpsBaseUrl : baseUrl,
+        ADMIN_TOKEN: text.match(/^ADMIN_TOKEN=(.*)$/m)?.[1] ?? '',
+        ...(https ? { NODE_TLS_REJECT_UNAUTHORIZED: '0', E2E_INSECURE_TLS: '1' } : {}),
+      };
+      const install = exec('npm', ['ci', '--silent'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
+      const depsFailed = !step('e2e deps', install.status === 0, install.status === 0 ? '' : why(install));
+      if (await checkpoint()) { result = interrupted(); break run; } // AC-12: an interrupted install is not a failed one
+      if (depsFailed) { result = { ok: false, steps, failed: 'e2e deps' }; break run; }
+      const browsers = exec('npx', ['playwright', 'install', 'chromium'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
+      const browsersFailed = !step('e2e browser', browsers.status === 0, browsers.status === 0 ? '' : why(browsers));
+      if (await checkpoint()) { result = interrupted(); break run; } // AC-12: an interrupted browser install is not a failed one
+      if (browsersFailed) { result = { ok: false, steps, failed: 'e2e browser' }; break run; }
+      const smoke = exec('npm', ['run', '--silent', 'smoke'], { cwd: path.join(cloneDir, 'e2e'), env, timeout: 20 * 60_000 });
+      const smokeTail = (smoke.stdout || '').trim().split('\n').slice(-1)[0] ?? '';
+      const smokeFailed = !step('smoke', smoke.status === 0, smoke.status === 0 ? smokeTail.slice(0, 120) : why(smoke));
+      if (await checkpoint()) { result = interrupted(); break run; } // AC-12: an interrupted smoke is not a failed one
+      if (smokeFailed) { result = { ok: false, steps, failed: 'smoke' }; break run; }
+
+      result = { ok: true, steps };
+    }
+  } catch (err) {
+    result = { ok: false, steps, failed: `exception: ${err.message}` };
+  } finally {
+    return teardown(result);
   }
 }
 
