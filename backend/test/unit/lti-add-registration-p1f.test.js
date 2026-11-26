@@ -114,15 +114,15 @@ test('AC-19: parseArgs keeps deploymentIds as a string for one flag and an array
 test('AC-19: a repeated value flag returns 2, names the flag, and saves nothing', async () => {
   for (const flag of SINGLE_VALUE_FLAGS) {
     const value = 'https://m.example';
-    const { code, err } = await run([
-      ...moodleFlags(),
-      flag, value,
-      flag, value,
-    ]);
+    const store = stubStore();
+    const { code, err } = await run(
+      [...moodleFlags(), flag, value, flag, value],
+      { store },
+    );
     assert.equal(code, 2, flag);
     assert.match(err, new RegExp(`repeated flag: ${flag.replace(/[-/\^$*+?.()|[\]{}]/g, '\$&')}`), flag);
     // nothing saved — the refusal happens in parseArgs, before any store call
-    assert.equal(run.length, 0);
+    assert.deepEqual(store.written, [], flag);
   }
 });
 
@@ -200,4 +200,27 @@ test('AC-19: a clean --from-moodle base with a sub-path and a port still builds 
 
 // ── in every refused case nothing is saved ─────────────────────────
 
-test('AC-19: refused input reaches no store call — the refusal precedes every bra
+test('AC-19: refused input reaches no store call — the refusal precedes every branch that writes', async () => {
+  // The valid baseline still reaches the store: one deployment, one saveRegistration call.
+  const baseline = stubStore();
+  const ok = await run(moodleFlags(), { store: baseline });
+  assert.equal(ok.code, 0);
+  assert.equal(baseline.written.length, 1);
+
+  // Every refusal path below hands the store nothing.
+  const refusals = [
+    // a repeat of another value flag (issuer is not among the Moodle defaults)
+    [...moodleFlags(), '--issuer', 'https://o.example', '--issuer', 'https://o.example'],
+    // --dry-run= takes no value
+    moodleFlags(['--dry-run=']),
+    // a --from-moodle base carrying a query or a fragment
+    ['--from-moodle', 'https://m.example/moodle?x=1', '--client-id', 'c1', '--deployment-id', '1'],
+    ['--from-moodle', 'https://m.example/moodle#frag', '--client-id', 'c1', '--deployment-id', '1'],
+  ];
+  for (const argv of refusals) {
+    const store = stubStore();
+    const res = await run(argv, { store });
+    assert.equal(res.code, 2);
+    assert.equal(store.written.length, 0);
+  }
+});
