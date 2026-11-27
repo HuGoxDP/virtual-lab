@@ -61,6 +61,7 @@ backup, runs the e2e smoke against it, then tears it down.
                          default: the sibling WebEngineTSEditor checkout
   --lock <dir>           required: a held lock directory, e.g. .workers/locks/vl-db.lock
   --keep                 leave the temp clone and its stack on disk for inspection
+  --verify-in-container  verify the backup inside the backup container (verify-backup.mjs --newest /backups) instead of on the host; the cloned --ref must ship the verifier in its backup image
   --help                 this text
 
 The lock is the caller's job: bash .workers/wk.sh lock vl-db W<n> HO1
@@ -72,7 +73,7 @@ The lock is the caller's job: bash .workers/wk.sh lock vl-db W<n> HO1
  * "no lock required".
  *
  * @param {string[]} argv
- * @returns {{ref: string, source: string|null, port: number, https: boolean, lock: string|null, keep: boolean, help: boolean}}
+ * @returns {{ref: string, source: string|null, port: number, https: boolean, lock: string|null, keep: boolean, help: boolean, verifyInContainer?: true}}
  */
 export function parseArgs(argv) {
   const out = { ref: 'main', source: null, port: DEFAULT_PORT, https: false, lock: null, keep: false, help: false };
@@ -86,6 +87,9 @@ export function parseArgs(argv) {
     if (arg === '--help' || arg === '-h') out.help = true;
     else if (arg === '--keep') out.keep = true;
     else if (arg === '--https') out.https = true;
+    // HO1b2: additive opt-in — the key appears only when the flag is given, so
+    // a default run keeps parseArgs' output byte-for-byte (U-8).
+    else if (arg === '--verify-in-container') out.verifyInContainer = true;
     // R3: the editor keys appear only when their flag is given — a run without
     // them must keep parseArgs' output byte-for-byte (including its key set).
     else if (arg === '--editor') out.editor = true;
@@ -251,6 +255,23 @@ export function teardownCommands({ https = false, editor = false } = {}) {
     ['docker', 'update', '--restart=no', ...containers],
     ['docker', ...composeArgs(['down', '-v', '--remove-orphans'], { https, editor })],
   ];
+}
+
+/**
+ * HO1b2: the one compose child that runs the verifier shipped inside the
+ * `backup` image. The host mount from the backup step is mounted at /backups;
+ * the child's exit status (not its stdout) decides the backup step. Pure —
+ * the https overlay is appended by `composeArgs`, after the selfcheck file.
+ *
+ * @param {string} backupDir the host directory holding the backup
+ * @param {{https?: boolean}} [opts]
+ * @returns {string[]} `docker compose … run --rm --entrypoint node -e BACKUP_DIR=/backups -v <dir>:/backups backup verify-backup.mjs --newest /backups`
+ */
+export function containerVerifyArgs(backupDir, { https = false } = {}) {
+  return composeArgs([
+    'run', '--rm', '--entrypoint', 'node', '-e', 'BACKUP_DIR=/backups',
+    '-v', `${backupDir}:/backups`, 'backup', 'verify-backup.mjs', '--newest', '/backups',
+  ], { https });
 }
 
 /**
@@ -585,6 +606,9 @@ export async function runCheck({
   editor = false,
   editorSource = null,
   editorTimeoutMs = 60_000,
+  // HO1b2: the in-image verifier is opt-in; an omitted/false option is today's
+  // host verification (U-8).
+  verifyInContainer = false,
 } = {}) {
   const steps = [];
   const step = (name, ok, detail = '') => {
@@ -861,9 +885,24 @@ export async function runCheck({
         step('backup', false, `nothing written under ${backupDir}`);
         result = { ok: false, steps, failed: 'backup' }; break run;
       }
-      const verified = await verifyBackupStream(produced);
-      if (!step('backup', verified.ok, verified.ok ? `${verified.checks.length} checks, ${path.basename(produced)}` : String(verified.error))) {
-        result = { ok: false, steps, failed: 'backup' }; break run;
+      // HO1b2: the opt-in child's exit status decides the backup step; the
+      // host verifier below stays the default, textually unchanged. The marker
+      // check and every later step are shared by both modes.
+      if (verifyInContainer) {
+        const child = exec('docker', containerVerifyArgs(backupDir, { https }), { cwd: cloneDir, timeout: 10 * 60_000, env: dockerEnv });
+        if (child.status !== 0) {
+          step('backup', false, why(child));
+          // AC-12: an abort observed during the child is the interruption, not
+          // a backup failure — the same rule as `up`.
+          if (await checkpoint()) { result = interrupted(); break run; }
+          result = { ok: false, steps, failed: 'backup' }; break run;
+        }
+        step('backup', true, `verified in the backup container, ${path.basename(produced)}`);
+      } else {
+        const verified = await verifyBackupStream(produced);
+        if (!step('backup', verified.ok, verified.ok ? `${verified.checks.length} checks, ${path.basename(produced)}` : String(verified.error))) {
+          result = { ok: false, steps, failed: 'backup' }; break run;
+        }
       }
       if (await checkpoint()) { result = interrupted(); break run; }
       if (!existsSync(path.join(produced, VERIFIED_MARKER))) {
@@ -966,7 +1005,7 @@ if (isMain) {
     console.log(USAGE);
     process.exit(0);
   }
-  console.log(`selfhost-check: ref=${opts.ref} port=${opts.port}${opts.https ? ' https=8443' : ''} source=${opts.source ?? REPO_ROOT}`);
+  console.log(`selfhost-check: ref=${opts.ref} port=${opts.port}${opts.https ? ' https=8443' : ''} source=${opts.source ?? REPO_ROOT}${opts.verifyInContainer === true ? ' verify=container' : ''}`);
   // HO1d D4: Ctrl+C wiring — first signal aborts and the check tears down
   // normally; the second interrupts the current docker command (possibly the
   // teardown) and exits 130 once the teardown has finished, printing the manual command.
@@ -979,6 +1018,7 @@ if (isMain) {
   const result = await runCheck({
     ref: opts.ref, source: opts.source ?? REPO_ROOT, port: opts.port, https: opts.https, lock: opts.lock, keep: opts.keep,
     editor: opts.editor, editorSource: opts.editorSource,
+    verifyInContainer: opts.verifyInContainer === true,
     signal: controller.signal,
     // The clone dir becomes known before `up` runs (the first child that can
     // leave containers behind), so a second Ctrl+C from then on can name the

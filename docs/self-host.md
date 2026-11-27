@@ -765,7 +765,7 @@ docker compose down -v            # ПОВНЕ скидання: томи й у�
 прибирає. Жодного дотику до вашого робочого стека.
 
 ```bash
-npm run selfhost-check -- --lock <каталог-замок> [--ref main] [--frontend-port 8051] [--https] [--editor [--editor-source <dir>]]
+npm run selfhost-check -- --lock <каталог-замок> [--ref main] [--frontend-port 8051] [--https] [--verify-in-container] [--editor [--editor-source <dir>]]
 ```
 
 - `--lock` обов'язковий: каталог, який ви тримаєте як замок, щоб перевірка не
@@ -779,6 +779,12 @@ npm run selfhost-check -- --lock <каталог-замок> [--ref main] [--fro
   `Location`, що зберігає шлях і query) та HSTS (наявний на https, відсутній
   на http), і смоук іде через TLS. Крок відновлення бекапу є в обох режимах.
   Порт 8443 фіксований (`HTTPS_PORT` перевірка пише у `.env` сама).
+- `--verify-in-container` перевіряє щойно зроблений бекап у контейнері `backup`
+  (`verify-backup.mjs --newest /backups` — той самий верифікатор, що в кроці 1
+  «Як оновитися»), а не на хості; без прапорця перевірка й надалі відбувається
+  на хості. Потрібен `--ref`, чий образ `backup` містить `verify-backup.mjs`
+  (з 2026-11-23, HO1b); старіший ref дає `RED at backup` із повідомленням
+  контейнера. Кроки `backup marker` і відновлення бекапу однакові в обох режимах.
 - `--keep` лишає тимчасовий клон і стек для огляду; без нього все прибирається
   навіть після помилки.
 - Кожен крок друкує один рядок `ok`/`FAIL`; підсумок — `GREEN` або `RED at <крок>`.
