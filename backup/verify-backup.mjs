@@ -16,7 +16,7 @@
 // validation walk, not an extractor — a bad header checksum or a truncated
 // final entry is the failure it exists to find.
 
-import { createReadStream, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createGunzip, gunzipSync } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
@@ -417,6 +417,68 @@ export function newestBackup(root) {
 }
 
 /**
+ * Why `root` cannot be a backup root, or null when it can: a path that is not
+ * there, a regular file, or a directory this user may not read. Without the
+ * check `newestBackup` returns null for the first two (and the admin cannot
+ * tell which happened) and throws an unnamed `readdirSync` error for the third.
+ *
+ * @param {string} root — the path given after `--newest`.
+ * @returns {string|null} the reason, or null when the root can be read.
+ */
+function rootProblem(root) {
+  if (!existsSync(root)) return 'no such directory';
+  try {
+    readdirSync(root, { withFileTypes: true });
+    return null;
+  } catch (error) {
+    if (error.code === 'ENOTDIR') return 'not a directory';
+    if (error.code === 'EACCES' || error.code === 'EPERM') return 'unreadable';
+    return error.message;
+  }
+}
+
+/**
+ * One line for an error the CLI names without a stack trace: the code first
+ * (`EACCES`, `ENOTDIR`, `error` when the thrower named none), then the message
+ * with the code prefix Node already baked into it removed.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+function namedError(error) {
+  const named = error !== null && typeof error === 'object';
+  const code = (named && error.code) ? String(error.code) : 'error';
+  const raw = (named && error.message) ? String(error.message) : String(error);
+  const message = raw.startsWith(`${code}: `) ? raw.slice(code.length + 2) : raw;
+  return `${code}: ${message}`;
+}
+
+/**
+ * True when `argv1` names this very file — directly, or through a symlink to
+ * it. `path.resolve` alone misses the symlink case: an admin who links one
+ * name to the CLI (`~/.local/bin/verify-backup -> …/backup/verify-backup.mjs`)
+ * gets `process.argv[1]` as the link, the resolve misses and the CLI verifies
+ * nothing in silence. The real path decides, so both entries (this file and
+ * scripts/lib) share this one check.
+ *
+ * @param {string|undefined} argv1 — `process.argv[1]`.
+ * @param {string} entryUrl — the entry module's own `import.meta.url`.
+ * @returns {boolean}
+ */
+export function isMainModule(argv1, entryUrl) {
+  if (!argv1) return false;
+  const target = fileURLToPath(entryUrl);
+  let here;
+  try {
+    here = path.resolve(argv1);
+    if (here === target) return true;
+    return realpathSync(here) === realpathSync(target);
+  } catch {
+    return here === target;
+  }
+}
+
+/**
  * The shared CLI body: `node verify-backup.mjs <backup-dir>` or
  * `node verify-backup.mjs --newest <backup-root>` — the step the restore
  * procedure runs before `restore.mjs` will accept a backup. One line per
@@ -439,9 +501,14 @@ export async function runCli(argv, io = {}) {
   };
 
   let dir;
-  if (argv.length === 1 && argv[0] && !argv[0].startsWith('--')) {
+  if (argv.length === 1 && argv[0] && !argv[0].startsWith('-')) {
     dir = argv[0];
-  } else if (argv.length === 2 && argv[0] === '--newest' && argv[1] && !argv[1].startsWith('--')) {
+  } else if (argv.length === 2 && argv[0] === '--newest' && argv[1] && !argv[1].startsWith('-')) {
+    const problem = rootProblem(argv[1]);
+    if (problem) {
+      err.write(`no backup directory under ${argv[1]} (${problem})\n`);
+      return 2;
+    }
     dir = newestBackup(argv[1]);
     if (!dir) {
       err.write(`no backup directory under ${argv[1]}\n`);
@@ -452,13 +519,27 @@ export async function runCli(argv, io = {}) {
     return usage();
   }
 
-  const result = await verifyBackupStream(dir);
+  // An fs error the verifier itself did not name — an unreadable volumes/
+  // directory, a permission that changed mid-run — is one named line and exit
+  // 1, never a stack trace over the checks an admin is meant to read.
+  let result;
+  try {
+    result = await verifyBackupStream(dir);
+  } catch (error) {
+    out.write(`not verified: ${namedError(error)}\n`);
+    return 1;
+  }
   for (const check of result.checks) out.write(`${check.ok ? 'ok  ' : 'FAIL'} ${check.name}${check.detail ? ` — ${check.detail}` : ''}\n`);
   out.write(result.ok ? `verified: ${dir}\n` : `not verified: ${result.error}\n`);
   return result.ok ? 0 : 1;
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isMain) {
-  runCli(process.argv.slice(2)).then(code => process.exit(code));
+if (isMainModule(process.argv[1], import.meta.url)) {
+  runCli(process.argv.slice(2))
+    .then(code => process.exit(code))
+    .catch(error => {
+      // Whatever escapes runCli's own handling: named, once, exit 1.
+      process.stderr.write(`verify-backup failed: ${namedError(error)}\n`);
+      process.exit(1);
+    });
 }
