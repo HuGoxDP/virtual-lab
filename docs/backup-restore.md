@@ -95,7 +95,7 @@ NAME=$(ls -1 backup/out-scratch | head -1)     # the timestamped directory
 #     the backup image, so no Node is needed on the host; --entrypoint node
 #     because the image's entrypoint is backup.mjs.
 docker compose -p vlabscratch $F run --rm --entrypoint node -v "$PWD/backup/out-scratch:/backups" backup verify-backup.mjs "/backups/$NAME"
-# Host alternative (needs Node 22+ on the host; fails on a root-owned backup dir):
+# Host alternative (needs Node 22+ on the host; a root-owned backup dir fails with EACCES only when the host run is non-root — the in-image command runs as root):
 # node scripts/lib/verify-backup.mjs "backup/out-scratch/$NAME"
 
 # 4. Destroy the scratch stack and its volumes. This is the disaster.

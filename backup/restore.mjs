@@ -22,6 +22,15 @@ const env = (name, fallback) => {
     return value === undefined || value === "" ? fallback : value;
 };
 
+// A backup name is usually a timestamp, which is shell-safe as-is. Quote only
+// names that carry something a shell would reinterpret (a space, a quote, `$`,
+// a backtick, …) so the suggested verify command can be pasted as written. A
+// plain name stays byte-identical to the old hint. POSIX single quotes, with an
+// embedded `'` written as the standard end/escape/restart sequence.
+const shellQuote = (name) => /^[A-Za-z0-9_./:@%+=-]+$/.test(name)
+    ? name
+    : `'${name.replace(/'/g, "'\\''")}'`;
+
 const BACKUP_DIR = env("BACKUP_DIR", "/backups");
 const DB = {
     host: env("DB_HOST", "database"),
@@ -54,8 +63,8 @@ if (!existsSync(dir)) {
 // alternative names that folder instead, never a container path.
 if (!existsSync(join(dir, "verified"))) {
     console.error(`restore: ${name} has no 'verified' marker — an unverified backup is not a restore target`);
-    console.error(`verify it first: docker compose run --rm --entrypoint node backup verify-backup.mjs /backups/${name}`);
-    console.error(`  (or on the host, with Node 22+: node scripts/lib/verify-backup.mjs <host backup folder>/${name})`);
+    console.error(`verify it first: docker compose run --rm --entrypoint node backup verify-backup.mjs /backups/${shellQuote(name)}`);
+    console.error(`  (or on the host, with Node 22+: node scripts/lib/verify-backup.mjs <host backup folder>/${shellQuote(name)})`);
     process.exit(1);
 }
 
