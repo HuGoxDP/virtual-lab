@@ -174,7 +174,8 @@ curl http://localhost:8044/api/health
    `verify-backup.mjs` — перед оновленням перевіряйте бекап командою на хості
    вище (або цією після перебудови кроку 3). Якщо каталог бекапу належить
    root, а ви запускаєте перевірку на хості не від root, вона тепер чесно
-   завершується `cannot write the verified marker: EACCES` замість падіння —
+   завершується `cannot write the verified marker: EACCES` або
+   `cannot remove the stale verified marker: EACCES` замість падіння —
    використайте команду в образі: контейнер пише маркер від root.
 
    **Оновлення через P5c (листопад 2026) — ще один крок.** Якщо ви задавали
